@@ -41,4 +41,17 @@ async def pin_handler(event):
     except Exception as e:
         await event.reply(f"❌ Failed: {e}")
 
+
+
+app = Flask(__name__)
+
+@app.route('/')
+def home():
+    return "Bot is running"
+
+def run_server():
+    app.run(host="0.0.0.0", port=8000)
+
+threading.Thread(target=run_server, daemon=True).start()
+
 client.run_until_disconnected()
