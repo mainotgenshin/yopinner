@@ -11,7 +11,7 @@ bot_token = '7541906904:AAEpxYEMMj7y2VCPqeOGfEmD09iH4XO1P2M'
 client = TelegramClient('bot_session', api_id, api_hash).start(bot_token=bot_token)
 
 # Constants
-TARGET_BOT_ID = 6967358342  # @MultiMiniGameBot
+TARGET_BOT_IDS = {6967358342, 7906407273}  # @MultiMiniGameBot and @CHAT_CRICKET_ROBOT
 UNPIN_DELAY = 86400  # 24 hours in seconds
 
 @client.on(events.NewMessage(pattern=r'^/?pin$', incoming=True))
@@ -22,8 +22,8 @@ async def pin_handler(event):
 
     reply_msg = await event.get_reply_message()
 
-    if reply_msg.sender_id != TARGET_BOT_ID:
-        await event.reply("❌ You can only pin messages from @MultiMiniGameBot.")
+    if reply_msg.sender_id not in TARGET_BOT_IDS:
+        await event.reply("❌ You can only pin messages from @MultiMiniGameBot or @CHAT_CRICKET_ROBOT.")
         return
 
     try:
@@ -43,8 +43,7 @@ async def pin_handler(event):
     except Exception as e:
         await event.reply(f"❌ Failed: {e}")
 
-
-
+# Flask app to keep bot alive (for platforms like Koyeb, Replit, etc.)
 app = Flask(__name__)
 
 @app.route('/')
