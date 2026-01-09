@@ -26,7 +26,8 @@ def get_db():
     if MONGO_URI:
         try:
             # Create a connection using MongoClient
-            _mongo_client = MongoClient(MONGO_URI)
+            import certifi
+            _mongo_client = MongoClient(MONGO_URI, tlsCAFile=certifi.where())
             
             # Extract DB name from URI or default to 'cricket_bot'
             # Uri format: mongodb+srv://user:pass@host/dbname?params
