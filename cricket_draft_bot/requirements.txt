@@ -7,5 +7,7 @@ python-dotenv
 pymongo
 dnspython
 pytz
+APScheduler
+
 
 
