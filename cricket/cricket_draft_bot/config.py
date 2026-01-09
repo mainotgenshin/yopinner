@@ -1,0 +1,89 @@
+# config.py
+import os
+from dotenv import load_dotenv
+
+# Load environment variables
+load_dotenv()
+
+# Bot Token - User must set this env var or replace string
+BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
+
+# Owner IDs (Integer IDs)
+# Load from env (comma separated) or default list
+_owner_env = os.getenv("OWNER_IDS")
+OWNER_IDS = [int(x) for x in _owner_env.split(',')] if _owner_env else []
+
+# API Credentials (Optional for standard bots, required for some clients)
+API_ID = os.getenv("API_ID")
+API_HASH = os.getenv("API_HASH")
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
+
+# Webhook / Hosting Config
+WEBHOOK_URL = os.getenv("WEBHOOK_URL")
+PORT = int(os.getenv("PORT", 8000))
+MONGO_URI = os.getenv("MONGO_URI")
+
+# Role Weights
+ROLE_WEIGHTS = {
+    "Captain": 1.5,
+    "All-Rounder": 1.3,
+    "Finisher": 1.2,
+    "Defence": 1.2, # Reserved for Test
+    "Hitting": 1.2,
+    "Pace": 1.0,
+    "Spin": 1.0,
+    "WK": 1.0,
+    "Fielding": 0.8
+}
+
+# Fixed Positions by Mode
+POSITIONS_T20 = [
+    "Captain",
+    "WK",
+    "All-Rounder",
+    "Finisher",
+    "Hitting",
+    "Pace",
+    "Spin",
+    "Fielding"
+]
+
+POSITIONS_TEST = [
+    "Captain",
+    "WK",
+    "All-Rounder",
+    "Defence",
+    "Hitting",
+    "Pace",
+    "Spin",
+    "Fielding"
+]
+
+# Legacy/Default for import safety (aliased to T20 for now)
+POSITIONS = POSITIONS_T20
+
+# Draft Settings
+MAX_REDRAWS = 2
+DRAFT_BANNER_URL = "https://upload.wikimedia.org/wikipedia/commons/thumb/6/69/Muralitharan_bowling_to_Adam_Gilchrist.jpg/1200px-Muralitharan_bowling_to_Adam_Gilchrist.jpg" # Reliable Cricket Image (Wiki)
+
+# Simulation Constants
+ZERO_SKILL_THRESHOLD = 30
+
+PENALTY_MULTIPLIERS = {
+    "NATURAL": 1.0,
+    "PARTIAL": 0.7,
+    "MISMATCH": 0.4,
+    "ZERO_SKILL": 0.1
+}
+
+ROLE_STATS_MAP = {
+    "Captain": "leadership",
+    "WK": "wicket_keeping",
+    "All-Rounder": "all_round",
+    "Defence": "batting_control", 
+    "Hitting": "batting_power",
+    "Finisher": "finishing", 
+    "Pace": "bowling_pace",
+    "Spin": "bowling_spin",
+    "Fielding": "fielding"
+}
