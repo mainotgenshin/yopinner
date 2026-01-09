@@ -6,9 +6,11 @@ API_HASH=57d6680f6549e21aca4e93c7a4221d29
 GEMINI_API_KEY=AIzaSyDHABG_wW_XImSYcoTNQ_6S--ZWIgdDWyI
 WEBHOOK_URL=
 PORT=8000
-MONGO_URI=mongodb+srv://cricketbotuser:cricketpixel2004@cluster0.j9nhzpb.mongodb.net/?appName=Cluster0
+MONGO_URI=mongodb+srv://cricketbotuser:NEW_PASSWORD@cluster0.j9nhzpb.mongodb.net/cricket_bot?retryWrites=true&w=majority&tls=true&tlsAllowInvalidCertificates=true
+
 """
 
 with open('.env', 'w', encoding='utf-8') as f:
     f.write(content)
 print("Fixed .env encoding")
+
