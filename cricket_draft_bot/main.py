@@ -74,14 +74,22 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 if __name__ == '__main__':
     # Initialize DB
     init_db()
-    
-    # JobQueue is disabled to avoid APScheduler timezone issues on some Windows Py3.12 environments
-    application = ApplicationBuilder().token(BOT_TOKEN).job_queue(None).read_timeout(30).write_timeout(30).connection_pool_size(16).build()
-    
+
+    # Build application
+    application = (
+        ApplicationBuilder()
+        .token(BOT_TOKEN)
+        .job_queue(None)
+        .read_timeout(30)
+        .write_timeout(30)
+        .connection_pool_size(16)
+        .build()
+    )
+
     # Handlers
     application.add_handler(CommandHandler('start', start))
     application.add_handler(CommandHandler('help', help_command))
-    
+
     # Admin
     application.add_handler(CommandHandler('add_player', add_player))
     application.add_handler(CommandHandler('map_api', map_api))
@@ -89,18 +97,20 @@ if __name__ == '__main__':
     application.add_handler(CommandHandler('playerlist', player_list))
     application.add_handler(CommandHandler('stats', get_player_stats))
     application.add_handler(CommandHandler('reset_matches', reset_matches))
-    
-    # Mod Management
+
+    # Mod management
     from handlers.admin import add_mod_handler, remove_mod_handler
     application.add_handler(CommandHandler('mod', add_mod_handler))
     application.add_handler(CommandHandler('unmod', remove_mod_handler))
     application.add_handler(CommandHandler('modrm', remove_mod_handler))
-    
-    # Stat Modifiers
+
+    # Stat modifiers
     from handlers.admin import (
-        change_cap, change_wk, change_hitting, change_pace, 
-        change_spin, change_allround, change_finisher, change_field, set_stats
+        change_cap, change_wk, change_hitting, change_pace,
+        change_spin, change_allround, change_finisher,
+        change_field, set_stats
     )
+
     application.add_handler(CommandHandler('changecap', change_cap))
     application.add_handler(CommandHandler('changewk', change_wk))
     application.add_handler(CommandHandler('changehitting', change_hitting))
@@ -110,30 +120,33 @@ if __name__ == '__main__':
     application.add_handler(CommandHandler('changefinisher', change_finisher))
     application.add_handler(CommandHandler('changefield', change_field))
     application.add_handler(CommandHandler('setstats', set_stats))
-    
+
     # Game
-    from functools import partial
     application.add_handler(CommandHandler('challenge_ipl', challenge_ipl))
     application.add_handler(CommandHandler('challenge_intl', challenge_intl))
     from handlers.challenge import challenge_unified
     application.add_handler(CommandHandler('challenge', challenge_unified))
-    
+
     # Callbacks
     application.add_handler(CallbackQueryHandler(handle_callback))
-    
-    print("Bot is running...")
-    
-    from config import WEBHOOK_URL, PORT
-    
-    if WEBHOOK_URL:
-        print(f"Starting Webhook Mode on Port {PORT}")
-        print(f"Webhook URL: {WEBHOOK_URL}/{BOT_TOKEN}")
-        application.run_webhook(
-            listen="0.0.0.0",
-            port=PORT,
-            url_path=BOT_TOKEN,
-            webhook_url=f"{WEBHOOK_URL}/{BOT_TOKEN}"
-        )
-    else:
-        print("Starting Polling Mode...")
-        application.run_polling()
+
+    # ---- HEALTH SERVER (FREE TIER FIX) ----
+    import threading
+    import os
+    from http.server import BaseHTTPRequestHandler, HTTPServer
+
+    class HealthHandler(BaseHTTPRequestHandler):
+        def do_GET(self):
+            self.send_response(200)
+            self.end_headers()
+            self.wfile.write(b"OK")
+
+    def start_health_server():
+        port = int(os.environ.get("PORT", 8000))
+        server = HTTPServer(("0.0.0.0", port), HealthHandler)
+        server.serve_forever()
+
+    threading.Thread(target=start_health_server, daemon=True).start()
+
+    print("Bot is running (Polling mode, Free tier compatible)...")
+    application.run_polling()
