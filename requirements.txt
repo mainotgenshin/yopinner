@@ -1,0 +1,6 @@
+python-telegram-bot>=20.0
+requests
+tzlocal<5.0
+google-generativeai
+beautifulsoup4
+python-dotenv
