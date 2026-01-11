@@ -30,6 +30,13 @@ async def handle_draft_callback(update: Update, context: ContextTypes.DEFAULT_TY
     if action == "assign":
         slot = parts[-1]
         match_id = "_".join(parts[1:-1])
+    elif action == "replace":
+        sub = parts[1]
+        if sub == "exec":
+             slot = parts[-1]
+             match_id = "_".join(parts[2:-1])
+        else:
+             match_id = "_".join(parts[2:])
     else:
         # draw / redraw
         match_id = "_".join(parts[1:])
@@ -68,6 +75,15 @@ async def handle_draft_callback(update: Update, context: ContextTypes.DEFAULT_TY
             
         elif action == "redraw":
             await handle_redraw(update, context, match)
+            
+        elif action == "replace":
+            sub = parts[1]
+            if sub == "start":
+                await handle_replace_start(update, context, match)
+            elif sub == "exec":
+                await handle_replace_exec(update, context, match, slot)
+            elif sub == "cancel":
+                await handle_replace_cancel(update, context, match)
             
     except Exception as e:
         logger.error(f"Error in draft handler: {e}")
@@ -151,32 +167,42 @@ async def update_draft_message(update: Update, context: ContextTypes.DEFAULT_TYP
              
     except Exception as e:
         err = str(e)
-        # Check if type mismatch
-        # Check if type mismatch
-        # "Message is not a text message" or "Message is not a media message" or "Message to edit not found"
-        # "There is no text in the message to edit" -> Trying to edit text on a photo message
+        logger.warning(f"Draft Message Update Error: {err}")
+        
+        # Check if type mismatch OR invalid file ID ("Wrong file identifier")
         is_type_mismatch = (
             "not a text message" in err 
             or "not a media message" in err 
             or "no caption" in err 
             or "photo" in err
             or "There is no text" in err
+            or "Wrong file identifier" in err
+            or "Media_empty" in err
+            or "Bad Request" in err
         )
         
         if is_type_mismatch or "not found" in err:
-             logger.info(f"Switching Message Type (Error: {err})")
+             logger.info(f"Switching Message Type or Recovering from Error (Error: {err})")
              # Delete Old
              try:
                  await context.bot.delete_message(chat_id=match.chat_id, message_id=match.draft_message_id)
              except:
                  pass
              
-             # Send New
-             if media:
-                  msg = await context.bot.send_photo(chat_id=match.chat_id, photo=media, caption=caption, reply_markup=reply_markup, parse_mode="Markdown")
-             else:
-                  msg = await context.bot.send_message(chat_id=match.chat_id, text=caption, reply_markup=reply_markup, parse_mode="Markdown")
-             
+             # Send New - with Safety Fallback
+             try:
+                 if media and str(media).strip(): # Ensure media is not empty string
+                      try:
+                          msg = await context.bot.send_photo(chat_id=match.chat_id, photo=media, caption=caption, reply_markup=reply_markup, parse_mode="Markdown")
+                      except Exception as media_err:
+                          logger.error(f"Failed to send media: {media_err}. Falling back to Text.")
+                          msg = await context.bot.send_message(chat_id=match.chat_id, text=caption + "\n⚠️ Image failed to load.", reply_markup=reply_markup, parse_mode="Markdown")
+                 else:
+                      msg = await context.bot.send_message(chat_id=match.chat_id, text=caption, reply_markup=reply_markup, parse_mode="Markdown")
+             except Exception as final_err:
+                 logger.error(f"CRITICAL: Failed to recover draft message: {final_err}")
+                 return
+
              match.draft_message_id = msg.message_id
              
              try:
@@ -233,8 +259,16 @@ async def handle_draw(update: Update, context: ContextTypes.DEFAULT_TYPE, match:
             row = []
     if row: keyboard.append(row)
     
+    # Footer Actions (Skip & Replace)
+    footer_row = []
     if current_team.redraws_remaining > 0:
-        keyboard.append([InlineKeyboardButton(f"🗑 Skip ({current_team.redraws_remaining})", callback_data=f"redraw_{match.match_id}")])
+        footer_row.append(InlineKeyboardButton(f"🗑 Skip ({current_team.redraws_remaining})", callback_data=f"redraw_{match.match_id}"))
+    
+    if current_team.replacements_remaining > 0 and any(current_team.slots.values()):
+        footer_row.append(InlineKeyboardButton(f"♻️ Replace ({current_team.replacements_remaining})", callback_data=f"replace_start_{match.match_id}"))
+        
+    if footer_row:
+        keyboard.append(footer_row)
     
     # Get Player Image
     from database import get_player
@@ -306,3 +340,86 @@ async def handle_redraw(update: Update, context: ContextTypes.DEFAULT_TYPE, matc
         
     else:
         await update.callback_query.answer("No skips left!", show_alert=True)
+
+async def handle_replace_start(update: Update, context: ContextTypes.DEFAULT_TYPE, match: Match):
+    current_team = match.team_a if match.team_a.owner_id == match.current_turn else match.team_b
+    if current_team.replacements_remaining <= 0:
+        await update.callback_query.answer("No replacements left!", show_alert=True)
+        return
+
+    # Check if we have a pending player (should be there)
+    if not match.pending_player_id:
+        await update.callback_query.answer("No player drawn!", show_alert=True)
+        return
+        
+    # Get Player Data
+    from database import get_player
+    player = get_player(match.pending_player_id)
+    
+    # UI: Show Filled Slots to Replace
+    card_caption = f"♻️ **Replacing Player**\nNew Player: {player['name']}\n\nSelect a position to replace:"
+    
+    keyboard = []
+    
+    # Show active filled positions
+    active_positions = POSITIONS_TEST if "Test" in match.mode else POSITIONS_T20
+    row = []
+    for pos in active_positions:
+        if current_team.slots.get(pos):
+             # Filled -> Eligible for replace
+             # Show who is currently there? "Pos: PlayerName"
+             current_p = current_team.slots.get(pos)
+             btn_text = f"🔴 {pos}: {current_p.name}"
+             row.append(InlineKeyboardButton(btn_text, callback_data=f"replace_exec_{match.match_id}_{pos}"))
+             
+        if len(row) == 1: # 1 per row for readability since names can be long
+             keyboard.append(row)
+             row = []
+    if row: keyboard.append(row)
+    
+    # Cancel Button
+    keyboard.append([InlineKeyboardButton("🔙 Cancel", callback_data=f"replace_cancel_{match.match_id}")])
+    
+    # Reuse media (banner or player card)
+    # We should probably show the player card of the NEW player to keep context
+    media = player.get('image_file_id', DRAFT_BANNER_URL)
+    
+    await update_draft_message(update, context, match, card_caption, keyboard, media=media)
+
+async def handle_replace_exec(update: Update, context: ContextTypes.DEFAULT_TYPE, match: Match, slot: str):
+    current_team = match.team_a if match.team_a.owner_id == match.current_turn else match.team_b
+    
+    # Validation
+    if current_team.replacements_remaining <= 0:
+        await update.callback_query.answer("No replacements left!", show_alert=True)
+        return
+        
+    old_player = current_team.slots.get(slot)
+    if not old_player:
+        await update.callback_query.answer("Slot is empty! Cannot replace.", show_alert=True)
+        return
+        
+    from database import get_player
+    from game.models import Player
+    
+    new_player_data = get_player(match.pending_player_id)
+    new_player = Player(**new_player_data)
+    
+    # Execute Replace
+    current_team.slots[slot] = new_player
+    current_team.replacements_remaining -= 1
+    match.pending_player_id = None
+    
+    # Switch Turn
+    switch_turn(match)
+    save_match_state(match)
+    
+    # Update Board
+    board_text = format_draft_board(match)
+    keyboard = [[InlineKeyboardButton("🎲 Draw Player", callback_data=f"draw_{match.match_id}")]]
+    
+    await update_draft_message(update, context, match, f"{board_text}\n\n♻️ {current_team.owner_name} replaced {old_player.name} with {new_player.name}!", keyboard, media=DRAFT_BANNER_URL)
+
+async def handle_replace_cancel(update: Update, context: ContextTypes.DEFAULT_TYPE, match: Match):
+    # Just go back to draw view
+    await handle_draw(update, context, match)
