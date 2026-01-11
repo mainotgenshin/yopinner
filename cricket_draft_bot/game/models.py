@@ -21,6 +21,7 @@ class Team:
     owner_name: str
     slots: Dict[str, Optional[Player]] = field(default_factory=dict) # "Captain": PlayerObject
     redraws_remaining: int = 2
+    replacements_remaining: int = 1
     is_ready: bool = False
 
     # __post_init__ removed to allow dynamic slots via constructor
