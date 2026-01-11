@@ -56,7 +56,7 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # We imported `handle_join`.
         await handle_join(update, context)
         
-    elif data.startswith("draw_") or data.startswith("assign_") or data.startswith("redraw_"):
+    elif data.startswith("draw_") or data.startswith("assign_") or data.startswith("redraw_") or data.startswith("replace_"):
         await handle_draft_callback(update, context)
         
     elif data.startswith("ready_"):
@@ -97,6 +97,8 @@ if __name__ == '__main__':
     application.add_handler(CommandHandler('playerlist', player_list))
     application.add_handler(CommandHandler('stats', get_player_stats))
     application.add_handler(CommandHandler('reset_matches', reset_matches))
+    from handlers.admin import check_role_stats
+    application.add_handler(CommandHandler('check', check_role_stats))
 
     # Mod management
     from handlers.admin import add_mod_handler, remove_mod_handler
