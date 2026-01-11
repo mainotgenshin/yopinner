@@ -55,6 +55,44 @@ async def add_player(update: Update, context: ContextTypes.DEFAULT_TYPE):
         name = parsed['name'].strip()
         # Handle comma-separated roles, stripping whitespace
         roles = [r.strip() for r in parsed['roles'].split(',') if r.strip()]
+        
+        # Validation: Check against ALLOWED POSITIONS
+        from config import POSITIONS_T20
+        # Normalize for comparison
+        # Actually config.POSITIONS_T20 has titles "All-Rounder", "Captain" etc.
+        # User input might vary slightly but we want strict.
+        
+        valid_roles = set(POSITIONS_T20)
+        # Create a lowercase map for friendly suggestions
+        valid_map = {r.lower(): r for r in valid_roles}
+        
+        validated_roles = []
+        for r in roles:
+            # Check exact match or case-insensitive match? prompt says "All-Round instead of All-Rounder which is an issue"
+            # So likely case-insensitive match but EXACT spelling required by logic later?
+            # Or mapped?
+            # Let's try to map "All-Round" -> fail, "All-Rounder" -> success.
+            # If we enforce strictness against the Config list.
+            
+            if r in valid_roles:
+                validated_roles.append(r)
+            elif r.lower() in valid_map:
+                 # Auto-fix case?
+                 validated_roles.append(valid_map[r.lower()])
+            else:
+                 # Invalid
+                 # User specifically mentioned "All-Round" vs "All-Rounder".
+                 # "All-Round" is NOT in POSITIONS_T20 (usually). POSITIONS_T20 has "All-Rounder".
+                 allowed_str = ", ".join(sorted(list(valid_roles)))
+                 await update.message.reply_text(
+                     f"❌ **Invalid Role:** `{r}`\n"
+                     f"Allowed: {allowed_str}\n" 
+                     f"Did you mean: `All-Rounder` instead of `All-Round`?",
+                     parse_mode="Markdown"
+                 )
+                 return
+
+        roles = validated_roles
         image_url = parsed['image'].strip()
             
         # ID Generation
@@ -409,7 +447,11 @@ async def get_player_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # msg = msg.replace('*', '').replace('_', '').replace('`', '')
     
     if p.get('image_file_id'):
-        await update.message.reply_photo(photo=p['image_file_id'], caption=msg)
+        try:
+            await update.message.reply_photo(photo=p['image_file_id'], caption=msg)
+        except Exception as e:
+            logger.error(f"Failed to send photo for {p['name']}: {e}")
+            await update.message.reply_text(msg + "\n\n⚠️ (Image failed to load - Bot Token Changed?)")
     else:
         await update.message.reply_text(msg)
 
@@ -664,3 +706,79 @@ async def set_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"{summary}",
         parse_mode="Markdown"
     )
+
+async def check_role_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """
+    /check [role] [mode]
+    Lists all players with the role and their stats in that mode.
+    """
+    if not await check_admin(update): return
+    
+    args = context.args
+    if not args or len(args) < 2:
+        await update.message.reply_text("Usage: `/check [role] [mode]`\nExample: `/check hitting intl`", parse_mode="Markdown")
+        return
+        
+    target_role_query = args[0] # e.g. "hitting"
+    target_mode = args[1].lower() # e.g. "intl" or "ipl"
+    
+    if target_mode not in ['ipl', 'intl', 'international']:
+         await update.message.reply_text("Mode must be `ipl` or `intl`.", parse_mode="Markdown")
+         return
+         
+    if target_mode == 'intl': target_mode = 'international'
+    
+    # Map role query to actual role name
+    # We need to map "hitting" -> "Hitting", "pace" -> "Pace" etc.
+    # And map role to STAT KEY from config.ROLE_STATS_MAP
+    from config import ROLE_STATS_MAP, POSITIONS_T20
+    
+    # First, identify the canonical Role Name from input
+    # Helper to fuzzy match input to keys in ROLE_STATS_MAP or POSITIONS
+    # ROLE_STATS_MAP keys are "Captain", "WK", "Hitting" etc.
+    
+    canonical_role = None
+    stat_key = None
+    
+    # Case insensitive search
+    for r in ROLE_STATS_MAP.keys():
+        if r.lower() == target_role_query.lower():
+            canonical_role = r
+            stat_key = ROLE_STATS_MAP[r]
+            break
+            
+    if not stat_key:
+         # Try common aliases? 
+         # e.g. "spin" -> "Spin", "pace" -> "Pace".
+         # What if user typed "batsman"? 
+         await update.message.reply_text(f"❌ Unknown role: `{target_role_query}`.\nAvailable: {', '.join(ROLE_STATS_MAP.keys())}", parse_mode="Markdown")
+         return
+         
+    from database import get_all_players
+    players = get_all_players()
+    
+    results = []
+    
+    for p in players:
+        # Check if player has this role in their list
+        # p['roles'] is a list of strings
+        if canonical_role in p['roles']:
+             # Get Stat
+             stats = p.get('stats', {}).get(target_mode, {})
+             val = stats.get(stat_key, 0) # Default 0 if missing
+             results.append((p['name'], val))
+             
+    # Sort Descending
+    results.sort(key=lambda x: x[1], reverse=True)
+    
+    if not results:
+        await update.message.reply_text(f"No players found with role **{canonical_role}**.", parse_mode="Markdown")
+        return
+        
+    lines = [f"📊 **{canonical_role} ({target_mode.upper()})**"]
+    for idx, (name, score) in enumerate(results, 1):
+        lines.append(f"{idx}. {name}: **{score}**")
+        
+    msg = "\n".join(lines)
+    if len(msg) > 4000: msg = msg[:4000] + "..."
+    await update.message.reply_text(msg, parse_mode="Markdown")
