@@ -61,6 +61,7 @@ def save_match_state(match: Match):
             "owner_name": team.owner_name,
             "slots": {k: (v.player_id if v else None) for k, v in team.slots.items()},
             "redraws_remaining": team.redraws_remaining,
+            "replacements_remaining": team.replacements_remaining,
             "is_ready": team.is_ready
         }
 
@@ -89,6 +90,7 @@ def load_match_state(match_id: str) -> Optional[Match]:
     def dict_to_team(d):
         t = Team(owner_id=d['owner_id'], owner_name=d['owner_name'])
         t.redraws_remaining = d['redraws_remaining']
+        t.replacements_remaining = d.get('replacements_remaining', 1)
         t.is_ready = d.get('is_ready', False)
         # Reconstruct slots
         for slot, pid in d['slots'].items():
