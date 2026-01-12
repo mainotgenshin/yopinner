@@ -112,7 +112,7 @@ if __name__ == '__main__':
         change_spin, change_allround, change_finisher,
         change_field, set_stats, fix_roles_command, set_roles_command
     )
-    )
+    
 
     application.add_handler(CommandHandler('changecap', change_cap))
     application.add_handler(CommandHandler('changewk', change_wk))
