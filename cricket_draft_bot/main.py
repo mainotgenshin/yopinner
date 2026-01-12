@@ -110,7 +110,8 @@ if __name__ == '__main__':
     from handlers.admin import (
         change_cap, change_wk, change_hitting, change_pace,
         change_spin, change_allround, change_finisher,
-        change_field, set_stats
+        change_field, set_stats, fix_roles_command, set_roles_command
+    )
     )
 
     application.add_handler(CommandHandler('changecap', change_cap))
@@ -122,6 +123,8 @@ if __name__ == '__main__':
     application.add_handler(CommandHandler('changefinisher', change_finisher))
     application.add_handler(CommandHandler('changefield', change_field))
     application.add_handler(CommandHandler('setstats', set_stats))
+    application.add_handler(CommandHandler('fix_roles', fix_roles_command))
+    application.add_handler(CommandHandler('set_roles', set_roles_command))
 
     # Game
     application.add_handler(CommandHandler('challenge_ipl', challenge_ipl))
