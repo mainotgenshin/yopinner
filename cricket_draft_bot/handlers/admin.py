@@ -782,3 +782,137 @@ async def check_role_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
     msg = "\n".join(lines)
     if len(msg) > 4000: msg = msg[:4000] + "..."
     await update.message.reply_text(msg, parse_mode="Markdown")
+
+async def fix_roles_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """
+    /fix_roles - Normalizes all player roles against config.POSITIONS_T20
+    """
+    if not await check_admin(update): return
+
+    from database import get_all_players, save_player
+    from config import POSITIONS_T20, POSITIONS_TEST
+
+    players = get_all_players()
+    updated_count = 0
+    
+    # Merge all valid positions for lookup
+    # POSITIONS_T20 has "WK", "Captain", "All-Rounder" etc.
+    valid_map = {r.lower(): r for r in POSITIONS_T20 + POSITIONS_TEST}
+    
+    # Explicit Aliases for common mistakes
+    aliases = {
+        "all-round": "All-Rounder",
+        "all round": "All-Rounder",
+        "wicketkeeper": "WK",
+        "keeper": "WK",
+        "batting": "Hitting",
+        "bowling": "Pace" # Assumption, might be strict but safe to skip if unsure
+    }
+    
+    for p in players:
+        current_roles = p.get('roles', [])
+        new_roles = []
+        changed = False
+        
+        for r in current_roles:
+            r_lower = r.lower()
+            
+            # 1. Check Exact Match (Normalizing Case)
+            if r_lower in valid_map:
+                normalized = valid_map[r_lower]
+                if normalized != r:
+                    changed = True
+                new_roles.append(normalized)
+            
+            # 2. Check Aliases
+            elif r_lower in aliases:
+                normalized = aliases[r_lower]
+                changed = True  # Alias is always a change
+                new_roles.append(normalized)
+                
+            # 3. Keep Unknown (to avoid data loss) but maybe normalized text?
+            else:
+                new_roles.append(r) # Keep strictly as is? Or title case?
+        
+        # Deduplicate
+        unique_roles = []
+        for r in new_roles:
+            if r not in unique_roles: unique_roles.append(r)
+            else: changed = True # Removed duplicate
+            
+        if changed:
+            p['roles'] = unique_roles
+            save_player(p)
+            updated_count += 1
+            
+    await update.message.reply_text(f"✅ Role Normalization Complete.\nUpdated {updated_count} players.")
+
+async def set_roles_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """
+    /set_roles player_id=ID roles=A,B
+    """
+    if not await check_admin(update): return
+
+    text = update.message.text.replace('/set_roles', '').strip()
+    
+    # Helper to parse key=value
+    import re
+    # Match player_id=... and roles=...
+    # Flexible order
+    
+    pid_match = re.search(r'player_id\s*=\s*([^\s]+)', text, re.IGNORECASE)
+    roles_match = re.search(r'roles\s*=\s*(.+?)(?=$| player_id=)', text, re.IGNORECASE)
+    
+    if not pid_match or not roles_match:
+         await update.message.reply_text(
+             "❌ **Usage:** `/set_roles player_id=ID roles=Captain,WK`",
+             parse_mode="Markdown"
+         )
+         return
+         
+    player_id = pid_match.group(1).strip()
+    roles_str = roles_match.group(1).strip()
+    
+    from database import get_player, save_player
+    p = get_player(player_id)
+    
+    if not p:
+        await update.message.reply_text(f"❌ Player not found: `{player_id}`", parse_mode="Markdown")
+        return
+        
+    # Validate Roles
+    from config import POSITIONS_T20
+    valid_map = {r.lower(): r for r in POSITIONS_T20}
+    
+    # Normalize valid roles, reject invalid? Or warn?
+    # Logic: Filter valid, auto-fix case
+    
+    raw_roles = [r.strip() for r in roles_str.split(',') if r.strip()]
+    final_roles = []
+    invalid_roles = []
+    
+    for r in raw_roles:
+        if r.lower() in valid_map:
+            final_roles.append(valid_map[r.lower()])
+        elif r.lower() == "all-round": # Alias support here too?
+             final_roles.append("All-Rounder")
+        else:
+            invalid_roles.append(r)
+            
+    if invalid_roles:
+        await update.message.reply_text(
+            f"❌ **Invalid Roles:** {', '.join(invalid_roles)}\n"
+            f"Allowed: {', '.join(POSITIONS_T20)}",
+            parse_mode="Markdown"
+        )
+        return
+        
+    p['roles'] = final_roles
+    save_player(p)
+    
+    await update.message.reply_text(
+        f"✅ Updated roles for **{p['name']}**.\n"
+        f"New Roles: {', '.join(final_roles)}",
+        parse_mode="Markdown"
+    )
+
