@@ -849,60 +849,112 @@ async def fix_roles_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def set_roles_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """
-    /set_roles player_id=ID roles=A,B
+    /setroles Name roles=Captain,WK
+    /setroles player_id=ID roles=Captain,WK
     """
     if not await check_admin(update): return
 
-    text = update.message.text.replace('/set_roles', '').strip()
+    # Remove command prefix (support both variants)
+    text = update.message.text
+    if text.startswith('/set_roles'):
+        text = text.replace('/set_roles', '', 1).strip()
+    else:
+        text = text.replace('/setroles', '', 1).strip()
     
-    # Helper to parse key=value
+    if not text:
+        await update.message.reply_text(
+            "❌ **Usage:** `/setroles [Name/ID] roles=Role1,Role2`\n"
+            "Example: `/setroles Virat Kohli roles=Captain,Hitting`",
+            parse_mode="Markdown"
+        )
+        return
+
+    # Strategy: Look for 'roles=' keyword. Everything before it is the identifier (Name or ID).
     import re
-    # Match player_id=... and roles=...
-    # Flexible order
+    # Match: (Identifier) roles=(Roles)
+    # This allows spaces in identifier.
+    match = re.search(r'^(.*?)\s+roles\s*=\s*(.*)$', text, re.IGNORECASE | re.DOTALL)
     
-    pid_match = re.search(r'player_id\s*=\s*([^\s]+)', text, re.IGNORECASE)
-    roles_match = re.search(r'roles\s*=\s*(.+?)(?=$| player_id=)', text, re.IGNORECASE)
+    identifier = None
+    roles_str = None
     
-    if not pid_match or not roles_match:
-         await update.message.reply_text(
-             "❌ **Usage:** `/set_roles player_id=ID roles=Captain,WK`",
-             parse_mode="Markdown"
-         )
-         return
+    if match:
+        identifier = match.group(1).strip()
+        roles_str = match.group(2).strip()
+    else:
+        # Fallback: maybe they used explicit player_id= syntax without spaces?
+        # Or maybe reversed order? Let's Stick to "Identifier roles=..." as primary.
+        # Check if they used the old strict syntax "player_id=X roles=Y" which might not match if they have extra params
+        
+        # Try finding 'roles=' anywhere
+        roles_match = re.search(r'roles\s*=\s*([^=\n]+)', text, re.IGNORECASE)
+        if roles_match:
+            roles_str = roles_match.group(1).strip()
+            # Remove the roles part from text to find identifier
+            # This is tricky if order varies.
+            # Let's rely on the simple split first. If that failed, it means pattern didn't match.
+            # Maybe they didn't put a space before roles? "Name roles=..."
+            pass
+            
+    if not identifier or not roles_str:
+         # Try parsing explicit player_id= if present
+         pid_match = re.search(r'player_id\s*=\s*([^\s]+)', text, re.IGNORECASE)
+         rm_match = re.search(r'roles\s*=\s*(.+)', text, re.IGNORECASE)
          
-    player_id = pid_match.group(1).strip()
-    roles_str = roles_match.group(1).strip()
+         if pid_match and rm_match:
+             identifier = pid_match.group(1).strip()
+             roles_str = rm_match.group(1).strip()
+         else:
+             await update.message.reply_text(
+                 "❌ **Parsing Error**\n"
+                 "Usage: `/setroles [Name] roles=A,B`",
+                 parse_mode="Markdown"
+             )
+             return
+
+    # Clean identifier (remove player_id= if user typed it manually in the first part)
+    if identifier.lower().startswith('player_id='):
+        identifier = identifier.split('=', 1)[1].strip()
+
+    from database import get_player, get_player_by_name, save_player
     
-    from database import get_player, save_player
-    p = get_player(player_id)
+    # Try ID first
+    p = get_player(identifier)
+    if not p:
+        # Try Name
+        p = get_player_by_name(identifier)
     
     if not p:
-        await update.message.reply_text(f"❌ Player not found: `{player_id}`", parse_mode="Markdown")
+        await update.message.reply_text(f"❌ Player not found: `{identifier}`", parse_mode="Markdown")
         return
         
     # Validate Roles
     from config import POSITIONS_T20
     valid_map = {r.lower(): r for r in POSITIONS_T20}
     
-    # Normalize valid roles, reject invalid? Or warn?
-    # Logic: Filter valid, auto-fix case
-    
     raw_roles = [r.strip() for r in roles_str.split(',') if r.strip()]
     final_roles = []
     invalid_roles = []
     
     for r in raw_roles:
-        if r.lower() in valid_map:
-            final_roles.append(valid_map[r.lower()])
-        elif r.lower() == "all-round": # Alias support here too?
+        r_lower = r.lower()
+        if r_lower in valid_map:
+            final_roles.append(valid_map[r_lower])
+        elif r_lower == "all-round": 
              final_roles.append("All-Rounder")
+        elif r_lower in ["wk", "keeper", "wicketkeeper"]:
+             final_roles.append("WK")
+        elif r_lower in ["batting", "batsman"]:
+             final_roles.append("Hitting")
+        elif r_lower in ["bowling", "bowler"]:
+             final_roles.append("Pace") # Defaulting generic bowling to Pace is risky but helpful
         else:
             invalid_roles.append(r)
             
     if invalid_roles:
         await update.message.reply_text(
             f"❌ **Invalid Roles:** {', '.join(invalid_roles)}\n"
-            f"Allowed: {', '.join(POSITIONS_T20)}",
+            f"Allowed: {', '.join(sorted(POSITIONS_T20))}",
             parse_mode="Markdown"
         )
         return
@@ -911,7 +963,7 @@ async def set_roles_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     save_player(p)
     
     await update.message.reply_text(
-        f"✅ Updated roles for **{p['name']}**.\n"
+        f"✅ **Updated Roles for {p['name']}**\n"
         f"New Roles: {', '.join(final_roles)}",
         parse_mode="Markdown"
     )
