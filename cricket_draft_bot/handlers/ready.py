@@ -20,6 +20,11 @@ async def handle_ready(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
     user_id = query.from_user.id
     
+    # Check concurrency state
+    if match.state in ["SIMULATING", "COMPLETED"]:
+        await query.answer("Simulation is already running or complete!", show_alert=True)
+        return
+        
     # Mark user as ready
     if user_id == match.team_a.owner_id:
         match.team_a.is_ready = True
@@ -35,9 +40,11 @@ async def handle_ready(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     # Check if both ready
     if match.team_a.is_ready and match.team_b.is_ready:
+        # Prevent double-entry here
+        match.state = "SIMULATING"
+        save_match_state(match)
+        
         # Update text to "Simulating..."
-        # Update text to "Simulating..."
-        # It's a photo message OR text message now
         try:
             if query.message.photo:
                 await query.message.edit_caption("⏳ **All Ready! Running Simulation...**", parse_mode="Markdown")
@@ -46,10 +53,13 @@ async def handle_ready(update: Update, context: ContextTypes.DEFAULT_TYPE):
         except BadRequest as e:
             if "not modified" not in str(e):
                 logger.error(f"Ready Handler Error: {e}")
-            pass # Ignore if already modified
+            pass 
         
         # Run Simulation
         result_text = run_simulation(match)
+        
+        match.state = "COMPLETED"
+        save_match_state(match)
         
         # Send Result
         await context.bot.send_message(
@@ -57,8 +67,6 @@ async def handle_ready(update: Update, context: ContextTypes.DEFAULT_TYPE):
             text=result_text,
             parse_mode="Markdown"
         )
-        
-        # Cleanup if needed (remove active match state from memory/db? kept for history usually)
     else:
         # Update message to show who is ready
         a_status = "✅" if match.team_a.is_ready else "⏳"
