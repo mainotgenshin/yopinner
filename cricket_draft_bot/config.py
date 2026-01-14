@@ -26,37 +26,40 @@ MONGO_URI = os.getenv("MONGO_URI")
 # Role Weights
 ROLE_WEIGHTS = {
     "Captain": 1.5,
-    "All-Rounder": 1.3,
+    "All Rounder": 1.3,
     "Finisher": 1.2,
-    "Defence": 1.2, # Reserved for Test
-    "Hitting": 1.2,
-    "Pace": 1.0,
-    "Spin": 1.0,
+    "Defence": 1.2, 
+    "Top": 1.2,
+    "Middle": 1.2,
+    "Pacer": 1.0,
+    "Spinner": 1.0,
     "WK": 1.0,
-    "Fielding": 0.8
+    "Fielder": 0.8
 }
 
 # Fixed Positions by Mode
 POSITIONS_T20 = [
     "Captain",
     "WK",
-    "All-Rounder",
+    "Top",
+    "Middle",
+    "All Rounder",
     "Finisher",
-    "Hitting",
-    "Pace",
-    "Spin",
-    "Fielding"
+    "Pacer",
+    "Spinner",
+    "Fielder"
 ]
 
 POSITIONS_TEST = [
     "Captain",
     "WK",
-    "All-Rounder",
+    "Top",
+    "Middle",
+    "All Rounder",
     "Defence",
-    "Hitting",
-    "Pace",
-    "Spin",
-    "Fielding"
+    "Pacer",
+    "Spinner",
+    "Fielder"
 ]
 
 # Legacy/Default for import safety (aliased to T20 for now)
@@ -79,11 +82,12 @@ PENALTY_MULTIPLIERS = {
 ROLE_STATS_MAP = {
     "Captain": "leadership",
     "WK": "wicket_keeping",
-    "All-Rounder": "all_round",
-    "Defence": "batting_control", 
-    "Hitting": "batting_power",
+    "All Rounder": "all_round",
+    "Defence": "batting_defence", 
+    "Top": "batting_power",
+    "Middle": "batting_control",
     "Finisher": "finishing", 
-    "Pace": "bowling_pace",
-    "Spin": "bowling_spin",
-    "Fielding": "fielding"
+    "Pacer": "bowling_pace",
+    "Spinner": "bowling_spin",
+    "Fielder": "fielding"
 }
