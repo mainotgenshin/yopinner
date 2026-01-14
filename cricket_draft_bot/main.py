@@ -107,24 +107,30 @@ if __name__ == '__main__':
     application.add_handler(CommandHandler('modrm', remove_mod_handler))
 
     # Stat modifiers
+    # Stat modifiers
     from handlers.admin import (
-        change_cap, change_wk, change_hitting, change_pace,
-        change_spin, change_allround, change_finisher,
-        change_field, set_stats, fix_roles_command, set_roles_command
+        change_cap, change_wk, change_top, change_middle,
+        change_defence, change_pacer, change_spinner, 
+        change_allrounder, change_finisher, change_fielder,
+        set_stats, fix_roles_command, migrate_roles_command,
+        add_role_command, rem_role_command
     )
-    
 
     application.add_handler(CommandHandler('changecap', change_cap))
     application.add_handler(CommandHandler('changewk', change_wk))
-    application.add_handler(CommandHandler('changehitting', change_hitting))
-    application.add_handler(CommandHandler('changepace', change_pace))
-    application.add_handler(CommandHandler('changespin', change_spin))
-    application.add_handler(CommandHandler('changeallround', change_allround))
+    application.add_handler(CommandHandler('changetop', change_top))
+    application.add_handler(CommandHandler('changemiddle', change_middle))
+    application.add_handler(CommandHandler('changedefence', change_defence))
+    application.add_handler(CommandHandler('changepacer', change_pacer))
+    application.add_handler(CommandHandler('changespinner', change_spinner))
+    application.add_handler(CommandHandler('changeallrounder', change_allrounder))
     application.add_handler(CommandHandler('changefinisher', change_finisher))
-    application.add_handler(CommandHandler('changefield', change_field))
+    application.add_handler(CommandHandler('changefielder', change_fielder))
     application.add_handler(CommandHandler('setstats', set_stats))
     application.add_handler(CommandHandler('fix_roles', fix_roles_command))
-    application.add_handler(CommandHandler('set_roles', set_roles_command))
+    application.add_handler(CommandHandler('migrate_roles', migrate_roles_command))
+    application.add_handler(CommandHandler('add_role', add_role_command))
+    application.add_handler(CommandHandler('rem_role', rem_role_command))
 
     # Game
     application.add_handler(CommandHandler('challenge_ipl', challenge_ipl))
