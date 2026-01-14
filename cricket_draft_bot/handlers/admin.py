@@ -65,29 +65,25 @@ async def add_player(update: Update, context: ContextTypes.DEFAULT_TYPE):
         valid_roles = set(POSITIONS_T20)
         # Create a lowercase map for friendly suggestions
         valid_map = {r.lower(): r for r in valid_roles}
+        # Add friendly aliases
+        valid_map['all-rounder'] = "All Rounder" # legacy
+        valid_map['all'] = "All Rounder"
+        valid_map['all rounder'] = "All Rounder"
+        valid_map['batting'] = "Top" # assumption? Or strict? 
+        # Let's keep it strict but handle the "All Rounder" nuance.
         
         validated_roles = []
         for r in roles:
-            # Check exact match or case-insensitive match? prompt says "All-Round instead of All-Rounder which is an issue"
-            # So likely case-insensitive match but EXACT spelling required by logic later?
-            # Or mapped?
-            # Let's try to map "All-Round" -> fail, "All-Rounder" -> success.
-            # If we enforce strictness against the Config list.
-            
-            if r in valid_roles:
-                validated_roles.append(r)
-            elif r.lower() in valid_map:
-                 # Auto-fix case?
-                 validated_roles.append(valid_map[r.lower()])
+            clean_r = r.strip().lower()
+            if clean_r in valid_map:
+                validated_roles.append(valid_map[clean_r])
             else:
-                 # Invalid
-                 # User specifically mentioned "All-Round" vs "All-Rounder".
-                 # "All-Round" is NOT in POSITIONS_T20 (usually). POSITIONS_T20 has "All-Rounder".
+                 # Suggest valid roles
                  allowed_str = ", ".join(sorted(list(valid_roles)))
                  await update.message.reply_text(
                      f"❌ **Invalid Role:** `{r}`\n"
                      f"Allowed: {allowed_str}\n" 
-                     f"Did you mean: `All-Rounder` instead of `All-Round`?",
+                     f"**New Roles:** Top, Middle, All Rounder, Pacer, Spinner, Finisher, Fielder, Defence, Captain, WK",
                      parse_mode="Markdown"
                  )
                  return
@@ -407,27 +403,29 @@ async def get_player_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # Handle old structure fallback (int) vs new structure (dict)
     # Helpers for display
     has_wk = "WK" in [r.upper() for r in p['roles']]
+    has_defence = "DEFENCE" in [r.upper() for r in p['roles']]
     
     def format_stats(data):
         if isinstance(data, int): return str(data)
         parts = []
         
-        # Always Show Core Stats
-        parts.append(f"🧠 Leadership: {data.get('leadership')}")
-        parts.append(f"🔥 Batting Pow: {data.get('batting_power')}")
-        parts.append(f"🛡️ Batting Ctrl: {data.get('batting_control')}")
+        # Core Stats (Renamed to match Roles)
+        parts.append(f"🧠 Captain: {data.get('leadership')}")
+        parts.append(f"🏏 Top: {data.get('batting_power')}")
+        parts.append(f"🛡️ Middle: {data.get('batting_control')}")
         
-        # Wicket Keeping: Explicitly show if WK role exists
+        if has_defence:
+             parts.append(f"🧱 Defence: {data.get('batting_defence', 50)}")
+        
+        # Wicket Keeping
         if has_wk:
-             parts.append(f"🧤 Wicket Keeping: {data.get('wicket_keeping', 50)}")
+             parts.append(f"🧤 WK: {data.get('wicket_keeping', 50)}")
 
-        parts.append(f"💥 Finishing: {data.get('finishing')}")
-        parts.append(f"⚡ Bowling Pace: {data.get('bowling_pace', 20)}")
-        parts.append(f"🌀 Bowling Spin: {data.get('bowling_spin', 20)}")
-        parts.append(f"🧤 All-Round: {data.get('all_round')}")
-        parts.append(f"🛡️ Fielding: {data.get('fielding')}")
-        
-        # Clutch hidden per user request (though used in sim)
+        parts.append(f"💥 Finisher: {data.get('finishing')}")
+        parts.append(f"⚡ Pacer: {data.get('bowling_pace', 20)}")
+        parts.append(f"🌀 Spinner: {data.get('bowling_spin', 20)}")
+        parts.append(f"✨ All Rounder: {data.get('all_round')}")
+        parts.append(f"👟 Fielder: {data.get('fielding')}")
         
         return "\n".join(parts) if parts else "N/A"
         
@@ -531,23 +529,29 @@ async def change_cap(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def change_wk(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await modify_stat_generic(update, context, "wicket_keeping", "changewk")
 
-async def change_hitting(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await modify_stat_generic(update, context, "batting_power", "changehitting")
+async def change_top(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await modify_stat_generic(update, context, "batting_power", "changetop")
 
-async def change_pace(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await modify_stat_generic(update, context, "bowling_pace", "changepace")
+async def change_middle(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await modify_stat_generic(update, context, "batting_control", "changemiddle")
+
+async def change_defence(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await modify_stat_generic(update, context, "batting_defence", "changedefence")
+
+async def change_pacer(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await modify_stat_generic(update, context, "bowling_pace", "changepacer")
     
-async def change_spin(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await modify_stat_generic(update, context, "bowling_spin", "changespin")
+async def change_spinner(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await modify_stat_generic(update, context, "bowling_spin", "changespinner")
     
-async def change_allround(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await modify_stat_generic(update, context, "all_round", "changeallround")
+async def change_allrounder(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await modify_stat_generic(update, context, "all_round", "changeallrounder")
     
 async def change_finisher(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await modify_stat_generic(update, context, "finishing", "changefinisher")
 
-async def change_field(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await modify_stat_generic(update, context, "fielding", "changefield")
+async def change_fielder(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await modify_stat_generic(update, context, "fielding", "changefielder")
 
 async def add_mod_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """
@@ -579,7 +583,7 @@ async def remove_mod_handler(update: Update, context: ContextTypes.DEFAULT_TYPE)
 
 async def set_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """
-    /setstats PlayerName format=ipl cap=90 hit=80 ...
+    /setstats PlayerName format=ipl cap=90 top=80 mid=85 ...
     """
     if not await check_admin(update): return
 
@@ -587,8 +591,8 @@ async def set_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not text:
         await update.message.reply_text(
             "❌ **Invalid Syntax**\n"
-            "Usage: `/setstats [Name] [format=all|ipl|intl] cap=90 hit=85 ...`\n"
-            "Keys: cap, wk, hit, pace, spin, all, fin, field",
+            "Usage: `/setstats [Name] [format=all|ipl|intl] cap=90 top=85 ...`\n"
+            "Keys: cap, wk, top, mid, def, all (or allrounder), pacer, spinner, fin, field",
             parse_mode="Markdown"
         )
         return
@@ -630,10 +634,13 @@ async def set_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
     key_map = {
         'cap': 'leadership',
         'wk': 'wicket_keeping',
-        'hit': 'batting_power',
-        'pace': 'bowling_pace',
-        'spin': 'bowling_spin',
+        'top': 'batting_power',
+        'mid': 'batting_control',
+        'def': 'batting_defence',
+        'pacer': 'bowling_pace',
+        'spinner': 'bowling_spin',
         'all': 'all_round',
+        'allrounder': 'all_round',
         'fin': 'finishing',
         'field': 'fielding'
     }
@@ -729,28 +736,49 @@ async def check_role_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if target_mode == 'intl': target_mode = 'international'
     
     # Map role query to actual role name
-    # We need to map "hitting" -> "Hitting", "pace" -> "Pace" etc.
+    # We need to map "hitting" -> "Top", "pace" -> "Pacer" etc.
     # And map role to STAT KEY from config.ROLE_STATS_MAP
-    from config import ROLE_STATS_MAP, POSITIONS_T20
+    from config import ROLE_STATS_MAP, POSITIONS_T20, POSITIONS_TEST
     
     # First, identify the canonical Role Name from input
     # Helper to fuzzy match input to keys in ROLE_STATS_MAP or POSITIONS
-    # ROLE_STATS_MAP keys are "Captain", "WK", "Hitting" etc.
+    # ROLE_STATS_MAP keys are "Captain", "WK", "Top" etc.
     
     canonical_role = None
     stat_key = None
     
-    # Case insensitive search
-    for r in ROLE_STATS_MAP.keys():
-        if r.lower() == target_role_query.lower():
-            canonical_role = r
-            stat_key = ROLE_STATS_MAP[r]
-            break
+    # Pre-defined aliases for user convenience
+    input_alias = target_role_query.lower()
+    alias_map = {
+        "hitting": "Top",
+        "batting": "Top",
+        "pace": "Pacer",
+        "spin": "Spinner",
+        "all": "All Rounder",
+        "all-rounder": "All Rounder",
+        "field": "Fielder",
+        "fielding": "Fielder",
+        "def": "Defence",
+        "defence": "Defence",
+        "middle": "Middle",
+        "top": "Top",
+        "wk": "WK",
+        "cap": "Captain"
+    }
+
+    if input_alias in alias_map:
+        canonical_role = alias_map[input_alias]
+    else:
+        # Try direct match in keys
+        for r in ROLE_STATS_MAP.keys():
+            if r.lower() == input_alias:
+                canonical_role = r
+                break
+    
+    if canonical_role and canonical_role in ROLE_STATS_MAP:
+        stat_key = ROLE_STATS_MAP[canonical_role]
             
     if not stat_key:
-         # Try common aliases? 
-         # e.g. "spin" -> "Spin", "pace" -> "Pace".
-         # What if user typed "batsman"? 
          await update.message.reply_text(f"❌ Unknown role: `{target_role_query}`.\nAvailable: {', '.join(ROLE_STATS_MAP.keys())}", parse_mode="Markdown")
          return
          
@@ -785,67 +813,143 @@ async def check_role_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def fix_roles_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """
-    /fix_roles - Normalizes all player roles against config.POSITIONS_T20
+    /fix_roles - Alias for /migrate_roles
     """
-    if not await check_admin(update): return
-
-    from database import get_all_players, save_player
-    from config import POSITIONS_T20, POSITIONS_TEST
-
-    players = get_all_players()
-    updated_count = 0
+    await migrate_roles_command(update, context)
     
     # Merge all valid positions for lookup
-    # POSITIONS_T20 has "WK", "Captain", "All-Rounder" etc.
+    # POSITIONS_T20 has "WK", "Captain", "All Rounder" etc.
     valid_map = {r.lower(): r for r in POSITIONS_T20 + POSITIONS_TEST}
     
-    # Explicit Aliases for common mistakes
-    aliases = {
-        "all-round": "All-Rounder",
-        "all round": "All-Rounder",
-        "wicketkeeper": "WK",
-        "keeper": "WK",
-        "batting": "Hitting",
-        "bowling": "Pace" # Assumption, might be strict but safe to skip if unsure
-    }
-    
     for p in players:
-        current_roles = p.get('roles', [])
-        new_roles = []
         changed = False
-        
-        for r in current_roles:
-            r_lower = r.lower()
-            
-            # 1. Check Exact Match (Normalizing Case)
-            if r_lower in valid_map:
-                normalized = valid_map[r_lower]
-                if normalized != r:
-                    changed = True
-                new_roles.append(normalized)
-            
-            # 2. Check Aliases
-            elif r_lower in aliases:
-                normalized = aliases[r_lower]
-                changed = True  # Alias is always a change
-                new_roles.append(normalized)
+        new_roles = []
+        for r in p['roles']:
+            # Normalizer Logic
+            r_clean = r.strip()
+            # If already valid, keep
+            if r_clean in POSITIONS_T20 or r_clean in POSITIONS_TEST:
+                if r_clean not in new_roles: new_roles.append(r_clean)
+                continue
                 
-            # 3. Keep Unknown (to avoid data loss) but maybe normalized text?
-            else:
-                new_roles.append(r) # Keep strictly as is? Or title case?
-        
-        # Deduplicate
-        unique_roles = []
-        for r in new_roles:
-            if r not in unique_roles: unique_roles.append(r)
-            else: changed = True # Removed duplicate
+            # Maps
+            norm = r_clean.lower()
+            mapped = None
             
+            if norm == 'hitting': mapped = 'Top'
+            elif norm == 'pacex': mapped = 'Pacer' # Typo safety?
+            elif norm == 'pace': mapped = 'Pacer'
+            elif norm == 'spin': mapped = 'Spinner'
+            elif norm == 'all-rounder': mapped = 'All Rounder'
+            elif norm == 'all': mapped = 'All Rounder'
+            elif norm == 'fielding': mapped = 'Fielder'
+            elif norm in valid_map: mapped = valid_map[norm]
+            
+            if mapped:
+                changed = True
+                if mapped not in new_roles: new_roles.append(mapped)
+            else:
+                # Keep unknown? Or drop? Let's keep to be safe, but warn user manually checking could help
+                new_roles.append(r_clean)
+                
         if changed:
-            p['roles'] = unique_roles
+            p['roles'] = new_roles
             save_player(p)
             updated_count += 1
             
-    await update.message.reply_text(f"✅ Role Normalization Complete.\nUpdated {updated_count} players.")
+    await update.message.reply_text(f"✅ Migration Complete. Updated {updated_count} players.")
+
+async def migrate_roles_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """
+    /migrate_roles - Updates ALL players:
+    1. Maps Old -> New Roles (Hitting -> Top)
+    2. Normalizes Aliases
+    3. Enforces Exclusivity (Removes Top if All Rounder/Finisher present)
+    """
+    if not await check_admin(update): return
+    
+    from database import get_all_players, save_player
+    from config import POSITIONS_T20, POSITIONS_TEST
+    
+    players = get_all_players()
+    total_updated = 0
+    cleaned_top_count = 0
+    
+    # Valid Canonical Roles
+    valid_roles = set(POSITIONS_T20 + POSITIONS_TEST)
+    valid_map = {r.lower(): r for r in valid_roles}
+    
+    # Aliases & Legacy Mapping
+    aliases = {
+        "hitting": "Top",
+        "batting": "Top",
+        "pace": "Pacer",
+        "bowling": "Pacer",
+        "spin": "Spinner",
+        "all-rounder": "All Rounder",
+        "all-round": "All Rounder",
+        "all": "All Rounder",
+        "fielding": "Fielder",
+        "field": "Fielder",
+        "defence": "Defence",
+        "def": "Defence",
+        "middle": "Middle",
+        "wk": "WK",
+        "keeper": "WK",
+        "wicketkeeper": "WK",
+        "captain": "Captain",
+        "cap": "Captain",
+        "finisher": "Finisher"
+    }
+
+    for p in players:
+        current_roles = p.get('roles', [])
+        new_roles = []
+        is_modified = False
+        
+        # Step 1: Normalize & Map
+        for r in current_roles:
+            r_clean = r.strip()
+            r_lower = r_clean.lower()
+            
+            canonical = None
+            
+            if r_lower in valid_map:
+                canonical = valid_map[r_lower]
+            elif r_lower in aliases:
+                canonical = aliases[r_lower]
+            else:
+                canonical = r_clean # Keep unknown?
+            
+            new_roles.append(canonical)
+            
+        # Step 2: Dedupe
+        unique_roles = []
+        for r in new_roles:
+            if r not in unique_roles: unique_roles.append(r)
+        
+        # Check against original to see if modified so far
+        if unique_roles != current_roles:
+            is_modified = True
+        
+        # Step 3: Enforce Exclusivity (Remove 'Top' if 'All Rounder' or 'Finisher' exists)
+        if "Top" in unique_roles:
+            if "All Rounder" in unique_roles or "Finisher" in unique_roles:
+                unique_roles.remove("Top")
+                is_modified = True
+                cleaned_top_count += 1
+                
+        if is_modified:
+            p['roles'] = unique_roles
+            save_player(p)
+            total_updated += 1
+            
+    await update.message.reply_text(
+        f"✅ **Migration & Cleanup Complete**\n"
+        f"👥 Total Players Scanned: {len(players)}\n"
+        f"📝 Updated Records: {total_updated}\n"
+        f"🧹 Removed 'Top' from {cleaned_top_count} All-Rounders/Finishers."
+    , parse_mode="Markdown")
 
 async def set_roles_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """
@@ -940,14 +1044,26 @@ async def set_roles_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         r_lower = r.lower()
         if r_lower in valid_map:
             final_roles.append(valid_map[r_lower])
-        elif r_lower == "all-round": 
-             final_roles.append("All-Rounder")
+        elif r_lower in ["all-round", "all-rounder", "all", "all round", "all rounder"]: 
+             final_roles.append("All Rounder")
         elif r_lower in ["wk", "keeper", "wicketkeeper"]:
              final_roles.append("WK")
-        elif r_lower in ["batting", "batsman"]:
-             final_roles.append("Hitting")
-        elif r_lower in ["bowling", "bowler"]:
-             final_roles.append("Pace") # Defaulting generic bowling to Pace is risky but helpful
+        elif r_lower in ["batting", "batsman", "hitting"]: # Support legacy 'Hitting' as input mapping
+             final_roles.append("Top")
+        elif r_lower in ["bowling", "bowler", "pace", "pacer"]:
+             final_roles.append("Pacer") 
+        elif r_lower in ["spin", "spinner"]:
+             final_roles.append("Spinner")
+        elif r_lower in ["fielding", "fielder", "field"]:
+             final_roles.append("Fielder")
+        elif r_lower in ["defence", "def"]:
+             final_roles.append("Defence")
+        elif r_lower in ["middle", "mid"]:
+             final_roles.append("Middle")
+        elif r_lower in ["captain", "cap"]:
+             final_roles.append("Captain")
+        elif r_lower in ["finisher", "fin"]:
+             final_roles.append("Finisher")
         else:
             invalid_roles.append(r)
             
@@ -967,4 +1083,138 @@ async def set_roles_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"New Roles: {', '.join(final_roles)}",
         parse_mode="Markdown"
     )
+
+async def add_role_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """
+    /add_role [Player] [Role] - Appends a role
+    """
+    if not await check_admin(update): return
+    
+    text = update.message.text.replace('/add_role', '').strip()
+    if not text:
+        await update.message.reply_text("❌ **Usage:** `/add_role [Name] [Role]`\nExample: `/add_role Matt Henry Defence`", parse_mode="Markdown")
+        return
+        
+    # Strategy: Last word is likely the role
+    parts = text.rsplit(' ', 1)
+    if len(parts) < 2:
+        await update.message.reply_text("❌ **Usage:** `/add_role [Name] [Role]`", parse_mode="Markdown")
+        return
+        
+    identifier = parts[0].strip()
+    role_input = parts[1].strip()
+    
+    # Normalize Role
+    from config import POSITIONS_T20, POSITIONS_TEST
+    valid_map = {r.lower(): r for r in POSITIONS_T20 + POSITIONS_TEST}
+    
+    aliases = {
+        "hitting": "Top", "batting": "Top",
+        "pace": "Pacer", "bowling": "Pacer",
+        "spin": "Spinner",
+        "all-rounder": "All Rounder", "all": "All Rounder",
+        "fielding": "Fielder", "field": "Fielder",
+        "defence": "Defence", "def": "Defence",
+        "middle": "Middle", "mid": "Middle",
+        "wk": "WK", "keeper": "WK",
+        "captain": "Captain", "cap": "Captain",
+        "finisher": "Finisher", "fin": "Finisher"
+    }
+
+    target_role = None
+    ri_lower = role_input.lower()
+    
+    if ri_lower in valid_map:
+        target_role = valid_map[ri_lower]
+    elif ri_lower in aliases:
+        target_role = aliases[ri_lower]
+    else:
+        await update.message.reply_text(f"❌ Unknown role: `{role_input}`\nAllowed: {', '.join(sorted(POSITIONS_T20))}", parse_mode="Markdown")
+        return
+        
+    # Find Player
+    from database import get_player, get_player_by_name, save_player
+    p = get_player(identifier) or get_player_by_name(identifier)
+    
+    if not p:
+        await update.message.reply_text(f"❌ Player not found: `{identifier}`", parse_mode="Markdown")
+        return
+        
+    current_roles = p.get('roles', [])
+    if target_role in current_roles:
+         await update.message.reply_text(f"⚠️ {p['name']} already has role **{target_role}**.", parse_mode="Markdown")
+         return
+         
+    current_roles.append(target_role)
+    p['roles'] = current_roles
+    save_player(p)
+    
+    await update.message.reply_text(f"✅ Added **{target_role}** to **{p['name']}**.\nCurrent Roles: {', '.join(current_roles)}", parse_mode="Markdown")
+
+async def rem_role_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """
+    /rem_role [Player] [Role] - Removes a role
+    """
+    if not await check_admin(update): return
+    
+    text = update.message.text.replace('/rem_role', '').strip()
+    if not text:
+        await update.message.reply_text("❌ **Usage:** `/rem_role [Name] [Role]`\nExample: `/rem_role Matt Henry Defence`", parse_mode="Markdown")
+        return
+        
+    # Strategy: Last word is likely the role
+    parts = text.rsplit(' ', 1)
+    if len(parts) < 2:
+        await update.message.reply_text("❌ **Usage:** `/rem_role [Name] [Role]`", parse_mode="Markdown")
+        return
+        
+    identifier = parts[0].strip()
+    role_input = parts[1].strip()
+    
+    # Normalize Role
+    from config import POSITIONS_T20, POSITIONS_TEST
+    valid_map = {r.lower(): r for r in POSITIONS_T20 + POSITIONS_TEST}
+    
+    aliases = {
+        "hitting": "Top", "batting": "Top",
+        "pace": "Pacer", "bowling": "Pacer",
+        "spin": "Spinner",
+        "all-rounder": "All Rounder", "all": "All Rounder",
+        "fielding": "Fielder", "field": "Fielder",
+        "defence": "Defence", "def": "Defence",
+        "middle": "Middle", "mid": "Middle",
+        "wk": "WK", "keeper": "WK",
+        "captain": "Captain", "cap": "Captain",
+        "finisher": "Finisher", "fin": "Finisher"
+    }
+
+    target_role = None
+    ri_lower = role_input.lower()
+    
+    if ri_lower in valid_map:
+        target_role = valid_map[ri_lower]
+    elif ri_lower in aliases:
+        target_role = aliases[ri_lower]
+    else:
+        # If removing, maybe they typed strict name
+        target_role = role_input 
+        
+    # Find Player
+    from database import get_player, get_player_by_name, save_player
+    p = get_player(identifier) or get_player_by_name(identifier)
+    
+    if not p:
+        await update.message.reply_text(f"❌ Player not found: `{identifier}`", parse_mode="Markdown")
+        return
+        
+    current_roles = p.get('roles', [])
+    if target_role not in current_roles:
+         await update.message.reply_text(f"⚠️ {p['name']} does not have role **{target_role}**.", parse_mode="Markdown")
+         return
+         
+    current_roles.remove(target_role)
+    p['roles'] = current_roles
+    save_player(p)
+    
+    await update.message.reply_text(f"✅ Removed **{target_role}** from **{p['name']}**.\nCurrent Roles: {', '.join(current_roles)}", parse_mode="Markdown")
 
