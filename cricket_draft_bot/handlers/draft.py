@@ -222,6 +222,7 @@ async def handle_draw(update: Update, context: ContextTypes.DEFAULT_TYPE, match:
         from database import get_player
         p_data = get_player(match.pending_player_id)
         if p_data:
+            logger.info(f"DEBUG: Draw Request Idempotency - Player {match.pending_player_id} already pending. Re-showing card.")
             player = p_data
     
     if not player:
@@ -320,10 +321,15 @@ async def handle_redraw(update: Update, context: ContextTypes.DEFAULT_TYPE, matc
         
         # Permanent Discard Logic
         if match.pending_player_id:
+            # Debug Logs
+            logger.info(f"DEBUG: Skipping Player {match.pending_player_id}. Pool Size Before: {len(match.draft_pool)}")
+            
             # Remove from pool if present
             if match.pending_player_id in match.draft_pool:
                 match.draft_pool.remove(match.pending_player_id)
-                logger.info(f"DEBUG: Permanently discarded {match.pending_player_id} from pool.")
+                logger.info(f"DEBUG: Permanently discarded {match.pending_player_id} from pool. New Size: {len(match.draft_pool)}")
+            else:
+                 logger.warning(f"DEBUG: Skipped Player {match.pending_player_id} NOT found in Draft Pool!")
             
             match.pending_player_id = None
         
