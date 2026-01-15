@@ -5,35 +5,38 @@ from telegram.error import BadRequest
 import logging
 from game.state import load_match_state, save_match_state
 from game.simulation import run_simulation
-
 logger = logging.getLogger(__name__)
-
 async def handle_ready(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     data = query.data
     match_id = "_".join(data.split('_')[1:])
     
+    async def safe_answer(text, alert=True):
+        try:
+             await query.answer(text, show_alert=alert)
+        except:
+             pass
     match = load_match_state(match_id)
     if not match:
-        await query.answer("Match expired.")
+        await safe_answer("Match expired.", alert=True)
         return
         
     user_id = query.from_user.id
     
     # Check concurrency state
     if match.state in ["SIMULATING", "COMPLETED"]:
-        await query.answer("Simulation is already running or complete!", show_alert=True)
+        await safe_answer("Simulation is already running or complete!", alert=True)
         return
         
     # Mark user as ready
     if user_id == match.team_a.owner_id:
         match.team_a.is_ready = True
-        await query.answer("You are ready!")
+        await safe_answer("You are ready!", alert=False)
     elif user_id == match.team_b.owner_id:
         match.team_b.is_ready = True
-        await query.answer("You are ready!")
+        await safe_answer("You are ready!", alert=False)
     else:
-        await query.answer("You are not part of this match.")
+        await safe_answer("You are not part of this match.", alert=True)
         return
         
     save_match_state(match)
