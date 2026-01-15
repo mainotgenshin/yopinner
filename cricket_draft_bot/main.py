@@ -71,7 +71,7 @@ if __name__ == '__main__':
         .job_queue(None)
         .read_timeout(30)
         .write_timeout(30)
-        .connection_pool_size(16)
+        .connection_pool_size(1024)
         .build()
     )
     # Handlers
