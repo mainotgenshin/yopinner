@@ -6,17 +6,14 @@ from typing import Optional, Dict, Any
 from pymongo import MongoClient, ASCENDING
 from config import MONGO_URI
 from urllib.parse import urlparse
-
+from functools import lru_cache
 # Fallback for local testing (though we want to encourage Mongo now)
 DB_FILE = "cricket_bot.db"
-
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
-
 # Global Client
 _mongo_client = None
 _db = None
-
 def get_db():
     global _mongo_client, _db
     
@@ -43,7 +40,6 @@ def get_db():
     else:
         logger.error("No MONGO_URI found!")
         raise ValueError("MONGO_URI is not set in environment.")
-
 def init_db():
     """Initializes collections and indexes."""
     try:
@@ -59,7 +55,6 @@ def init_db():
         logger.info("MongoDB Indexes Verified.")
     except Exception as e:
         logger.error(f"DB Init Failed: {e}")
-
 def save_player(player_data: Dict[str, Any]):
     db = get_db()
     # MongoDB stores dicts directly, no JSON stringification needed
@@ -76,7 +71,9 @@ def save_player(player_data: Dict[str, Any]):
         {"$set": player_data},
         upsert=True
     )
-
+    # Clear cache to reflect updates
+    get_player.cache_clear()
+@lru_cache(maxsize=2000)
 def get_player(player_id: str) -> Optional[Dict[str, Any]]:
     db = get_db()
     data = db.players.find_one({"player_id": player_id})
@@ -85,7 +82,6 @@ def get_player(player_id: str) -> Optional[Dict[str, Any]]:
         data.pop('_id', None)
         return data
     return None
-
 def get_player_by_name(name_query: str) -> Optional[Dict[str, Any]]:
     db = get_db()
     # Case-insensitive partial regex
@@ -100,12 +96,11 @@ def get_player_by_name(name_query: str) -> Optional[Dict[str, Any]]:
         data.pop('_id', None)
         return data
     return None
-
 def delete_player(player_id: str) -> bool:
     db = get_db()
     result = db.players.delete_one({"player_id": player_id})
+    get_player.cache_clear()
     return result.deleted_count > 0
-
 def get_all_players() -> list:
     db = get_db()
     cursor = db.players.find({})
@@ -114,7 +109,6 @@ def get_all_players() -> list:
         doc.pop('_id', None)
         players.append(doc)
     return players
-
 def save_match(match_id: str, chat_id: int, state_data: Dict[str, Any]):
     db = get_db()
     # Save the whole state dict
@@ -137,7 +131,6 @@ def save_match(match_id: str, chat_id: int, state_data: Dict[str, Any]):
         upsert=True
     )
     logger.info(f"DEBUG: Saved Match {match_id} to Mongo")
-
 def get_match(match_id: str) -> Optional[Dict[str, Any]]:
     db = get_db()
     doc = db.matches.find_one({"match_id": match_id})
@@ -150,7 +143,6 @@ def get_match(match_id: str) -> Optional[Dict[str, Any]]:
 def clear_all_matches():
     db = get_db()
     db.matches.delete_many({})
-
 def add_mod(user_id: int):
     db = get_db()
     db.mods.update_one(
@@ -158,12 +150,14 @@ def add_mod(user_id: int):
         {"$set": {"user_id": user_id}},
         upsert=True
     )
-
 def remove_mod(user_id: int):
     db = get_db()
     db.mods.delete_one({"user_id": user_id})
-
 def is_mod(user_id: int) -> bool:
     db = get_db()
     doc = db.mods.find_one({"user_id": user_id})
     return doc is not None
+def get_all_mods() -> list:
+    db = get_db()
+    cursor = db.mods.find({})
+    return [doc['user_id'] for doc in cursor]
