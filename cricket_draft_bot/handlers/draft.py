@@ -6,17 +6,12 @@ from game.state import load_match_state, save_match_state, draw_player_for_turn,
 from game.models import Match
 from utils.validators import validate_draft_action
 from config import MAX_REDRAWS, POSITIONS_T20, POSITIONS_TEST, DRAFT_BANNER_URL
-
-
 logger = logging.getLogger(__name__)
-
 # Cache for Banner File ID to prevent re-uploads
 # Cache for Banner File ID to prevent re-uploads
 CACHED_BANNER_ID = None
-
 # Concurrency Control
 PROCESSING_LOCKS = set()
-
 async def handle_draft_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     data = query.data
@@ -50,17 +45,22 @@ async def handle_draft_callback(update: Update, context: ContextTypes.DEFAULT_TY
         return
         
     PROCESSING_LOCKS.add(match_id)
+    async def safe_answer(text, alert=True):
+        try:
+            await query.answer(text, show_alert=alert)
+        except Exception:
+            pass # Ignore expiry
     
     try:
         match = load_match_state(match_id)
         if not match:
             logger.error(f"DEBUG: Match not found! ID: {match_id}")
-            await query.answer(f"Match ended or expired. ({match_id})", show_alert=True)
+            await safe_answer(f"Match ended or expired. ({match_id})", alert=True)
             return
             
         # Check turn
         if query.from_user.id != match.current_turn:
-            await query.answer("Not your turn!", show_alert=True)
+            await safe_answer("Not your turn!", alert=True)
             return
     
         if action == "draw":
@@ -69,7 +69,7 @@ async def handle_draft_callback(update: Update, context: ContextTypes.DEFAULT_TY
         elif action == "assign":
             if not match.pending_player_id:
                 # Double-check state in case of race?
-                await query.answer("No player drawn! Click Draw first.", show_alert=True)
+                await safe_answer("No player drawn! Click Draw first.", alert=True)
                 return
             await handle_assign(update, context, match, match.pending_player_id, slot)
             
@@ -92,8 +92,6 @@ async def handle_draft_callback(update: Update, context: ContextTypes.DEFAULT_TY
     finally:
         if match_id in PROCESSING_LOCKS:
             PROCESSING_LOCKS.remove(match_id)
-
-
 def format_draft_board(match: Match) -> str:
     """Creates the text for the draft board (Static UI Rule 1)."""
     def format_team(team):
@@ -102,19 +100,15 @@ def format_draft_board(match: Match) -> str:
             val = player.name if player else ". . ."
             lines.append(f"• {slot}: {val}")
         return "\n".join(lines)
-
     board = f"🏁 **Drafting Phase**\n\n"
     board += format_team(match.team_a) + "\n\n"
     board += format_team(match.team_b) + "\n\n"
     
     current_name = match.team_a.owner_name if match.current_turn == match.team_a.owner_id else match.team_b.owner_name
     board += f"🎯 **Turn:** {current_name}"
-
     return board
-
 import asyncio
 from telegram.error import RetryAfter
-
 async def update_draft_message(update: Update, context: ContextTypes.DEFAULT_TYPE, match: Match, caption: str, keyboard: list, media=None):
     """
     Unified handler to update the draft message.
@@ -141,7 +135,6 @@ async def update_draft_message(update: Update, context: ContextTypes.DEFAULT_TYP
         match.draft_message_id = msg.message_id
         save_match_state(match)
         return
-
     # Attempt to Edit
     
     try:
@@ -202,7 +195,6 @@ async def update_draft_message(update: Update, context: ContextTypes.DEFAULT_TYP
              except Exception as final_err:
                  logger.error(f"CRITICAL: Failed to recover draft message: {final_err}")
                  return
-
              match.draft_message_id = msg.message_id
              
              try:
@@ -212,9 +204,6 @@ async def update_draft_message(update: Update, context: ContextTypes.DEFAULT_TYP
              save_match_state(match)
         else:
              logger.error(f"Failed to update draft message: {e}")
-
-
-
 async def handle_draw(update: Update, context: ContextTypes.DEFAULT_TYPE, match: Match):
     # Prevent double-draw if already pending
     player = None
@@ -229,7 +218,9 @@ async def handle_draw(update: Update, context: ContextTypes.DEFAULT_TYPE, match:
         player = draw_player_for_turn(match)
         
     if not player:
-        await update.callback_query.answer("No eligible players left!", show_alert=True)
+        try:
+            await update.callback_query.answer("No eligible players left!", show_alert=True)
+        except: pass
         return
         
     match.pending_player_id = player['player_id']
@@ -278,8 +269,6 @@ async def handle_draw(update: Update, context: ContextTypes.DEFAULT_TYPE, match:
     
     # Update the single message to show the card
     await update_draft_message(update, context, match, card_caption, keyboard, media=media)
-
-
 async def handle_assign(update: Update, context: ContextTypes.DEFAULT_TYPE, match: Match, player_id: str, slot: str):
     from database import get_player
     from game.models import Player
@@ -301,7 +290,6 @@ async def handle_assign(update: Update, context: ContextTypes.DEFAULT_TYPE, matc
         keyboard = [[InlineKeyboardButton("🚀 READY", callback_data=f"ready_{match.match_id}")]]
         await update_draft_message(update, context, match, f"{board_text}\n\n✅ **Draft Complete!** Waiting for Ready...", keyboard)
         return
-
     # Switch Turn
     switch_turn(match)
     save_match_state(match)
@@ -311,8 +299,6 @@ async def handle_assign(update: Update, context: ContextTypes.DEFAULT_TYPE, matc
     keyboard = [[InlineKeyboardButton("🎲 Draw Player", callback_data=f"draw_{match.match_id}")]]
     # Fix: Use Banner Image to keep message type as Photo (avoids delete/resend flicker)
     await update_draft_message(update, context, match, board_text, keyboard, media=DRAFT_BANNER_URL)
-
-
 async def handle_redraw(update: Update, context: ContextTypes.DEFAULT_TYPE, match: Match):
     current_team = match.team_a if match.team_a.owner_id == match.current_turn else match.team_b
     
@@ -345,17 +331,21 @@ async def handle_redraw(update: Update, context: ContextTypes.DEFAULT_TYPE, matc
         await update_draft_message(update, context, match, f"{board_text}\n\n🗑 {current_team.owner_name} used Skip! Turn Consumed.", keyboard, media=DRAFT_BANNER_URL)
         
     else:
-        await update.callback_query.answer("No skips left!", show_alert=True)
-
+        try:
+            await update.callback_query.answer("No skips left!", show_alert=True)
+        except: pass
 async def handle_replace_start(update: Update, context: ContextTypes.DEFAULT_TYPE, match: Match):
     current_team = match.team_a if match.team_a.owner_id == match.current_turn else match.team_b
     if current_team.replacements_remaining <= 0:
-        await update.callback_query.answer("No replacements left!", show_alert=True)
+        try:
+            await update.callback_query.answer("No replacements left!", show_alert=True)
+        except: pass
         return
-
     # Check if we have a pending player (should be there)
     if not match.pending_player_id:
-        await update.callback_query.answer("No player drawn!", show_alert=True)
+        try:
+            await update.callback_query.answer("No player drawn!", show_alert=True)
+        except: pass
         return
         
     # Get Player Data
@@ -391,18 +381,21 @@ async def handle_replace_start(update: Update, context: ContextTypes.DEFAULT_TYP
     media = player.get('image_file_id', DRAFT_BANNER_URL)
     
     await update_draft_message(update, context, match, card_caption, keyboard, media=media)
-
 async def handle_replace_exec(update: Update, context: ContextTypes.DEFAULT_TYPE, match: Match, slot: str):
     current_team = match.team_a if match.team_a.owner_id == match.current_turn else match.team_b
     
     # Validation
     if current_team.replacements_remaining <= 0:
-        await update.callback_query.answer("No replacements left!", show_alert=True)
+        try:
+            await update.callback_query.answer("No replacements left!", show_alert=True)
+        except: pass
         return
         
     old_player = current_team.slots.get(slot)
     if not old_player:
-        await update.callback_query.answer("Slot is empty! Cannot replace.", show_alert=True)
+        try:
+            await update.callback_query.answer("Slot is empty! Cannot replace.", show_alert=True)
+        except: pass
         return
         
     from database import get_player
@@ -425,7 +418,6 @@ async def handle_replace_exec(update: Update, context: ContextTypes.DEFAULT_TYPE
     keyboard = [[InlineKeyboardButton("🎲 Draw Player", callback_data=f"draw_{match.match_id}")]]
     
     await update_draft_message(update, context, match, f"{board_text}\n\n♻️ {current_team.owner_name} replaced {old_player.name} with {new_player.name}!", keyboard, media=DRAFT_BANNER_URL)
-
 async def handle_replace_cancel(update: Update, context: ContextTypes.DEFAULT_TYPE, match: Match):
     # Just go back to draw view
     await handle_draw(update, context, match)
