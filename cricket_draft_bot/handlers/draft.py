@@ -60,7 +60,7 @@ async def handle_draft_callback(update: Update, context: ContextTypes.DEFAULT_TY
             
         # Check turn
         if query.from_user.id != match.current_turn:
-            await safe_answer("Not your turn!", alert=True)
+            await safe_answer("Turn passed! Board updating...", alert=True)
             return
     
         if action == "draw":
@@ -69,7 +69,7 @@ async def handle_draft_callback(update: Update, context: ContextTypes.DEFAULT_TY
         elif action == "assign":
             if not match.pending_player_id:
                 # Double-check state in case of race?
-                await safe_answer("No player drawn! Click Draw first.", alert=True)
+                await safe_answer("Player already assigned! Please wait...", alert=True)
                 return
             await handle_assign(update, context, match, match.pending_player_id, slot)
             
