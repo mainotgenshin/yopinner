@@ -75,6 +75,9 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     elif data.startswith("gen_ipl_"):
         from handlers.admin import handle_gen_ipl_callback
         await handle_gen_ipl_callback(update, context)
+    elif data.startswith("plipl_"):
+        from handlers.admin import handle_playerlist_ipl_callback
+        await handle_playerlist_ipl_callback(update, context)
 if __name__ == '__main__':
     # Initialize DB
     init_db()
@@ -117,7 +120,8 @@ if __name__ == '__main__':
         add_role_command, rem_role_command, non_role_fix,
         run_fix_now_command, revert_command,
         add_player_ipl, add_role_ipl, rem_role_ipl, update_image_command,
-        enable_ipl_command, disable_ipl_command
+        enable_ipl_command, disable_ipl_command,
+        player_list_ipl # NEW
     )
     application.add_handler(CommandHandler('changecap', change_cap))
     application.add_handler(CommandHandler('changewk', change_wk))
@@ -143,6 +147,7 @@ if __name__ == '__main__':
     application.add_handler(CommandHandler('update_image', update_image_command))
     application.add_handler(CommandHandler('enable_ipl', enable_ipl_command))
     application.add_handler(CommandHandler('disable_ipl', disable_ipl_command))
+    application.add_handler(CommandHandler('playerlist_ipl', player_list_ipl))
     # Game
     application.add_handler(CommandHandler('challenge_ipl', challenge_ipl))
     application.add_handler(CommandHandler('challenge_intl', challenge_intl))
