@@ -1713,3 +1713,74 @@ async def disable_ipl_command(update: Update, context: ContextTypes.DEFAULT_TYPE
     db = get_db()
     db.system_config.update_one({"key": "ipl_mode"}, {"$set": {"enabled": False}}, upsert=True)
     await update.message.reply_text("⛔ IPL Mode DISABLED.")
+async def player_list_ipl(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """
+    /playerlist_ipl - Shows paginated list of valid IPL players
+    """
+    if not await check_admin(update): return
+    from database import get_all_players
+    from telegram import InlineKeyboardButton, InlineKeyboardMarkup
+    players = get_all_players()
+    
+    # Filter for IPL Players (Must have ipl_roles)
+    ipl_players = [p for p in players if p.get('ipl_roles')]
+    
+    if not ipl_players:
+        await update.message.reply_text("No IPL players found.")
+        return
+        
+    await show_player_page_ipl(update, context, 0, ipl_players)
+async def show_player_page_ipl(update: Update, context: ContextTypes.DEFAULT_TYPE, page: int, players=None):
+    from telegram import InlineKeyboardButton, InlineKeyboardMarkup
+    # Fetch if not passed (for callback)
+    if players is None:
+        from database import get_all_players
+        all_p = get_all_players()
+        players = [p for p in all_p if p.get('ipl_roles')]
+    # Prepare Lines
+    grouped = {}
+    for p in players:
+        pid = p['player_id']
+        nation = pid.split('_')[0] if '_' in pid else "OTHERS"
+        if nation not in grouped: grouped[nation] = []
+        grouped[nation].append(p)
+        
+    lines = []
+    lines.append(f"🏆 **IPL Player Pool** ({len(players)})")
+    
+    for nation in sorted(grouped.keys()):
+        lines.append(f"🚩 **{nation}**")
+        for p in grouped[nation]:
+            mapped = "✅" if p.get('api_reference', {}).get('ipl_provider') or p.get('stats', {}).get('ipl') else "❌"
+            roles = p.get('ipl_roles', [])
+            lines.append(f"• {p['name']} - {', '.join(roles[:2])} - Stats: {mapped}")
+        lines.append("")
+        
+    PAGE_SIZE = 15
+    total_lines = len(lines)
+    start_idx = page * PAGE_SIZE
+    end_idx = start_idx + PAGE_SIZE
+    page_content = lines[start_idx:end_idx]
+    
+    if not page_content:
+         text = "End of list."
+    else:
+         text = "\n".join(page_content)
+    
+    buttons = []
+    if page > 0:
+        buttons.append(InlineKeyboardButton("⬅️ Prev", callback_data=f"plipl_{page-1}"))
+    if end_idx < total_lines:
+        buttons.append(InlineKeyboardButton("Next ➡️", callback_data=f"plipl_{page+1}"))
+        
+    keyboard = InlineKeyboardMarkup([buttons]) if buttons else None
+    
+    if update.callback_query:
+        await update.callback_query.edit_message_text(text, reply_markup=keyboard, parse_mode="Markdown")
+    else:
+        await update.message.reply_text(text, reply_markup=keyboard, parse_mode="Markdown")
+async def handle_playerlist_ipl_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    data = query.data
+    page = int(data.split('_')[1])
+    await show_player_page_ipl(update, context, page)
