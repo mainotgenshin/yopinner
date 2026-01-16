@@ -8,8 +8,10 @@ class Player:
     name: str
     roles: List[str]
     image_file_id: str
+    ipl_image_file_id: Optional[str] = None
     api_reference: Dict = field(default_factory=dict)
     stats: Dict = field(default_factory=dict) # {"ipl": 45, "international": 50}
+    ipl_roles: List[str] = field(default_factory=list)
 
     def get_stat(self, mode: str) -> int:
         # Default to 0, or some base value if stats missing
