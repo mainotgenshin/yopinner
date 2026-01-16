@@ -609,10 +609,24 @@ async def handle_view_intl_callback(update: Update, context: ContextTypes.DEFAUL
     stats = p.get('stats', {}).get('international', {})
     intl_img = p.get('image_file_id')
     roles = p.get('roles', [])
+        
+    def format_stats_local(data):
+        if isinstance(data, int): return str(data)
+        parts = []
+        parts.append(f"🧠 Cap: {data.get('leadership')}")
+        parts.append(f"🏏 Top: {data.get('batting_power')}")
+        parts.append(f"🛡️ Mid: {data.get('batting_control')}")
+        # Show all relevant for Intl
+        parts.append(f"💥 Fin: {data.get('finishing')}")
+        parts.append(f"⚡ Pace: {data.get('bowling_pace')}")
+        parts.append(f"🌀 Spin: {data.get('bowling_spin')}")
+        parts.append(f"✨ All: {data.get('all_round')}")
+        parts.append(f"👟 Field: {data.get('fielding')}")
+        return "\n".join(parts)
+        
+    stats_display = format_stats_local(stats)
     
-    # Simple Format
-    # ... (Keep it simple) ...
-    caption = f"📊 **Stats for {p['name']}**\n(International)\n\nRoles: {', '.join(roles)}"
+    caption = f"📊 **Stats for {p['name']}**\n(International)\n\n{stats_display}\n\nRoles: {', '.join(roles)}"
     
     keyboard = [[InlineKeyboardButton("🏏 View IPL Stats", callback_data=f"view_ipl_{player_id}")]]
     reply_markup = InlineKeyboardMarkup(keyboard)
