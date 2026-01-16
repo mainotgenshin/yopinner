@@ -198,7 +198,7 @@ if __name__ == '__main__':
 
     async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
         """Log the error and send a telegram message to notify the developer."""
-        logger.error(msg="Exception while handling an update:", exc_info=context.error)
+        logging.getLogger(__name__).error(msg="Exception while handling an update:", exc_info=context.error)
 
     application.add_error_handler(error_handler)
 
