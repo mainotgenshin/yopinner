@@ -607,6 +607,8 @@ async def handle_view_intl_callback(update: Update, context: ContextTypes.DEFAUL
 
     # Intl Default
     stats = p.get('stats', {}).get('international', {})
+    if not stats: stats = p.get('stats', {}) # Fallback for legacy schema
+    
     intl_img = p.get('image_file_id')
     roles = p.get('roles', [])
         
