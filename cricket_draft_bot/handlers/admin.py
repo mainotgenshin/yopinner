@@ -8,12 +8,15 @@ import uuid
 import os
 from utils.permissions import check_admin, check_owner, can_manage_bot
 from database import add_mod, remove_mod
+
 logger = logging.getLogger(__name__)
+
 async def add_player(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """
     /add_player name=Rohit Sharma roles=Captain,Hitting image=http...
     """
     if not await check_admin(update): return
+
     user_id = update.effective_user.id
     # Add admin check here if needed, for now assume anyone can add (or restricted by owner id in main?)
     # ideally config.admin_ids
@@ -22,6 +25,7 @@ async def add_player(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not text:
         await update.message.reply_text("Usage:\n/add_player name=X roles=A,B image=URL")
         return
+
     try:
         import re
         
@@ -38,6 +42,7 @@ async def add_player(update: Update, context: ContextTypes.DEFAULT_TYPE):
             # We treat everything before the first keyword as the name
             # But simpler hack: just prepend "name=" and let the regex handle it
             raw_text = "name=" + raw_text
+
         # Add trailing space for regex lookahead
         raw_text += ' '
         
@@ -82,6 +87,7 @@ async def add_player(update: Update, context: ContextTypes.DEFAULT_TYPE):
                      parse_mode="Markdown"
                  )
                  return
+
         roles = validated_roles
         image_url = parsed['image'].strip()
             
@@ -125,6 +131,8 @@ async def add_player(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "**Correct Syntax:**\n"
             "`/add_player name=Name roles=Role1,Role2 image=URL`"
         , parse_mode="Markdown")
+
+
 async def generate_player_stats(player_id: str, update: Update, context: ContextTypes.DEFAULT_TYPE, is_callback=False, mode='intl'):
     """
     Shared logic to generate stats.
@@ -140,6 +148,7 @@ async def generate_player_stats(player_id: str, update: Update, context: Context
         else:
             await update.message.reply_text(msg)
         return
+
     # Notify user
     mode_label = "IPL" if mode == 'ipl' else "International"
     if is_callback:
@@ -187,6 +196,8 @@ async def generate_player_stats(player_id: str, update: Update, context: Context
     else:
          await update.message.reply_text(summary, parse_mode="Markdown")
     
+
+
 async def map_api(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """
     /map_api player_id=IND_ROHIT
@@ -195,10 +206,13 @@ async def map_api(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not text:
         await update.message.reply_text("**Usage:**\n`/map_api player_id=ID`", parse_mode="Markdown")
         return
+
     if not await check_admin(update): return
+
     player_id = text.split('=')[1].strip() if '=' in text else text.strip()
     player_id = text.split('=')[1].strip() if '=' in text else text.strip()
     await generate_player_stats(player_id, update, context, is_callback=False, mode='intl')
+
 async def handle_gen_intl_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     player_id = query.data.split('_', 2)[2] # gen_intl_ID
@@ -206,6 +220,7 @@ async def handle_gen_intl_callback(update: Update, context: ContextTypes.DEFAULT
         await query.answer("⛔ Admin Only", show_alert=True)
         return
     await generate_player_stats(player_id, update, context, is_callback=True, mode='intl')
+
 async def handle_gen_ipl_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     player_id = query.data.split('_', 2)[2] # gen_ipl_ID
@@ -213,6 +228,7 @@ async def handle_gen_ipl_callback(update: Update, context: ContextTypes.DEFAULT_
         await query.answer("⛔ Admin Only", show_alert=True)
         return
     await generate_player_stats(player_id, update, context, is_callback=True, mode='ipl')
+
 # Deprecated map_stats callback for backward compatibility or alias to intl?
 async def handle_map_stats_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # Map old map_ calls to intl
@@ -223,12 +239,15 @@ async def handle_map_stats_callback(update: Update, context: ContextTypes.DEFAUL
         player_id = "UNKNOWN"
         
     await generate_player_stats(player_id, update, context, is_callback=True, mode='intl')
+
 # Update add_player to include button
 # This requires editing the add_player success block, which is lines 79-80.
 # I will do that in a separate replacement call or include it here if ranges overlap.
 # They don't overlap easily with this block replacing line 88+.
 # Use MultiReplace? No, limited lines.
 # I will implement generate_player_stats and update map_api first.
+
+
 async def remove_player(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """
     /removeplayer player_id=IND_KOHLI
@@ -256,6 +275,7 @@ async def remove_player(update: Update, context: ContextTypes.DEFAULT_TYPE):
             
             # Found by name, update player_id to the actual ID found
             player_id = p['player_id']
+
         if delete_player(player_id):
             await update.message.reply_text(f"✅ Player **{p['name']}** (`{player_id}`) has been removed.", parse_mode="Markdown")
         else:
@@ -263,11 +283,13 @@ async def remove_player(update: Update, context: ContextTypes.DEFAULT_TYPE):
             
     except Exception as e:
         await update.message.reply_text(f"Error: {e}")
+
 async def player_list(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """
     /playerlist - Shows paginated list by nation
     """
     if not await check_admin(update): return
+
     from database import get_all_players
     players = get_all_players()
     
@@ -311,6 +333,7 @@ async def player_list(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # Since we can't pass huge list in callback, we re-query DB.
     
     await show_player_page(update, context, 0)
+
 async def show_player_page(update: Update, context: ContextTypes.DEFAULT_TYPE, page: int):
     from database import get_all_players
     from telegram import InlineKeyboardButton, InlineKeyboardMarkup
@@ -358,16 +381,19 @@ async def show_player_page(update: Update, context: ContextTypes.DEFAULT_TYPE, p
         await update.callback_query.edit_message_text(text, reply_markup=keyboard, parse_mode="Markdown")
     else:
         await update.message.reply_text(text, reply_markup=keyboard, parse_mode="Markdown")
+
 async def handle_playerlist_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     data = query.data
     page = int(data.split('_')[1])
     await show_player_page(update, context, page)
+
 async def get_player_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """
     /stats (player name)
     """
     if not await check_admin(update): return
+
     text = update.message.text.replace('/stats', '').strip()
     if not text:
         await update.message.reply_text("**Usage:**\n`/stats (Player Name)`", parse_mode="Markdown")
@@ -406,6 +432,7 @@ async def get_player_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # Wicket Keeping
         if has_wk:
              parts.append(f"🧤 WK: {data.get('wicket_keeping', 50)}")
+
         parts.append(f"💥 Finisher: {data.get('finishing')}")
         parts.append(f"⚡ Pacer: {data.get('bowling_pace', 20)}")
         parts.append(f"🌀 Spinner: {data.get('bowling_spin', 20)}")
@@ -416,6 +443,7 @@ async def get_player_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
     ipl_display = format_stats(ipl_data)
     intl_display = format_stats(intl_data)
+
     msg = (
         f"📊 **Stats for {p['name']}**\n"
         f"ID: `{p['player_id']}`\n\n"
@@ -423,15 +451,18 @@ async def get_player_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"Roles: {', '.join(p['roles'])}\n"
         f"Source: {p.get('api_reference', {}).get('provider', 'Unknown')}"
     )
+
     # Sanitize handled by careful construction, skipping blind replacement to allow bolding
     # msg = msg.replace('*', '').replace('_', '').replace('`', '')
     
+
     # Sanitize handled by careful construction
     
     # IPL Toggle Button
     from telegram import InlineKeyboardButton, InlineKeyboardMarkup
     keyboard = [[InlineKeyboardButton("🏏 View IPL Stats", callback_data=f"view_ipl_{p['player_id']}")]]
     reply_markup = InlineKeyboardMarkup(keyboard)
+
     if p.get('image_file_id'):
         try:
             await update.message.reply_photo(photo=p['image_file_id'], caption=msg, reply_markup=reply_markup)
@@ -441,6 +472,7 @@ async def get_player_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
     else:
         await update.message.reply_text(msg, reply_markup=reply_markup)
         
+
 async def handle_view_intl_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     player_id = query.data.split('_', 2)[2] # view_intl_ID
@@ -448,6 +480,7 @@ async def handle_view_intl_callback(update: Update, context: ContextTypes.DEFAUL
     from database import get_player
     p = get_player(player_id)
     if not p: return
+
     # Intl Default
     stats = p.get('stats', {}).get('international', {})
     
@@ -493,6 +526,8 @@ async def handle_view_intl_callback(update: Update, context: ContextTypes.DEFAUL
              await query.edit_message_caption(caption=caption, reply_markup=reply_markup, parse_mode="Markdown")
     except Exception:
         pass
+
+
 async def handle_view_ipl_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     from telegram import InlineKeyboardButton, InlineKeyboardMarkup
     query = update.callback_query
@@ -509,6 +544,7 @@ async def handle_view_ipl_callback(update: Update, context: ContextTypes.DEFAULT
     if not stats:
         await query.answer("No IPL Stats available", show_alert=True)
         return
+
     # Check IPL Image
     ipl_img = p.get('ipl_image_file_id', p.get('image_file_id'))
     
@@ -533,6 +569,7 @@ async def handle_view_ipl_callback(update: Update, context: ContextTypes.DEFAULT
         parts.append(f"✨ All: {data.get('all_round')}")
         parts.append(f"👟 Field: {data.get('fielding')}")
         return "\n".join(parts)
+
     stats_display = format_stats_local(stats)
     
     caption = (
@@ -558,13 +595,16 @@ async def handle_view_ipl_callback(update: Update, context: ContextTypes.DEFAULT
     except Exception as e:
         logger.error(f"IPL View Edit Error: {e}")
         await query.answer("Error switching view", show_alert=True)
+
 async def handle_view_intl_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    from telegram import InlineKeyboardButton, InlineKeyboardMarkup
     query = update.callback_query
     player_id = query.data.split('_', 2)[2] # view_intl_ID
     
     from database import get_player
     p = get_player(player_id)
     if not p: return
+
     # Intl Default
     stats = p.get('stats', {}).get('international', {})
     intl_img = p.get('image_file_id')
@@ -588,17 +628,24 @@ async def handle_view_intl_callback(update: Update, context: ContextTypes.DEFAUL
              await query.edit_message_caption(caption=caption, reply_markup=reply_markup, parse_mode="Markdown")
     except Exception:
         pass
+
+
+
+
+
 async def reset_matches(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not await check_admin(update): return
     from database import clear_all_matches
     clear_all_matches()
     await update.message.reply_text("✅ All active matches have been cleared from the database.")
+
 async def modify_stat_generic(update: Update, context: ContextTypes.DEFAULT_TYPE, stat_key: str, command_name: str):
     """
     Generic helper to modify a stat.
     Syntax: /command PlayerName +10
     """
     if not await check_admin(update): return
+
     text = update.message.text.replace(f'/{command_name}', '').strip()
     
     # Simple regex to split Name and Value
@@ -652,16 +699,22 @@ async def modify_stat_generic(update: Update, context: ContextTypes.DEFAULT_TYPE
         f"✅ Updated {p['name']} ({stat_key})\n"
         f"{' | '.join(changes)}"
     )
+
 async def change_cap(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await modify_stat_generic(update, context, "leadership", "changecap")
+
 async def change_wk(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await modify_stat_generic(update, context, "wicket_keeping", "changewk")
+
 async def change_top(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await modify_stat_generic(update, context, "batting_power", "changetop")
+
 async def change_middle(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await modify_stat_generic(update, context, "batting_control", "changemiddle")
+
 async def change_defence(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await modify_stat_generic(update, context, "batting_defence", "changedefence")
+
 async def change_pacer(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await modify_stat_generic(update, context, "bowling_pace", "changepacer")
     
@@ -673,8 +726,10 @@ async def change_allrounder(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
 async def change_finisher(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await modify_stat_generic(update, context, "finishing", "changefinisher")
+
 async def change_fielder(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await modify_stat_generic(update, context, "fielding", "changefielder")
+
 async def add_mod_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """
     /mod 123456789
@@ -688,6 +743,7 @@ async def add_mod_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(f"✅ User `{target_id}` is now a Moderator.", parse_mode="Markdown")
     except (IndexError, ValueError):
         await update.message.reply_text("Usage: `/mod <user_id>`", parse_mode="Markdown")
+
 async def remove_mod_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """
     /unmod 123456789
@@ -701,11 +757,13 @@ async def remove_mod_handler(update: Update, context: ContextTypes.DEFAULT_TYPE)
         await update.message.reply_text(f"✅ User `{target_id}` removed from Moderators.", parse_mode="Markdown")
     except (IndexError, ValueError):
         await update.message.reply_text("Usage: `/unmod <user_id>`", parse_mode="Markdown")
+
 async def set_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """
     /setstats PlayerName format=ipl cap=90 top=80 mid=85 ...
     """
     if not await check_admin(update): return
+
     text = update.message.text.replace('/setstats', '').strip()
     if not text:
         await update.message.reply_text(
@@ -715,6 +773,7 @@ async def set_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
             parse_mode="Markdown"
         )
         return
+
     # Parse arguments
     # Strategy: Split by space, identify key=value pairs.
     # Everything that is NOT a key=value pair is part of the Name.
@@ -740,6 +799,7 @@ async def set_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
              parse_mode="Markdown"
          )
          return
+
     from database import get_player_by_name, save_player
     p = get_player_by_name(player_name)
     
@@ -807,6 +867,7 @@ async def set_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 parse_mode="Markdown"
             )
             return
+
     if not has_updates:
         await update.message.reply_text(
             "⚠️ **No valid stats to update found.**\n"
@@ -815,6 +876,7 @@ async def set_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
             parse_mode="Markdown"
         )
         return
+
     p['stats'] = stats
     save_player(p)
     
@@ -828,6 +890,7 @@ async def set_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"{summary}",
         parse_mode="Markdown"
     )
+
 async def check_role_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """
     /check [role] [mode]
@@ -879,6 +942,7 @@ async def check_role_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "wk": "WK",
         "cap": "Captain"
     }
+
     if input_alias in alias_map:
         canonical_role = alias_map[input_alias]
     else:
@@ -923,6 +987,7 @@ async def check_role_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
     msg = "\n".join(lines)
     if len(msg) > 4000: msg = msg[:4000] + "..."
     await update.message.reply_text(msg, parse_mode="Markdown")
+
 async def fix_roles_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """
     /fix_roles - Alias for /migrate_roles
@@ -971,6 +1036,7 @@ async def fix_roles_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
             updated_count += 1
             
     await update.message.reply_text(f"✅ Migration Complete. Updated {updated_count} players.")
+
 async def migrate_roles_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """
     /migrate_roles - Updates ALL players:
@@ -1013,6 +1079,7 @@ async def migrate_roles_command(update: Update, context: ContextTypes.DEFAULT_TY
         "cap": "Captain",
         "finisher": "Finisher"
     }
+
     for p in players:
         current_roles = p.get('roles', [])
         new_roles = []
@@ -1061,12 +1128,14 @@ async def migrate_roles_command(update: Update, context: ContextTypes.DEFAULT_TY
         f"📝 Updated Records: {total_updated}\n"
         f"🧹 Removed 'Top' from {cleaned_top_count} All-Rounders/Finishers."
     , parse_mode="Markdown")
+
 async def set_roles_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """
     /setroles Name roles=Captain,WK
     /setroles player_id=ID roles=Captain,WK
     """
     if not await check_admin(update): return
+
     # Remove command prefix (support both variants)
     text = update.message.text
     if text.startswith('/set_roles'):
@@ -1081,6 +1150,7 @@ async def set_roles_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
             parse_mode="Markdown"
         )
         return
+
     # Strategy: Look for 'roles=' keyword. Everything before it is the identifier (Name or ID).
     import re
     # Match: (Identifier) roles=(Roles)
@@ -1123,9 +1193,11 @@ async def set_roles_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
                  parse_mode="Markdown"
              )
              return
+
     # Clean identifier (remove player_id= if user typed it manually in the first part)
     if identifier.lower().startswith('player_id='):
         identifier = identifier.split('=', 1)[1].strip()
+
     from database import get_player, get_player_by_name, save_player
     
     # Try ID first
@@ -1189,6 +1261,7 @@ async def set_roles_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"New Roles: {', '.join(final_roles)}",
         parse_mode="Markdown"
     )
+
 async def add_role_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """
     /add_role [Player] [Role] - Appends a role
@@ -1225,6 +1298,7 @@ async def add_role_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "captain": "Captain", "cap": "Captain",
         "finisher": "Finisher", "fin": "Finisher"
     }
+
     target_role = None
     ri_lower = role_input.lower()
     
@@ -1254,6 +1328,7 @@ async def add_role_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     save_player(p)
     
     await update.message.reply_text(f"✅ Added **{target_role}** to **{p['name']}**.\nCurrent Roles: {', '.join(current_roles)}", parse_mode="Markdown")
+
 async def rem_role_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """
     /rem_role [Player] [Role] - Removes a role
@@ -1290,6 +1365,7 @@ async def rem_role_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "captain": "Captain", "cap": "Captain",
         "finisher": "Finisher", "fin": "Finisher"
     }
+
     target_role = None
     ri_lower = role_input.lower()
     
@@ -1319,17 +1395,20 @@ async def rem_role_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     save_player(p)
     
     await update.message.reply_text(f"✅ Removed **{target_role}** from **{p['name']}**.\nCurrent Roles: {', '.join(current_roles)}", parse_mode="Markdown")
+
 async def non_role_fix(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """
     /nonrolefix
     Sets stats for unassigned roles to random(40, 60) for all players.
     """
     if not await check_admin(update): return
+
     await update.message.reply_text("🔄 **Starting Non-Role Stat Fix...**\nChecking all players...")
     
     from database import get_all_players, save_player
     from config import ROLE_STATS_MAP
     import random
+
     players = get_all_players()
     count = 0
     updated_players = 0
@@ -1373,6 +1452,7 @@ async def non_role_fix(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"Updated: {updated_players} players\n"
         f"Unassigned stats set to 40-60 range."
     )
+
 async def list_mods_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """
     /mods
@@ -1394,6 +1474,9 @@ async def list_mods_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
          msg += f"• `{mid}`\n"
          
     await update.message.reply_text(msg, parse_mode="Markdown")
+
+
+
 async def run_fix_now_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """
     /run_fix_now - Runs the logic from run_fix_now.py
@@ -1442,6 +1525,7 @@ async def run_fix_now_command(update: Update, context: ContextTypes.DEFAULT_TYPE
     if len(summary_text) == 0: summary_text = "Completed (No summary captured)."
     
     await update.message.reply_text(f"✅ **Execution Complete**\n\n{summary_text}")
+
 async def revert_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """
     /revert - Reverts changes from players_backup.json
@@ -1457,6 +1541,8 @@ async def revert_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(f"✅ {msg}")
     else:
         await update.message.reply_text(f"❌ {msg}")
+
+
 async def add_player_ipl(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """
     /add_playeripl name=X roles=A,B image=URL
@@ -1527,6 +1613,7 @@ async def add_player_ipl(update: Update, context: ContextTypes.DEFAULT_TYPE):
     reply_markup = InlineKeyboardMarkup(keyboard)
     
     await update.message.reply_text(f"✅ IPL Data Updated for **{name}**\nRoles: {final_roles}", reply_markup=reply_markup)
+
 async def add_role_ipl(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not await check_admin(update): return
     # Basic implementation: simple role append
@@ -1566,6 +1653,7 @@ async def add_role_ipl(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(f"✅ Added {target_role} to {p['name']} (IPL).\nIPL Roles: {', '.join(current)}")
     else:
         await update.message.reply_text(f"⚠️ {p['name']} already has {target_role} in IPL.")
+
 async def rem_role_ipl(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not await check_admin(update): return
     text = update.message.text.replace('/rem_roleipl', '').strip()
@@ -1601,6 +1689,7 @@ async def rem_role_ipl(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(f"✅ Removed {found} from {p['name']} (IPL).\nIPL Roles: {', '.join(current)}")
     else:
          await update.message.reply_text(f"⚠️ Role {role_input} not found in {p['name']}'s IPL roles.")
+
 async def update_image_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """
     /update_image name [format=ipl] url
@@ -1641,21 +1730,25 @@ async def update_image_command(update: Update, context: ContextTypes.DEFAULT_TYP
         await update.message.reply_text(f"✅ Image updated.")
     except Exception as e:
          await update.message.reply_text(f"❌ Failed: {e}")
+
 async def enable_ipl_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     from database import get_db
     db = get_db()
     db.system_config.update_one({"key": "ipl_mode"}, {"$set": {"enabled": True}}, upsert=True)
     await update.message.reply_text("✅ IPL Mode ENABLED.")
+
 async def disable_ipl_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     from database import get_db
     db = get_db()
     db.system_config.update_one({"key": "ipl_mode"}, {"$set": {"enabled": False}}, upsert=True)
     await update.message.reply_text("⛔ IPL Mode DISABLED.")
+
 async def player_list_ipl(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """
     /playerlist_ipl - Shows paginated list of valid IPL players
     """
     if not await check_admin(update): return
+
     from database import get_all_players
     from telegram import InlineKeyboardButton, InlineKeyboardMarkup
     players = get_all_players()
@@ -1668,6 +1761,7 @@ async def player_list_ipl(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
         
     await show_player_page_ipl(update, context, 0, ipl_players)
+
 async def show_player_page_ipl(update: Update, context: ContextTypes.DEFAULT_TYPE, page: int, players=None):
     from telegram import InlineKeyboardButton, InlineKeyboardMarkup
     # Fetch if not passed (for callback)
@@ -1675,6 +1769,7 @@ async def show_player_page_ipl(update: Update, context: ContextTypes.DEFAULT_TYP
         from database import get_all_players
         all_p = get_all_players()
         players = [p for p in all_p if p.get('ipl_roles')]
+
     # Prepare Lines
     grouped = {}
     for p in players:
@@ -1717,6 +1812,7 @@ async def show_player_page_ipl(update: Update, context: ContextTypes.DEFAULT_TYP
         await update.callback_query.edit_message_text(text, reply_markup=keyboard, parse_mode="Markdown")
     else:
         await update.message.reply_text(text, reply_markup=keyboard, parse_mode="Markdown")
+
 async def handle_playerlist_ipl_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     data = query.data
