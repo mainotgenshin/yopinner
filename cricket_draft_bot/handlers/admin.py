@@ -981,9 +981,14 @@ async def check_role_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
     results = []
     
     for p in players:
-        # Check if player has this role in their list
-        # p['roles'] is a list of strings
-        if canonical_role in p['roles']:
+        # Check if player has this role in their list based on mode
+        role_list = p.get('ipl_roles', []) if target_mode == 'ipl' else p.get('roles', [])
+        
+        # Ensure list exists
+        if not role_list: role_list = []
+        
+        # Case insensitive check might be safer but canonical_role should match exact stored string
+        if canonical_role in role_list:
              # Get Stat
              stats = p.get('stats', {}).get(target_mode, {})
              val = stats.get(stat_key, 0) # Default 0 if missing
