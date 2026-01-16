@@ -61,6 +61,20 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     elif data.startswith("map_"):
         from handlers.admin import handle_map_stats_callback
         await handle_map_stats_callback(update, context)
+        
+    elif data.startswith("view_ipl_"):
+        from handlers.admin import handle_view_ipl_callback
+        await handle_view_ipl_callback(update, context)
+        
+    elif data.startswith("view_intl_"):
+        from handlers.admin import handle_view_intl_callback
+        await handle_view_intl_callback(update, context)
+    elif data.startswith("gen_intl_"):
+        from handlers.admin import handle_gen_intl_callback
+        await handle_gen_intl_callback(update, context)
+    elif data.startswith("gen_ipl_"):
+        from handlers.admin import handle_gen_ipl_callback
+        await handle_gen_ipl_callback(update, context)
 if __name__ == '__main__':
     # Initialize DB
     init_db()
@@ -100,7 +114,10 @@ if __name__ == '__main__':
         change_defence, change_pacer, change_spinner, 
         change_allrounder, change_finisher, change_fielder,
         set_stats, fix_roles_command, migrate_roles_command,
-        add_role_command, rem_role_command, non_role_fix
+        add_role_command, rem_role_command, non_role_fix,
+        run_fix_now_command, revert_command,
+        add_player_ipl, add_role_ipl, rem_role_ipl, update_image_command,
+        enable_ipl_command, disable_ipl_command
     )
     application.add_handler(CommandHandler('changecap', change_cap))
     application.add_handler(CommandHandler('changewk', change_wk))
@@ -118,6 +135,14 @@ if __name__ == '__main__':
     application.add_handler(CommandHandler('add_role', add_role_command))
     application.add_handler(CommandHandler('rem_role', rem_role_command))
     application.add_handler(CommandHandler('nonrolefix', non_role_fix))
+    application.add_handler(CommandHandler('run_fix_now', run_fix_now_command))
+    application.add_handler(CommandHandler('revert', revert_command))
+    application.add_handler(CommandHandler('add_playeripl', add_player_ipl))
+    application.add_handler(CommandHandler('add_roleipl', add_role_ipl))
+    application.add_handler(CommandHandler('rem_roleipl', rem_role_ipl))
+    application.add_handler(CommandHandler('update_image', update_image_command))
+    application.add_handler(CommandHandler('enable_ipl', enable_ipl_command))
+    application.add_handler(CommandHandler('disable_ipl', disable_ipl_command))
     # Game
     application.add_handler(CommandHandler('challenge_ipl', challenge_ipl))
     application.add_handler(CommandHandler('challenge_intl', challenge_intl))
