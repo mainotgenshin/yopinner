@@ -1,15 +1,20 @@
 # main.py
 import logging
+
 # MONKEYPATCH: Fix for Windows Timezone issues with APScheduler
 import pytz
 import apscheduler.util
+
 # Force UTC for everything
 apscheduler.util.get_localzone = lambda: pytz.utc
+
 # Bypass the "Only timezones from the pytz library are supported" check
 # by replacing the validator function entirely
 def fixed_astimezone(timezone):
     return pytz.utc
+
 apscheduler.util.astimezone = fixed_astimezone
+
 from telegram import Update
 from telegram.ext import ApplicationBuilder, ContextTypes, CommandHandler, CallbackQueryHandler
 from config import BOT_TOKEN
@@ -18,10 +23,12 @@ from handlers.admin import add_player, map_api, remove_player, player_list, get_
 from handlers.challenge import challenge_ipl, challenge_intl, join_challenge, handle_join
 from handlers.draft import handle_draft_callback
 from handlers.ready import handle_ready
+
 logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
     level=logging.INFO
 )
+
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
         "🏏 **Welcome to Cricket Draft Bot!** 🏏\n\n"
@@ -33,8 +40,10 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "/help - Show this message",
         parse_mode="Markdown"
     )
+
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await start(update, context)
+
 async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Central router for callbacks."""
     data = update.callback_query.data
@@ -69,18 +78,23 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     elif data.startswith("view_intl_"):
         from handlers.admin import handle_view_intl_callback
         await handle_view_intl_callback(update, context)
+
     elif data.startswith("gen_intl_"):
         from handlers.admin import handle_gen_intl_callback
         await handle_gen_intl_callback(update, context)
+
     elif data.startswith("gen_ipl_"):
         from handlers.admin import handle_gen_ipl_callback
         await handle_gen_ipl_callback(update, context)
+
     elif data.startswith("plipl_"):
         from handlers.admin import handle_playerlist_ipl_callback
         await handle_playerlist_ipl_callback(update, context)
+
 if __name__ == '__main__':
     # Initialize DB
     init_db()
+
     # Build application
     application = (
         ApplicationBuilder()
@@ -91,9 +105,11 @@ if __name__ == '__main__':
         .connection_pool_size(1024)
         .build()
     )
+
     # Handlers
     application.add_handler(CommandHandler('start', start))
     application.add_handler(CommandHandler('help', help_command))
+
     # Admin
     application.add_handler(CommandHandler('add_player', add_player))
     application.add_handler(CommandHandler('map_api', map_api))
@@ -103,6 +119,7 @@ if __name__ == '__main__':
     application.add_handler(CommandHandler('reset_matches', reset_matches))
     from handlers.admin import check_role_stats
     application.add_handler(CommandHandler('check', check_role_stats))
+
     # Mod management
     from handlers.admin import add_mod_handler, remove_mod_handler
     application.add_handler(CommandHandler('mod', add_mod_handler))
@@ -110,6 +127,7 @@ if __name__ == '__main__':
     application.add_handler(CommandHandler('modrm', remove_mod_handler))
     from handlers.admin import list_mods_handler
     application.add_handler(CommandHandler('mods', list_mods_handler))
+
     # Stat modifiers
     # Stat modifiers
     from handlers.admin import (
@@ -123,6 +141,7 @@ if __name__ == '__main__':
         enable_ipl_command, disable_ipl_command,
         player_list_ipl # NEW
     )
+
     application.add_handler(CommandHandler('changecap', change_cap))
     application.add_handler(CommandHandler('changewk', change_wk))
     application.add_handler(CommandHandler('changetop', change_top))
@@ -148,26 +167,40 @@ if __name__ == '__main__':
     application.add_handler(CommandHandler('enable_ipl', enable_ipl_command))
     application.add_handler(CommandHandler('disable_ipl', disable_ipl_command))
     application.add_handler(CommandHandler('playerlist_ipl', player_list_ipl))
+
     # Game
     application.add_handler(CommandHandler('challenge_ipl', challenge_ipl))
     application.add_handler(CommandHandler('challenge_intl', challenge_intl))
     from handlers.challenge import challenge_unified
     application.add_handler(CommandHandler('challenge', challenge_unified))
+
     # Callbacks
     application.add_handler(CallbackQueryHandler(handle_callback))
+
     # ---- HEALTH SERVER (FREE TIER FIX) ----
     import threading
     import os
     from http.server import BaseHTTPRequestHandler, HTTPServer
+
     class HealthHandler(BaseHTTPRequestHandler):
         def do_GET(self):
             self.send_response(200)
             self.end_headers()
             self.wfile.write(b"OK")
+
     def start_health_server():
         port = int(os.environ.get("PORT", 8000))
         server = HTTPServer(("0.0.0.0", port), HealthHandler)
         server.serve_forever()
+
     threading.Thread(target=start_health_server, daemon=True).start()
+
+
+    async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
+        """Log the error and send a telegram message to notify the developer."""
+        logger.error(msg="Exception while handling an update:", exc_info=context.error)
+
+    application.add_error_handler(error_handler)
+
     print("Bot is running (Polling mode, Free tier compatible)...")
     application.run_polling()
