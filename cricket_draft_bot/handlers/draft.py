@@ -282,7 +282,13 @@ async def handle_draw(update: Update, context: ContextTypes.DEFAULT_TYPE, match:
     # Get Player Image
     from database import get_player
     p_data = get_player(player['player_id'])
-    media = p_data.get('image_file_id', DRAFT_BANNER_URL)
+    
+    img_key = 'ipl_image_file_id' if "IPL" in match.mode else 'image_file_id'
+    # Fallback to normal image if IPL image missing
+    if "IPL" in match.mode and not p_data.get(img_key):
+        img_key = 'image_file_id'
+        
+    media = p_data.get(img_key, DRAFT_BANNER_URL)
     
     # Update the single message to show the card
     await update_draft_message(update, context, match, card_caption, keyboard, media=media)
@@ -407,7 +413,12 @@ async def handle_replace_start(update: Update, context: ContextTypes.DEFAULT_TYP
     
     # Reuse media (banner or player card)
     # We should probably show the player card of the NEW player to keep context
-    media = player.get('image_file_id', DRAFT_BANNER_URL)
+    
+    img_key = 'ipl_image_file_id' if "IPL" in match.mode else 'image_file_id'
+    if "IPL" in match.mode and not player.get(img_key):
+        img_key = 'image_file_id'
+        
+    media = player.get(img_key, DRAFT_BANNER_URL)
     
     await update_draft_message(update, context, match, card_caption, keyboard, media=media)
 
