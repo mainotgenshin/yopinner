@@ -89,3 +89,5 @@ EXCLUDED_IPL_PLAYERS = [
     "Ish Sodhi",
     "Mark Chapman",
     "Temba Bavuma"
+]
+
