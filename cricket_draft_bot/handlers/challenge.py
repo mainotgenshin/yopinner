@@ -3,16 +3,13 @@ from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ContextTypes
 from game.state import create_match_state
 import logging
-
 logger = logging.getLogger(__name__)
-
 async def challenge_handler(update: Update, context: ContextTypes.DEFAULT_TYPE, mode: str):
     """
     Generic handler for /challenge_ipl (mode="IPL") or /challenge_intl (mode="International")
     """
     if not update.message:
         return
-
     # Check mention
     if not update.message.mentions:
         await update.message.reply_text("⚠ Usage: /challenge_ipl @username")
@@ -46,7 +43,6 @@ async def challenge_handler(update: Update, context: ContextTypes.DEFAULT_TYPE, 
         reply_markup=reply_markup,
         parse_mode="Markdown"
     )
-
 async def join_challenge(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
@@ -69,13 +65,11 @@ async def join_challenge(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # But we don't know who sent the command from the callback query on the BOT's message.
         # Wait, the bot's message is a reply to the command? No, usually just a new message.
         pass
-
     # To fix this: encode owner_id in callback data? "join_IPL_12345"
     # But data limit is small (64 bytes).
     # Let's hope create_task is fine. 
     # Let's update the original code to encode ID.
     pass
-
 async def challenge_ipl(update: Update, context: ContextTypes.DEFAULT_TYPE):
     key = f"join_IPL_{update.effective_user.id}"
     keyboard = [[InlineKeyboardButton("⚔️ Join Game", callback_data=key)]]
@@ -84,7 +78,6 @@ async def challenge_ipl(update: Update, context: ContextTypes.DEFAULT_TYPE):
         reply_markup=InlineKeyboardMarkup(keyboard),
         parse_mode="Markdown"
     )
-
 async def challenge_intl(update: Update, context: ContextTypes.DEFAULT_TYPE):
     key = f"join_INTL_{update.effective_user.id}"
     keyboard = [[InlineKeyboardButton("⚔️ Join Game", callback_data=key)]]
@@ -93,7 +86,6 @@ async def challenge_intl(update: Update, context: ContextTypes.DEFAULT_TYPE):
         reply_markup=InlineKeyboardMarkup(keyboard),
         parse_mode="Markdown"
     )
-
 async def challenge_unified(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """
     /challenge intl - Start Intl Draft
@@ -104,17 +96,23 @@ async def challenge_unified(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not context.args:
         await update.message.reply_text("Usage: `/challenge intl`", parse_mode="Markdown")
         return
-
     mode_arg = context.args[0].lower()
     
-    if mode_arg in ['t20', 'ipl']:
-        # real_mode = "IPL"
-        await update.message.reply_text("🚧 T20/IPL Mode is temporarily disabled. Please use `intl`.")
-        return
-    elif mode_arg == 'test':
+    if mode_arg == 'test':
         # real_mode = "Test"
         await update.message.reply_text("🚧 Test Mode is temporarily disabled. Please use `intl`.")
         return
+    elif mode_arg in ['t20', 'ipl']:
+        # Check if enabled
+        from database import get_db
+        db = get_db()
+        config = db.system_config.find_one({"key": "ipl_mode"})
+        
+        if config and config.get("enabled"):
+             real_mode = "IPL"
+        else:
+             await update.message.reply_text("🚧 IPL Mode is currently disabled/under development.")
+             return
     elif mode_arg in ['intl', 'international']:
         real_mode = "International"
     else:
@@ -154,7 +152,6 @@ async def challenge_unified(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         
     await update.message.reply_text(msg, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="Markdown")
-
 async def handle_join(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
@@ -191,7 +188,6 @@ async def handle_join(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     match = create_match_state(chat_id, mode, owner_id, query.from_user.id, owner_name, challenger_name)
     
-
     # Start Draft UI
     # Show first drafter
     current_name = owner_name if match.current_turn == owner_id else challenger_name
@@ -204,7 +200,6 @@ async def handle_join(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.delete_message()
     except:
         pass
-
     msg = await context.bot.send_message(
         chat_id=chat_id, 
         text=board_text,  # Text only
