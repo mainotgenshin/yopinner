@@ -252,6 +252,45 @@ async def handle_map_stats_callback(update: Update, context: ContextTypes.DEFAUL
 # I will implement generate_player_stats and update map_api first.
 
 
+async def handle_remove_ipl(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """
+    /removeipl Virat Kohli
+    Removes IPL stats/data for the specified player.
+    """
+    if not await check_admin(update): return
+    
+    name = " ".join(context.args).strip()
+    if not name:
+        await update.message.reply_text("Usage: /removeipl Player Name")
+        return
+        
+    from database import get_player_by_name, save_player
+    
+    player = get_player_by_name(name)
+    if not player:
+        await update.message.reply_text(f"Player not found: {name}")
+        return
+        
+    # Check if they even have IPL stats
+    cleaned = False
+    
+    if 'stats' in player and 'ipl' in player['stats']:
+        del player['stats']['ipl']
+        cleaned = True
+        
+    # Remove top-level IPL fields if they exist
+    for field in ['ipl_team', 'ipl_roles', 'ipl_image_file_id']:
+        if field in player:
+            del player[field]
+            cleaned = True
+            
+    if cleaned:
+        save_player(player)
+        await update.message.reply_text(f"✅ Removed IPL data for **{esc(player['name'])}**.", parse_mode="Markdown")
+        logger.info(f"Admin {update.effective_user.id} removed IPL data for {player['name']}")
+    else:
+        await update.message.reply_text(f"⚠️ **{esc(player['name'])}** has no IPL data to remove.", parse_mode="Markdown")
+
 async def remove_player(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """
     /removeplayer player_id=IND_KOHLI
