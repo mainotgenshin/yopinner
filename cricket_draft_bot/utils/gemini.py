@@ -116,7 +116,10 @@ If stats appear generic or averaged, regenerate them.
             text = text.replace("```json", "").replace("```", "")
             
         data = json.loads(text.strip())
-        return data
+        
+        # Apply strict rules
+        from utils.stat_corrector import apply_stat_rules
+        return apply_stat_rules(data, roles)
         
     except Exception as e:
         logger.error(f"Gemini API Error: {e}")
