@@ -5,7 +5,13 @@ from telegram.error import BadRequest
 import logging
 from game.state import load_match_state, save_match_state
 from game.simulation import run_simulation
+from telegram.helpers import escape_markdown
+
+def esc(t):
+    return escape_markdown(str(t), version=1)
+
 logger = logging.getLogger(__name__)
+
 async def handle_ready(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     data = query.data
@@ -16,6 +22,7 @@ async def handle_ready(update: Update, context: ContextTypes.DEFAULT_TYPE):
              await query.answer(text, show_alert=alert)
         except:
              pass
+
     match = load_match_state(match_id)
     if not match:
         await safe_answer("Match expired.", alert=True)
@@ -75,7 +82,7 @@ async def handle_ready(update: Update, context: ContextTypes.DEFAULT_TYPE):
         a_status = "✅" if match.team_a.is_ready else "⏳"
         b_status = "✅" if match.team_b.is_ready else "⏳"
         
-        text = f"✅ **Draft Complete!**\n\n{match.team_a.owner_name}: {a_status}\n{match.team_b.owner_name}: {b_status}\n\nWaiting for both..."
+        text = f"✅ *Draft Complete!*\n\n{esc(match.team_a.owner_name)}: {a_status}\n{esc(match.team_b.owner_name)}: {b_status}\n\nWaiting for both..."
         keyboard = [[InlineKeyboardButton("🚀 READY", callback_data=f"ready_{match.match_id}")]]
         
         # Avoid editing if same content
