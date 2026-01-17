@@ -72,11 +72,30 @@ async def handle_ready(update: Update, context: ContextTypes.DEFAULT_TYPE):
         save_match_state(match)
         
         # Send Result
-        await context.bot.send_message(
-            chat_id=match.chat_id,
-            text=result_text,
-            parse_mode="Markdown"
-        )
+        # Send Result with Retry
+        from telegram.error import RetryAfter
+        import asyncio
+        
+        for attempt in range(3):
+            try:
+                await context.bot.send_message(
+                    chat_id=match.chat_id,
+                    text=result_text,
+                    parse_mode="Markdown"
+                )
+                break
+            except RetryAfter as e:
+                wait_time = e.retry_after + 1
+                logger.warning(f"Flood limit exceeded in Ready Handler. Sleeping {wait_time}s...")
+                await asyncio.sleep(wait_time)
+                continue
+            except Exception as e:
+                 logger.error(f"Failed to send simulation result: {e}")
+                 # Try without markdown
+                 try:
+                     await context.bot.send_message(chat_id=match.chat_id, text=result_text)
+                 except: pass # Give up
+                 break
     else:
         # Update message to show who is ready
         a_status = "✅" if match.team_a.is_ready else "⏳"
