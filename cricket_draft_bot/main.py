@@ -139,7 +139,7 @@ if __name__ == '__main__':
         run_fix_now_command, revert_command,
         add_player_ipl, add_role_ipl, rem_role_ipl, update_image_command,
         enable_ipl_command, disable_ipl_command,
-        player_list_ipl # NEW
+        player_list_ipl, handle_remove_ipl # NEW
     )
 
     application.add_handler(CommandHandler('changecap', change_cap))
@@ -163,6 +163,7 @@ if __name__ == '__main__':
     application.add_handler(CommandHandler('add_playeripl', add_player_ipl))
     application.add_handler(CommandHandler('add_roleipl', add_role_ipl))
     application.add_handler(CommandHandler('rem_roleipl', rem_role_ipl))
+    application.add_handler(CommandHandler('removeipl', handle_remove_ipl))
     application.add_handler(CommandHandler('update_image', update_image_command))
     application.add_handler(CommandHandler('enable_ipl', enable_ipl_command))
     application.add_handler(CommandHandler('disable_ipl', disable_ipl_command))
