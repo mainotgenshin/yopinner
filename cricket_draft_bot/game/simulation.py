@@ -60,6 +60,13 @@ def calculate_slot_score(player: Player, role: str, mode: str, is_pressure: bool
              multiplier = PENALTY_MULTIPLIERS["PARTIAL"]
         elif role_lower == "all-rounder" and ("all rounder" in player_roles_lower or "all-rounder" in player_roles_lower):
              multiplier = PENALTY_MULTIPLIERS["NATURAL"]
+        
+        # New Rule: Batting Compatibility (Top/Middle/Finisher/Hitting are all partially compatible)
+        # If we reached here, it's not a NATURAL match (exact role).
+        elif role_lower in ["top", "middle", "finisher", "hitting"]:
+            # Check if player has ANY other batting role
+            if any(r in player_roles_lower for r in ["top", "middle", "finisher", "hitting", "batter"]):
+                multiplier = PENALTY_MULTIPLIERS["PARTIAL"]
 
     # weight = ROLE_WEIGHTS.get(role, 1.0) # Weight disabled per strict stat comparison request? 
     # Actually user said "overall stat comparison". We should probably keep natural weight of role?
