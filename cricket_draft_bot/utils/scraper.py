@@ -43,7 +43,7 @@ def get_deterministic_stats(player_name, roles):
     
     leadership = random.randint(80, 95) if "Captain" in roles else random.randint(40, 70)
     
-    return {
+    raw_stats = {
         "ipl": {
             "leadership": leadership,
             "batting_power": bat_pow,
@@ -70,6 +70,9 @@ def get_deterministic_stats(player_name, roles):
         },
         "source": "Deterministic (Seeded)"
     }
+    
+    from utils.stat_corrector import apply_stat_rules
+    return apply_stat_rules(raw_stats, roles)
 
 async def scrape_player_stats(player_name: str, roles: list) -> dict:
     """
@@ -312,7 +315,7 @@ async def scrape_player_stats(player_name: str, roles: list) -> dict:
         if raw_debug:
             source_label += f" [{', '.join(raw_debug)}]"
     
-    return {
+    raw_stats = {
         "source_label": source_label, 
         "ipl": {
             "leadership": leadership,
@@ -340,3 +343,6 @@ async def scrape_player_stats(player_name: str, roles: list) -> dict:
         },
         "source": source_label
     }
+    
+    from utils.stat_corrector import apply_stat_rules
+    return apply_stat_rules(raw_stats, roles)
