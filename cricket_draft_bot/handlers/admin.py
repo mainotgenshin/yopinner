@@ -422,31 +422,37 @@ async def get_player_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
     has_defence = "DEFENCE" in [r.upper() for r in p['roles']]
     
     def format_stats(data):
+        if not data: return "N/A"
         if isinstance(data, int): return str(data)
         parts = []
         
-        # Core Stats (Renamed to match Roles)
-        parts.append(f"🧠 Captain: {data.get('leadership')}")
-        parts.append(f"🏏 Top: {data.get('batting_power')}")
-        parts.append(f"🛡️ Middle: {data.get('batting_control')}")
+        # Helper to get value meaningfully
+        def g(k):
+            val = data.get(k)
+            return val if val is not None else "N/A"
+
+        parts.append(f"🧠 Captain: {g('leadership')}")
+        parts.append(f"🏏 Top: {g('batting_power')}")
+        parts.append(f"🛡️ Middle: {g('batting_control')}")
         
         if has_defence:
-             parts.append(f"🧱 Defence: {data.get('batting_defence', 50)}")
+             parts.append(f"🧱 Defence: {g('batting_defence')}")
         
         # Wicket Keeping
         if has_wk:
-             parts.append(f"🧤 WK: {data.get('wicket_keeping', 50)}")
+             parts.append(f"🧤 WK: {g('wicket_keeping')}")
 
-        parts.append(f"💥 Finisher: {data.get('finishing')}")
-        parts.append(f"⚡ Pacer: {data.get('bowling_pace', 20)}")
-        parts.append(f"🌀 Spinner: {data.get('bowling_spin', 20)}")
-        parts.append(f"✨ All Rounder: {data.get('all_round')}")
-        parts.append(f"👟 Fielder: {data.get('fielding')}")
+        parts.append(f"💥 Finisher: {g('finishing')}")
+        parts.append(f"⚡ Pacer: {g('bowling_pace')}")
+        parts.append(f"🌀 Spinner: {g('bowling_spin')}")
+        parts.append(f"✨ All Rounder: {g('all_round')}")
+        parts.append(f"👟 Fielder: {g('fielding')}")
         
         return "\n".join(parts) if parts else "N/A"
         
     ipl_display = format_stats(ipl_data)
     intl_display = format_stats(intl_data)
+
 
     msg = (
         f"📊 *Stats for {esc(p['name'])}*\n"
@@ -617,16 +623,22 @@ async def handle_view_intl_callback(update: Update, context: ContextTypes.DEFAUL
     roles = p.get('roles', [])
         
     def format_stats_local(data):
+        if not data: return "N/A"
         if isinstance(data, int): return str(data)
         parts = []
-        parts.append(f"🧠 Cap: {data.get('leadership')}")
-        parts.append(f"🏏 Top: {data.get('batting_power')}")
-        parts.append(f"🛡️ Mid: {data.get('batting_control')}")
+        
+        def g(k): return data.get(k) if data.get(k) is not None else "N/A"
+
+        parts.append(f"🧠 Cap: {g('leadership')}")
+        parts.append(f"🏏 Top: {g('batting_power')}")
+        parts.append(f"🛡️ Mid: {g('batting_control')}")
         # Show all relevant for Intl
-        parts.append(f"💥 Fin: {data.get('finishing')}")
-        parts.append(f"⚡ Pace: {data.get('bowling_pace')}")
-        parts.append(f"🌀 Spin: {data.get('bowling_spin')}")
-        parts.append(f"✨ All: {data.get('all_round')}")
+        parts.append(f"💥 Fin: {g('finishing')}")
+        parts.append(f"⚡ Pace: {g('bowling_pace')}")
+        parts.append(f"🌀 Spin: {g('bowling_spin')}")
+        parts.append(f"✨ All: {g('all_round')}")
+        parts.append(f"👟 Field: {g('fielding')}")
+        return "\n".join(parts)
         parts.append(f"👟 Field: {data.get('fielding')}")
         return "\n".join(parts)
         
