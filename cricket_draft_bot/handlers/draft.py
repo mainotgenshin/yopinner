@@ -156,39 +156,40 @@ async def update_draft_message(update: Update, context: ContextTypes.DEFAULT_TYP
     
     # Attempt to Edit
     from telegram.error import RetryAfter
-    
-    for attempt in range(3): # Max 3 retries
-        try:
-            if media:
-                 # Want Photo
-                 await context.bot.edit_message_media(
-                    chat_id=match.chat_id,
-                    message_id=match.draft_message_id,
-                    media=InputMediaPhoto(media=media, caption=caption, parse_mode="Markdown"),
-                    reply_markup=reply_markup
-                 )
-            else:
-                 # Want Text
-                 await context.bot.edit_message_text(
-                    chat_id=match.chat_id,
-                    message_id=match.draft_message_id,
-                    text=caption, # 'text' not 'caption'
-                    reply_markup=reply_markup,
-                    parse_mode="Markdown"
-                 )
-            return # Success!
-            
-        except RetryAfter as e:
-            wait_time = e.retry_after + 1
-            logger.warning(f"Flood limit exceeded. Sleeping {wait_time}s...")
-            await asyncio.sleep(wait_time)
-            continue # Retry
-            
-        except Exception:
-            # If it's the last attempt or a different error, raise to let the outer handler manage it
-            if attempt == 2: raise 
-            # If not RetryAfter, raise immediately (don't retry logic errors)
-            raise
+
+    try:
+        for attempt in range(3): # Max 3 retries
+            try:
+                if media:
+                     # Want Photo
+                     await context.bot.edit_message_media(
+                        chat_id=match.chat_id,
+                        message_id=match.draft_message_id,
+                        media=InputMediaPhoto(media=media, caption=caption, parse_mode="Markdown"),
+                        reply_markup=reply_markup
+                     )
+                else:
+                     # Want Text
+                     await context.bot.edit_message_text(
+                        chat_id=match.chat_id,
+                        message_id=match.draft_message_id,
+                        text=caption, # 'text' not 'caption'
+                        reply_markup=reply_markup,
+                        parse_mode="Markdown"
+                     )
+                return # Success!
+                
+            except RetryAfter as e:
+                wait_time = e.retry_after + 1
+                logger.warning(f"Flood limit exceeded. Sleeping {wait_time}s...")
+                await asyncio.sleep(wait_time)
+                continue # Retry
+                
+            except Exception:
+                # If it's the last attempt or a different error, raise to let the outer handler manage it
+                if attempt == 2: raise 
+                # If not RetryAfter, raise immediately (don't retry logic errors)
+                raise
              
     except Exception as e:
         err = str(e)
