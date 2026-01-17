@@ -8,6 +8,10 @@ import uuid
 import os
 from utils.permissions import check_admin, check_owner, can_manage_bot
 from database import add_mod, remove_mod
+from telegram.helpers import escape_markdown
+
+def esc(t):
+    return escape_markdown(str(t), version=1)
 
 logger = logging.getLogger(__name__)
 
@@ -277,7 +281,7 @@ async def remove_player(update: Update, context: ContextTypes.DEFAULT_TYPE):
             player_id = p['player_id']
 
         if delete_player(player_id):
-            await update.message.reply_text(f"✅ Player **{p['name']}** (`{player_id}`) has been removed.", parse_mode="Markdown")
+            await update.message.reply_text(f"✅ Player *{esc(p['name'])}* (`{player_id}`) has been removed.", parse_mode="Markdown")
         else:
             await update.message.reply_text("❌ Failed to remove player (DB Error).")
             
@@ -321,7 +325,7 @@ async def player_list(update: Update, context: ContextTypes.DEFAULT_TYPE):
         for p in grouped[nation]:
             # Check if provider exists (scraped/seeded) or old ID logic
             mapped = "✅" if p.get('api_reference', {}).get('provider') or p.get('api_reference', {}).get('international_id') else "❌"
-            lines.append(f"• {p['name']} (`{p['player_id']}`) - {', '.join(p['roles'][:2])} - Map: {mapped}")
+            lines.append(f"• {esc(p['name'])} (`{p['player_id']}`) - {', '.join(p['roles'][:2])} - Map: {mapped}")
         lines.append("") # Spacer
         
     # Pagination
@@ -352,7 +356,7 @@ async def show_player_page(update: Update, context: ContextTypes.DEFAULT_TYPE, p
         lines.append(f"🚩 **{nation}**")
         for p in grouped[nation]:
             mapped = "✅" if p.get('api_reference', {}).get('provider') or p.get('api_reference', {}).get('international_id') else "❌"
-            lines.append(f"• {p['name']} (`{p['player_id']}`)")
+            lines.append(f"• {esc(p['name'])} (`{p['player_id']}`)")
             lines.append(f"   Roles: {', '.join(p['roles'])}")
             lines.append(f"   Map: {mapped}")
         lines.append("")
@@ -445,9 +449,9 @@ async def get_player_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
     intl_display = format_stats(intl_data)
 
     msg = (
-        f"📊 **Stats for {p['name']}**\n"
+        f"📊 *Stats for {esc(p['name'])}*\n"
         f"ID: `{p['player_id']}`\n\n"
-        f"**International**\n{intl_display}\n\n"
+        f"*International*\n{intl_display}\n\n"
         f"Roles: {', '.join(p['roles'])}\n"
         f"Source: {p.get('api_reference', {}).get('provider', 'Unknown')}"
     )
@@ -510,7 +514,7 @@ async def handle_view_intl_callback(update: Update, context: ContextTypes.DEFAUL
         
     stats_display = format_stats_local(stats)
     
-    caption = f"📊 **Stats for {p['name']}**\n(International)\n\n{stats_display}\n\nRoles: {', '.join(roles)}"
+    caption = f"📊 *Stats for {esc(p['name'])}*\n(International)\n\n{stats_display}\n\nRoles: {', '.join(roles)}"
     
     keyboard = [[InlineKeyboardButton("🏏 View IPL Stats", callback_data=f"view_ipl_{player_id}")]]
     reply_markup = InlineKeyboardMarkup(keyboard)
@@ -573,7 +577,7 @@ async def handle_view_ipl_callback(update: Update, context: ContextTypes.DEFAULT
     stats_display = format_stats_local(stats)
     
     caption = (
-        f"🇮🇳 **IPL Stats for {p['name']}**\n\n"
+        f"🇮🇳 *IPL Stats for {esc(p['name'])}*\n\n"
         f"{stats_display}\n\n"
         f"Roles: {', '.join(ipl_roles)}"
     )
@@ -628,7 +632,7 @@ async def handle_view_intl_callback(update: Update, context: ContextTypes.DEFAUL
         
     stats_display = format_stats_local(stats)
     
-    caption = f"📊 **Stats for {p['name']}**\n(International)\n\n{stats_display}\n\nRoles: {', '.join(roles)}"
+    caption = f"📊 *Stats for {esc(p['name'])}*\n(International)\n\n{stats_display}\n\nRoles: {', '.join(roles)}"
     
     keyboard = [[InlineKeyboardButton("🏏 View IPL Stats", callback_data=f"view_ipl_{player_id}")]]
     reply_markup = InlineKeyboardMarkup(keyboard)
