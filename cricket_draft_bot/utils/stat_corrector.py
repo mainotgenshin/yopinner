@@ -18,9 +18,10 @@ def apply_stat_rules(stats: dict, roles: list) -> dict:
     
     def set_stat(key, value):
         for mode in modes:
-            if mode not in stats: stats[mode] = {}
-            # Force set
-            stats[mode][key] = value
+            # Fix: Only update if mode exists! 
+            # run_fix_now.py previously created keys blindly.
+            if mode in stats:
+                stats[mode][key] = value
 
     # Rule 1: WK -> pacer = 20, spin = 20
     if "WK" in roles_upper or "WICKET KEEPER" in roles_upper:
