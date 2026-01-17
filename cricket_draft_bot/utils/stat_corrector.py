@@ -97,4 +97,41 @@ def apply_stat_rules(stats: dict, roles: list) -> dict:
         set_stat("wicket_keeping", 20)  # No WK
         set_stat("finishing", 20)       # No Finisher
         
+    # Rule 10: Stat Adjacency (Bleed) - Ensure specialists have floors in adjacent roles
+    # Only applies if NOT a Pure Bowler (checked implicitly by clamps logic, but we run this after clamps)
+    
+    for mode in modes:
+        if mode not in stats: continue
+        
+        s = stats[mode]
+        top = s.get('batting_power', 50)
+        mid = s.get('batting_control', 50)
+        fin = s.get('finishing', 50)
+        
+        changed = False
+        
+        # 1. Top -> Middle Support (Power Hitter can usually play decent middle)
+        if top > 75:
+            min_mid = top - 15
+            if mid < min_mid:
+                s['batting_control'] = min_mid
+                changed = True
+
+        # 2. Middle -> Top Support (Control player can usually play decent top)
+        if mid > 75:
+            min_top = mid - 15
+            if top < min_top:
+                s['batting_power'] = min_top
+                changed = True
+                
+        # 3. Middle -> Finisher Support (Control player can usually finish)
+        if mid > 75:
+            min_fin = mid - 15
+            if fin < min_fin:
+                s['finishing'] = min_fin
+                changed = True
+                
+        if changed:
+            stats[mode] = s
+
     return stats
