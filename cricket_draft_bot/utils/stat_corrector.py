@@ -63,7 +63,10 @@ def apply_stat_rules(stats: dict, roles: list) -> dict:
     has_bowling = any(r in bowling_roles for r in roles_upper)
     has_wk = any(r in wk_roles for r in roles_upper)
     
+    print(f"DEBUG: StatCorrect Entry. Roles={roles_upper}")
+    
     if not has_bowling and not has_wk:
+         print("DEBUG: Pure Batter Detected! Forcing Stats...")
          set_stat("bowling_pace", 20)
          set_stat("bowling_spin", 20)
          set_stat("wicket_keeping", 20)
