@@ -6,6 +6,10 @@ from game.state import load_match_state, save_match_state, draw_player_for_turn,
 from game.models import Match
 from utils.validators import validate_draft_action
 from config import MAX_REDRAWS, POSITIONS_T20, POSITIONS_TEST, DRAFT_BANNER_URL
+from telegram.helpers import escape_markdown
+
+def esc(t):
+    return escape_markdown(str(t), version=1)
 
 
 logger = logging.getLogger(__name__)
@@ -103,18 +107,18 @@ async def handle_draft_callback(update: Update, context: ContextTypes.DEFAULT_TY
 def format_draft_board(match: Match) -> str:
     """Creates the text for the draft board (Static UI Rule 1)."""
     def format_team(team):
-        lines = [f"🔵 {team.owner_name}" if team == match.team_a else f"🔴 {team.owner_name}"]
+        lines = [f"🔵 {esc(team.owner_name)}" if team == match.team_a else f"🔴 {esc(team.owner_name)}"]
         for slot, player in team.slots.items():
-            val = player.name if player else ". . ."
+            val = esc(player.name) if player else ". . ."
             lines.append(f"• {slot}: {val}")
         return "\n".join(lines)
 
-    board = f"🏁 **Drafting Phase**\n\n"
+    board = f"🏁 *Drafting Phase*\n\n"
     board += format_team(match.team_a) + "\n\n"
     board += format_team(match.team_b) + "\n\n"
     
     current_name = match.team_a.owner_name if match.current_turn == match.team_a.owner_id else match.team_b.owner_name
-    board += f"🎯 **Turn:** {current_name}"
+    board += f"🎯 *Turn:* {esc(current_name)}"
 
     return board
 
@@ -228,7 +232,7 @@ async def handle_draw(update: Update, context: ContextTypes.DEFAULT_TYPE, match:
         from database import get_player
         p_data = get_player(match.pending_player_id)
         if p_data:
-            logger.info(f"DEBUG: Draw Request Idempotency - Player {match.pending_player_id} already pending. Re-showing card.")
+            # logger.info(f"DEBUG: Draw Request Idempotency...")
             player = p_data
     
     if not player:
@@ -250,7 +254,7 @@ async def handle_draw(update: Update, context: ContextTypes.DEFAULT_TYPE, match:
     # ✨ ⚔️ <CurrentPlayerName>'s turn
     # Pulled: <Cricketer Name>
     # Assign a position:
-    card_caption = f"✨ ⚔️ {current_team.owner_name}'s turn\nPulled: {player['name']}\nAssign a position:"
+    card_caption = f"✨ ⚔️ {esc(current_team.owner_name)}'s turn\nPulled: {esc(player['name'])}\nAssign a position:"
     
     # Buttons for Card
     keyboard = []
@@ -361,7 +365,7 @@ async def handle_redraw(update: Update, context: ContextTypes.DEFAULT_TYPE, matc
         keyboard = [[InlineKeyboardButton("🎲 Draw Player", callback_data=f"draw_{match.match_id}")]]
         
         # Fix: Use Banner Image
-        await update_draft_message(update, context, match, f"{board_text}\n\n🗑 {current_team.owner_name} used Skip! Turn Consumed.", keyboard, media=DRAFT_BANNER_URL)
+        await update_draft_message(update, context, match, f"{board_text}\n\n🗑 {esc(current_team.owner_name)} used Skip! Turn Consumed.", keyboard, media=DRAFT_BANNER_URL)
         
     else:
         try:
@@ -388,7 +392,7 @@ async def handle_replace_start(update: Update, context: ContextTypes.DEFAULT_TYP
     player = get_player(match.pending_player_id)
     
     # UI: Show Filled Slots to Replace
-    card_caption = f"♻️ **Replacing Player**\nNew Player: {player['name']}\n\nSelect a position to replace:"
+    card_caption = f"♻️ *Replacing Player*\nNew Player: {esc(player['name'])}\n\nSelect a position to replace:"
     
     keyboard = []
     
@@ -463,7 +467,7 @@ async def handle_replace_exec(update: Update, context: ContextTypes.DEFAULT_TYPE
     board_text = format_draft_board(match)
     keyboard = [[InlineKeyboardButton("🎲 Draw Player", callback_data=f"draw_{match.match_id}")]]
     
-    await update_draft_message(update, context, match, f"{board_text}\n\n♻️ {current_team.owner_name} replaced {old_player.name} with {new_player.name}!", keyboard, media=DRAFT_BANNER_URL)
+    await update_draft_message(update, context, match, f"{board_text}\n\n♻️ {esc(current_team.owner_name)} replaced {esc(old_player.name)} with {esc(new_player.name)}!", keyboard, media=DRAFT_BANNER_URL)
 
 async def handle_replace_cancel(update: Update, context: ContextTypes.DEFAULT_TYPE, match: Match):
     # Just go back to draw view
