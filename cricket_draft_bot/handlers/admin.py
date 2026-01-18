@@ -298,6 +298,7 @@ async def handle_clearcache(update: Update, context: ContextTypes.DEFAULT_TYPE):
     /clearcache
     Manually clears the player data cache.
     """
+    logger.info(f"Command /clearcache invoked by {update.effective_user.id}")
     if not await check_admin(update): return
     
     from database import clear_player_cache
