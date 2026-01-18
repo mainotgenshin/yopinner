@@ -208,7 +208,7 @@ async def handle_join(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # Start Draft UI
     # Show first drafter
     current_name = owner_name if match.current_turn == owner_id else challenger_name
-    board_text = f"✅ **Match Started!**\nMod: {mode}\n{owner_name} vs {challenger_name}\n\n👉 **Turn:** {current_name}"
+    board_text = f"✅ **Match Started!**\nMod: {mode}\n{esc(owner_name)} vs {esc(challenger_name)}\n\n👉 **Turn:** {esc(current_name)}"
     
     keyboard = [[InlineKeyboardButton("🃏 Draw Player", callback_data=f"draw_{match.match_id}")]]
     
