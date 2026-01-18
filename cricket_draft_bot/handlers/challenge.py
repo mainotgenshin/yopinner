@@ -3,6 +3,10 @@ from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ContextTypes
 from game.state import create_match_state
 import logging
+from telegram.helpers import escape_markdown
+
+def esc(t):
+    return escape_markdown(str(t), version=1)
 
 logger = logging.getLogger(__name__)
 
