@@ -291,8 +291,7 @@ async def handle_remove_ipl(update: Update, context: ContextTypes.DEFAULT_TYPE):
     else:
         await update.message.reply_text(f"⚠️ **{esc(player['name'])}** has no IPL data to remove.", parse_mode="Markdown")
 
-    else:
-        await update.message.reply_text(f"⚠️ **{esc(player['name'])}** has no IPL data to remove.", parse_mode="Markdown")
+
 
 async def handle_clearcache(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """
