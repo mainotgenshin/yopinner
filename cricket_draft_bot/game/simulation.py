@@ -43,10 +43,17 @@ def calculate_slot_score(player: Player, role: str, mode: str, is_pressure: bool
     multiplier = PENALTY_MULTIPLIERS["MISMATCH"]
     
     # Case-insensitive comparison
-    player_roles_lower = [r.lower() for r in player.roles]
+    # Case-insensitive comparison
+    if mode and "IPL" in mode:
+        # Use IPL roles if available, fallback to normal roles
+        effective_roles = player.ipl_roles if player.ipl_roles else player.roles
+    else:
+        effective_roles = player.roles
+
+    player_roles_lower = [r.lower() for r in effective_roles]
     role_lower = role.lower()
     
-    if role in player.roles or role_lower in player_roles_lower:
+    if role in effective_roles or role_lower in player_roles_lower:
         multiplier = PENALTY_MULTIPLIERS["NATURAL"]
     else:
         # Partial Match Logic
