@@ -126,8 +126,38 @@ def apply_stat_rules(stats: dict, roles: list) -> dict:
             min_fin = mid - 15
             if fin < min_fin:
                 s['finishing'] = min_fin
+                s['finishing'] = min_fin
                 changed = True
                 
+        # Rule 11: Primary Role Dominance (Specialist Bias)
+        # Enforce that specialists are strictly better at their primary role.
+        # Logic: Secondary = Primary - 15 (Cap)
+        
+        has_top = "TOP" in roles_upper or "OPENER" in roles_upper
+        has_mid = "MIDDLE" in roles_upper
+        
+        # Pure Top: Middle should not exceed Top - 15
+        if has_top and not has_mid:
+            # We already have a floor (Middle >= Top - 15) from Rule 10 (Adjacency)
+            # If we enforce Middle <= Top - 15, then Middle == Top - 15.
+            # This creates a deterministic spread which is what the user asked for.
+            
+            target_mid = s['batting_power'] - 15
+            # Ensure strictly capped, but don't go below 20 unless purely inept (handled earlier)
+            if target_mid < 20: target_mid = 20
+            
+            # Apply Cap
+            s['batting_control'] = target_mid
+            changed = True
+                
+        # Pure Middle: Top should not exceed Middle - 15
+        if has_mid and not has_top:
+            target_top = s['batting_control'] - 15
+            if target_top < 20: target_top = 20
+            
+            s['batting_power'] = target_top
+            changed = True
+
         if changed:
             stats[mode] = s
 
