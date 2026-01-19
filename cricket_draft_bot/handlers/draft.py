@@ -328,6 +328,14 @@ async def handle_assign(update: Update, context: ContextTypes.DEFAULT_TYPE, matc
     
     # Assign
     current_team.slots[slot] = Player(**filtered_data)
+
+    # REMOVE FROM POOL
+    if player_id in match.draft_pool:
+        match.draft_pool.remove(player_id)
+        logger.info(f"DEBUG: Removed {player_id} from pool on Assignment.")
+    else:
+        logger.warning(f"DEBUG: {player_id} was assigned but not found in pool!")
+
     match.pending_player_id = None
     
     # Check Complete
@@ -477,8 +485,15 @@ async def handle_replace_exec(update: Update, context: ContextTypes.DEFAULT_TYPE
     new_player = Player(**filtered_data)
     
     # Execute Replace
+    # Execute Replace
     current_team.slots[slot] = new_player
     current_team.replacements_remaining -= 1
+
+    # REMOVE OLD PENDING FROM POOL (The new player)
+    if match.pending_player_id in match.draft_pool:
+        match.draft_pool.remove(match.pending_player_id)
+        logger.info(f"DEBUG: Removed {match.pending_player_id} from pool on Replace.")
+    
     match.pending_player_id = None
     
     # Switch Turn
