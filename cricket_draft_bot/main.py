@@ -30,6 +30,9 @@ logging.basicConfig(
 )
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    from database import save_chat
+    save_chat(update.effective_chat.id)
+    
     await update.message.reply_text(
         "🏏 **Welcome to Cricket Draft Bot!** 🏏\n\n"
         "Commands:\n"
@@ -169,12 +172,19 @@ if __name__ == '__main__':
     application.add_handler(CommandHandler('disable_ipl', disable_ipl_command))
     application.add_handler(CommandHandler('playerlist_ipl', player_list_ipl))
     application.add_handler(CommandHandler('clearcache', handle_clearcache))
+    from handlers.admin import handle_broadcast
+    application.add_handler(CommandHandler('broadcast', handle_broadcast))
 
     # Game
     application.add_handler(CommandHandler('challenge_ipl', challenge_ipl))
     application.add_handler(CommandHandler('challenge_intl', challenge_intl))
     from handlers.challenge import challenge_unified
+    from handlers.challenge import challenge_unified
     application.add_handler(CommandHandler('challenge', challenge_unified))
+
+    # User Profile
+    from handlers.profile import handle_profile
+    application.add_handler(CommandHandler('myprofile', handle_profile))
 
     # Callbacks
     application.add_handler(CallbackQueryHandler(handle_callback))
