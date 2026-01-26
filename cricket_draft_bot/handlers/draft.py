@@ -5,7 +5,7 @@ import logging
 from game.state import load_match_state, save_match_state, draw_player_for_turn, switch_turn
 from game.models import Match
 from utils.validators import validate_draft_action
-from config import MAX_REDRAWS, POSITIONS_T20, POSITIONS_TEST, DRAFT_BANNER_URL
+from config import MAX_REDRAWS, POSITIONS_T20, POSITIONS_TEST, DRAFT_BANNER_URL, DRAFT_BANNER_INTL, DRAFT_BANNER_IPL
 from telegram.helpers import escape_markdown
 
 def esc(t):
@@ -15,8 +15,7 @@ def esc(t):
 logger = logging.getLogger(__name__)
 
 # Cache for Banner File ID to prevent re-uploads
-# Cache for Banner File ID to prevent re-uploads
-CACHED_BANNER_ID = None
+CACHED_BANNERS = {}
 
 # Concurrency Control
 PROCESSING_LOCKS = set()
@@ -308,7 +307,12 @@ async def handle_draw(update: Update, context: ContextTypes.DEFAULT_TYPE, match:
     if "IPL" in match.mode and not p_data.get(img_key):
         img_key = 'image_file_id'
         
-    media = p_data.get(img_key, DRAFT_BANNER_URL)
+    img_key = 'ipl_image_file_id' if "IPL" in match.mode else 'image_file_id'
+    
+    # Banner fallback should be mode specific
+    default_banner = DRAFT_BANNER_IPL if "IPL" in match.mode else DRAFT_BANNER_INTL
+    
+    media = p_data.get(img_key, default_banner)
     
     # Update the single message to show the card
     await update_draft_message(update, context, match, card_caption, keyboard, media=media)
@@ -356,8 +360,12 @@ async def handle_assign(update: Update, context: ContextTypes.DEFAULT_TYPE, matc
     # Update Board for Next Turn (Restore Draw Button and Banner)
     board_text = format_draft_board(match)
     keyboard = [[InlineKeyboardButton("🎲 Draw Player", callback_data=f"draw_{match.match_id}")]]
-    # Fix: Use Banner Image to keep message type as Photo (avoids delete/resend flicker)
-    await update_draft_message(update, context, match, board_text, keyboard, media=DRAFT_BANNER_URL)
+    
+    # Determine Banner
+    banner = DRAFT_BANNER_IPL if "IPL" in match.mode else DRAFT_BANNER_INTL
+    
+    # Update
+    await update_draft_message(update, context, match, board_text, keyboard, media=banner)
 
 
 async def handle_redraw(update: Update, context: ContextTypes.DEFAULT_TYPE, match: Match):
@@ -388,8 +396,11 @@ async def handle_redraw(update: Update, context: ContextTypes.DEFAULT_TYPE, matc
         board_text = format_draft_board(match)
         keyboard = [[InlineKeyboardButton("🎲 Draw Player", callback_data=f"draw_{match.match_id}")]]
         
-        # Fix: Use Banner Image
-        await update_draft_message(update, context, match, f"{board_text}\n\n🗑 {esc(current_team.owner_name)} used Skip! Turn Consumed.", keyboard, media=DRAFT_BANNER_URL)
+        # Determine Banner
+        banner = DRAFT_BANNER_IPL if "IPL" in match.mode else DRAFT_BANNER_INTL
+
+        # Update Board (Restore Banner)
+        await update_draft_message(update, context, match, f"{board_text}\n\n⏩ {esc(current_team.owner_name)} Skipped! Turn Consumed.", keyboard, media=banner)
         
     else:
         try:
@@ -446,7 +457,11 @@ async def handle_replace_start(update: Update, context: ContextTypes.DEFAULT_TYP
     if "IPL" in match.mode and not player.get(img_key):
         img_key = 'image_file_id'
         
-    media = player.get(img_key, DRAFT_BANNER_URL)
+    if "IPL" in match.mode and not player.get(img_key):
+        img_key = 'image_file_id'
+        
+    default_banner = DRAFT_BANNER_IPL if "IPL" in match.mode else DRAFT_BANNER_INTL
+    media = player.get(img_key, default_banner)
     
     await update_draft_message(update, context, match, card_caption, keyboard, media=media)
 
@@ -504,7 +519,12 @@ async def handle_replace_exec(update: Update, context: ContextTypes.DEFAULT_TYPE
     board_text = format_draft_board(match)
     keyboard = [[InlineKeyboardButton("🎲 Draw Player", callback_data=f"draw_{match.match_id}")]]
     
-    await update_draft_message(update, context, match, f"{board_text}\n\n♻️ {esc(current_team.owner_name)} replaced {esc(old_player.name)} with {esc(new_player.name)}!", keyboard, media=DRAFT_BANNER_URL)
+    board_text = format_draft_board(match)
+    keyboard = [[InlineKeyboardButton("🎲 Draw Player", callback_data=f"draw_{match.match_id}")]]
+    
+    banner = DRAFT_BANNER_IPL if "IPL" in match.mode else DRAFT_BANNER_INTL
+    
+    await update_draft_message(update, context, match, f"{board_text}\n\n♻️ {esc(current_team.owner_name)} replaced {esc(old_player.name)} with {esc(new_player.name)}!", keyboard, media=banner)
 
 async def handle_replace_cancel(update: Update, context: ContextTypes.DEFAULT_TYPE, match: Match):
     # Just go back to draw view
