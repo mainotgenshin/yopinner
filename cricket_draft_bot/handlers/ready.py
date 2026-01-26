@@ -68,7 +68,9 @@ async def handle_ready(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # Run Simulation
         result_text = run_simulation(match)
         
+        import time
         match.state = "FINISHED"
+        match.finished_at = time.time()
         save_match_state(match)
         
         # Send Result
