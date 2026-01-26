@@ -22,6 +22,10 @@ async def challenge_handler(update: Update, context: ContextTypes.DEFAULT_TYPE, 
         await update.message.reply_text("⚠ Usage: /challenge_ipl @username")
         return
         
+    # Track Group for Broadcasts
+    from database import save_chat
+    save_chat(update.effective_chat.id)
+        
     # Get entities
     # Assuming first mention is opponent
     # entities = update.message.parse_entities(["mention", "text_mention"])
