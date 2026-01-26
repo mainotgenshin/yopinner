@@ -25,6 +25,7 @@ class Team:
     redraws_remaining: int = 2
     replacements_remaining: int = 1
     is_ready: bool = False
+    score: int = 0
 
     # __post_init__ removed to allow dynamic slots via constructor
     
