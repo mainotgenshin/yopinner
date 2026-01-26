@@ -1909,3 +1909,45 @@ async def handle_playerlist_ipl_callback(update: Update, context: ContextTypes.D
     data = query.data
     page = int(data.split('_')[1])
     await show_player_page_ipl(update, context, page)
+
+async def handle_broadcast(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """
+    /broadcast Message content here...
+    Sends message to all active groups.
+    """
+    if not await check_admin(update): return
+    
+    msg = update.message.text.replace('/broadcast', '').strip()
+    if not msg:
+        await update.message.reply_text("Usage: /broadcast [Your Message]")
+        return
+
+    from database import get_all_chats, get_db
+    chats = get_all_chats()
+    
+    if not chats:
+        await update.message.reply_text("❌ No active chats found in database.")
+        return
+        
+    await update.message.reply_text(f"📢 Starting broadcast to {len(chats)} chats...")
+    
+    success = 0
+    failed = 0
+    
+    import asyncio
+    from telegram.error import Forbidden
+    
+    for chat_id in chats:
+        try:
+            await context.bot.send_message(chat_id=chat_id, text=f"📢 **Announcement**\n\n{msg}", parse_mode="Markdown")
+            success += 1
+            await asyncio.sleep(0.05) # Throttle to 20/sec
+        except Forbidden:
+            # Bot kicked from group, remove from DB
+            get_db().chats.delete_one({"chat_id": chat_id})
+            failed += 1
+        except Exception as e:
+            logger.warning(f"Broadcast failed for {chat_id}: {e}")
+            failed += 1
+            
+    await update.message.reply_text(f"✅ Broadcast Complete.\nSuccess: {success}\nFailed/Kicked: {failed}")
