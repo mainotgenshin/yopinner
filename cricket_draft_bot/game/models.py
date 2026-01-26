@@ -49,3 +49,4 @@ class Match:
     pending_player_id: Optional[str] = None
     draft_message_id: Optional[int] = None
     card_message_id: Optional[int] = None
+    finished_at: float = 0.0 # Timestamp
