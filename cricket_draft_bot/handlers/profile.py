@@ -26,8 +26,9 @@ async def handle_profile(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # Actually, Mongo _id is chronological, match_id contains chat_id so not strictly.
     # Ideally we'd have a timestamp. But for now let's just grab them.
     # We can try to sort by natural order (insertion).
-    # Sort by _id (ascending time) to ensure chronological order
-    matches = list(db.matches.find(query).sort("_id", 1))
+    # Sort by finished_at (ascending time)
+    # This ensures Last item = Most Recently Finished
+    matches = list(db.matches.find(query).sort("state_data.finished_at", 1))
     
     total_matches = len(matches)
     wins = 0
