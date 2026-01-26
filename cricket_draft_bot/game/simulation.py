@@ -2,7 +2,11 @@
 from game.models import Match, Team, Player
 from config import ROLE_WEIGHTS
 from utils.randomizer import calculate_variance
+from telegram.helpers import escape_markdown
 import logging
+
+def esc(t):
+    return escape_markdown(str(t), version=1)
 
 logger = logging.getLogger(__name__)
 
@@ -138,23 +142,27 @@ def run_simulation(match: Match) -> str:
         
         if s_a > s_b:
             score_a += 1
-            details.append(f"🔵 {p_a.name} wins against {p_b.name}\n(+1 Point to {match.team_a.owner_name})\n")
+            details.append(f"🔵 {esc(p_a.name)} wins against {esc(p_b.name)}\n(+1 Point to {esc(match.team_a.owner_name)})\n")
         elif s_b > s_a:
             score_b += 1
-            details.append(f"🔴 {p_b.name} wins against {p_a.name}\n(+1 Point to {match.team_b.owner_name})\n")
+            details.append(f"🔴 {esc(p_b.name)} wins against {esc(p_a.name)}\n(+1 Point to {esc(match.team_b.owner_name)})\n")
         else:
-            details.append(f"⚖️ Draw: {p_a.name} vs {p_b.name}\n(0 Points)\n")
+            details.append(f"⚖️ Draw: {esc(p_a.name)} vs {esc(p_b.name)}\n(0 Points)\n")
             
     # Final Result
     details.append("➖➖➖➖➖➖➖➖➖➖")
-    details.append(f"🔵 {match.team_a.owner_name} Score: {score_a}")
-    details.append(f"🔴 {match.team_b.owner_name} Score: {score_b}\n")
+    details.append(f"🔵 {esc(match.team_a.owner_name)} Score: {score_a}")
+    details.append(f"🔴 {esc(match.team_b.owner_name)} Score: {score_b}\n")
+    
+    # Persist Scores
+    match.team_a.score = score_a
+    match.team_b.score = score_b
     
     winner_text = "🤝 **MATCH DRAWN!**"
     if score_a > score_b:
-        winner_text = f"🏆 **WINNER:** 🔵 {match.team_a.owner_name}"
+        winner_text = f"🏆 **WINNER:** 🔵 {esc(match.team_a.owner_name)}"
     elif score_b > score_a:
-        winner_text = f"🏆 **WINNER:** 🔴 {match.team_b.owner_name}"
+        winner_text = f"🏆 **WINNER:** 🔴 {esc(match.team_b.owner_name)}"
     else:
         # User requested no Super Over, just a Draw result.
         pass
