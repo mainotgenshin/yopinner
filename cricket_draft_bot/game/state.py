@@ -38,8 +38,11 @@ def create_match_state(chat_id: int, mode: str, owner_id: int, challenger_id: in
         
     initial_slots = {k: None for k in slot_keys}
 
+    import time
+    match_id = f"{chat_id}_{owner_id}_{challenger_id}_{int(time.time())}"
+    
     match = Match(
-        match_id=f"{chat_id}_{owner_id}_{challenger_id}",
+        match_id=match_id,
         chat_id=chat_id,
         mode=mode,
         team_a=Team(owner_id=owner_id, owner_name=owner_name, slots=initial_slots.copy()),
