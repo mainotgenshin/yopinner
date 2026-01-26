@@ -77,7 +77,9 @@ def save_match_state(match: Match):
         "state": match.state,
         "pending_player_id": match.pending_player_id,
         "draft_message_id": match.draft_message_id,
-        "card_message_id": match.card_message_id
+        "draft_message_id": match.draft_message_id,
+        "card_message_id": match.card_message_id,
+        "finished_at": match.finished_at
     }
     save_match(match.match_id, match.chat_id, state_data)
 
@@ -116,7 +118,8 @@ def load_match_state(match_id: str) -> Optional[Match]:
         state=data['state'],
         pending_player_id=data.get('pending_player_id'),
         draft_message_id=data.get('draft_message_id') if data.get('draft_message_id') else None,
-        card_message_id=data.get('card_message_id')
+        card_message_id=data.get('card_message_id'),
+        finished_at=data.get('finished_at', 0.0)
     )
 
 def draw_player_for_turn(match: Match) -> Optional[Dict]:
