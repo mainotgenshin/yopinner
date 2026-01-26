@@ -39,7 +39,10 @@ def create_match_state(chat_id: int, mode: str, owner_id: int, challenger_id: in
     initial_slots = {k: None for k in slot_keys}
 
     import time
-    match_id = f"{chat_id}_{owner_id}_{challenger_id}_{int(time.time())}"
+    # Short unique ID: owner_id + timestamp (approx 20 chars)
+    # Telegram callback data limit is 64 bytes.
+    # old ID was too long.
+    match_id = f"{owner_id}_{int(time.time())}"
     
     match = Match(
         match_id=match_id,
