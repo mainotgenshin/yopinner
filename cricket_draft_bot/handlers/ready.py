@@ -63,7 +63,9 @@ async def handle_ready(update: Update, context: ContextTypes.DEFAULT_TYPE):
         except BadRequest as e:
             if "not modified" not in str(e):
                 logger.error(f"Ready Handler Error: {e}")
-            pass 
+            pass
+        except Exception: 
+            pass # Ignore flood/other errors during cosmetic update 
         
         # Run Simulation
         result_text = run_simulation(match)
