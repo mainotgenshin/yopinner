@@ -68,7 +68,7 @@ async def handle_ready(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # Run Simulation
         result_text = run_simulation(match)
         
-        match.state = "COMPLETED"
+        match.state = "FINISHED"
         save_match_state(match)
         
         # Send Result
