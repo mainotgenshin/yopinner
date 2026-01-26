@@ -182,3 +182,17 @@ def get_all_mods() -> list:
     db = get_db()
     cursor = db.mods.find({})
     return [doc['user_id'] for doc in cursor]
+
+def save_chat(chat_id: int):
+    """Upsert chat to known chats list for broadcasting."""
+    db = get_db()
+    db.chats.update_one(
+        {"chat_id": chat_id},
+        {"$set": {"chat_id": chat_id}},
+        upsert=True
+    )
+
+def get_all_chats() -> list:
+    db = get_db()
+    cursor = db.chats.find({})
+    return [doc['chat_id'] for doc in cursor]
