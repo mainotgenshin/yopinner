@@ -57,6 +57,11 @@ def init_db():
         
         db.mods.create_index([("user_id", ASCENDING)], unique=True)
         
+        
+        # TTL Index: Expire matches after 24 hours (86400 seconds)
+        # Note: MongoDB requires 'last_updated' to be a BSON Date object
+        db.matches.create_index([("last_updated", ASCENDING)], expireAfterSeconds=86400)
+        
         logger.info("MongoDB Indexes Verified.")
     except Exception as e:
         logger.error(f"DB Init Failed: {e}")
@@ -141,9 +146,15 @@ def save_match(match_id: str, chat_id: int, state_data: Dict[str, Any]):
         # We need `get_match` to return the dict directly.
     }
     
+    import datetime
+    
     db.matches.update_one(
         {"match_id": match_id},
-        {"$set": {"state_data": state_data, "chat_id": chat_id}},
+        {"$set": {
+            "state_data": state_data, 
+            "chat_id": chat_id,
+            "last_updated": datetime.datetime.utcnow() 
+        }},
         upsert=True
     )
     logger.info(f"DEBUG: Saved Match {match_id} to Mongo")
