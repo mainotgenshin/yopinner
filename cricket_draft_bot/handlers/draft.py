@@ -457,8 +457,7 @@ async def handle_replace_start(update: Update, context: ContextTypes.DEFAULT_TYP
     if "IPL" in match.mode and not player.get(img_key):
         img_key = 'image_file_id'
         
-    if "IPL" in match.mode and not player.get(img_key):
-        img_key = 'image_file_id'
+
         
     default_banner = DRAFT_BANNER_IPL if "IPL" in match.mode else DRAFT_BANNER_INTL
     media = player.get(img_key, default_banner)
@@ -500,7 +499,7 @@ async def handle_replace_exec(update: Update, context: ContextTypes.DEFAULT_TYPE
     new_player = Player(**filtered_data)
     
     # Execute Replace
-    # Execute Replace
+
     current_team.slots[slot] = new_player
     current_team.replacements_remaining -= 1
 
@@ -519,8 +518,7 @@ async def handle_replace_exec(update: Update, context: ContextTypes.DEFAULT_TYPE
     board_text = format_draft_board(match)
     keyboard = [[InlineKeyboardButton("🎲 Draw Player", callback_data=f"draw_{match.match_id}")]]
     
-    board_text = format_draft_board(match)
-    keyboard = [[InlineKeyboardButton("🎲 Draw Player", callback_data=f"draw_{match.match_id}")]]
+
     
     banner = DRAFT_BANNER_IPL if "IPL" in match.mode else DRAFT_BANNER_INTL
     
