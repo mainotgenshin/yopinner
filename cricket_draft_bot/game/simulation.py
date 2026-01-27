@@ -29,7 +29,7 @@ def get_clutch_bonus(player: Player, mode: str) -> float:
     # User said: final_score += (clutch * 0.1)
     return clutch * 0.1
 
-def calculate_slot_score(player: Player, role: str, mode: str, is_pressure: bool = False) -> float:
+def calculate_slot_score(player: Player, role: str, mode: str) -> float:
     from config import ROLE_STATS_MAP, PENALTY_MULTIPLIERS, ZERO_SKILL_THRESHOLD
     
     # 1. Stat Dependency Check
@@ -88,12 +88,6 @@ def calculate_slot_score(player: Player, role: str, mode: str, is_pressure: bool
     # Multiplier still applies for mismatches.
     
     score = stat_val * multiplier
-    if is_pressure:
-        score += get_clutch_bonus(player, mode)
-    
-    if is_pressure:
-        score += get_clutch_bonus(player, mode)
-        
     return score
 
 def run_simulation(match: Match) -> str:
@@ -131,11 +125,8 @@ def run_simulation(match: Match) -> str:
         # If missing player? Should not happen if draft complete.
         if not p_a or not p_b: continue
         
-        # Is this a pressure moment? Final slot?
-        is_pressure = (pos == active_positions[-1])
-        
-        s_a = calculate_slot_score(p_a, pos, match.mode, is_pressure)
-        s_b = calculate_slot_score(p_b, pos, match.mode, is_pressure)
+        s_a = calculate_slot_score(p_a, pos, match.mode)
+        s_b = calculate_slot_score(p_b, pos, match.mode)
         
         icon = ICONS.get(pos, "🔸")
         details.append(f"{icon} **{i}. {pos} vs {pos}**")
