@@ -214,7 +214,7 @@ async def map_api(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not await check_admin(update): return
 
     player_id = text.split('=')[1].strip() if '=' in text else text.strip()
-    player_id = text.split('=')[1].strip() if '=' in text else text.strip()
+
     await generate_player_stats(player_id, update, context, is_callback=False, mode='intl')
 
 async def handle_gen_intl_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
