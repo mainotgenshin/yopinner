@@ -161,4 +161,26 @@ def run_simulation(match: Match) -> str:
     details.append(winner_text)
     
     match.state = "FINISHED"
+
+    # PERSIST RESULTS
+    try:
+        from database import update_user_stats
+        
+        # Determine Results
+        res_a = "D"
+        res_b = "D"
+        
+        if score_a > score_b:
+            res_a = "W"
+            res_b = "L"
+        elif score_b > score_a:
+            res_a = "L"
+            res_b = "W"
+            
+        update_user_stats(match.team_a.owner_id, match.team_a.owner_name, res_a)
+        update_user_stats(match.team_b.owner_id, match.team_b.owner_name, res_b)
+        
+    except Exception as e:
+        logger.error(f"Failed to persist user stats: {e}")
+
     return "\n".join(details)
