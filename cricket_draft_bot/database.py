@@ -62,6 +62,9 @@ def init_db():
         # Note: MongoDB requires 'last_updated' to be a BSON Date object
         db.matches.create_index([("last_updated", ASCENDING)], expireAfterSeconds=86400)
         
+        # User Stats Index
+        db.users.create_index([("user_id", ASCENDING)], unique=True)
+        
         logger.info("MongoDB Indexes Verified.")
     except Exception as e:
         logger.error(f"DB Init Failed: {e}")
@@ -203,7 +206,40 @@ def save_chat(chat_id: int):
         upsert=True
     )
 
-def get_all_chats() -> list:
-    db = get_db()
-    cursor = db.chats.find({})
     return [doc['chat_id'] for doc in cursor]
+
+def update_user_stats(user_id: int, name: str, result: str):
+    """
+    Updates persistent user stats.
+    result: 'W', 'L', 'D'
+    """
+    db = get_db()
+    
+    # Init update fields
+    inc_updates = {
+        "total_matches": 1,
+        "wins": 1 if result == "W" else 0,
+        "losses": 1 if result == "L" else 0,
+        "draws": 1 if result == "D" else 0
+    }
+    
+    # Atomic Update
+    db.users.update_one(
+        {"user_id": user_id},
+        {
+            "$set": {"name": name, "user_id": user_id}, # Update name in case changed
+            "$inc": inc_updates,
+            "$push": {
+                "recent_results": {
+                    "$each": [result],
+                    "$slice": -5 # Keep last 5
+                }
+            }
+        },
+        upsert=True
+    )
+
+def get_user_stats(user_id: int) -> Optional[Dict[str, Any]]:
+    db = get_db()
+    return db.users.find_one({"user_id": user_id})
+
