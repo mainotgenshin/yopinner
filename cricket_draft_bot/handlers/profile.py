@@ -11,70 +11,35 @@ async def handle_profile(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = user.id
     name = user.first_name
     
-    db = get_db()
+    from database import get_user_stats
+    stats = get_user_stats(user_id)
     
-    # Query all FINISHED matches where user is either Owner A or Owner B
-    query = {
-        "state_data.state": "FINISHED",
-        "$or": [
-            {"state_data.team_a.owner_id": user_id},
-            {"state_data.team_b.owner_id": user_id}
-        ]
-    }
-    
-    # Sort by match_id (proxy for time if not using timestamps, assuming somewhat chronological)
-    # Actually, Mongo _id is chronological, match_id contains chat_id so not strictly.
-    # Ideally we'd have a timestamp. But for now let's just grab them.
-    # We can try to sort by natural order (insertion).
-    # Sort by finished_at (ascending time)
-    # This ensures Last item = Most Recently Finished
-    matches = list(db.matches.find(query).sort("state_data.finished_at", 1))
-    
-    total_matches = len(matches)
-    wins = 0
-    losses = 0
-    draws = 0
-    
-    recent_results = [] # List of "W", "L", "D"
-    
-    # Iterate and calculate
-    for m in matches:
-        data = m.get('state_data', {})
-        team_a = data.get('team_a', {})
-        team_b = data.get('team_b', {})
+    if not stats:
+        # Fallback or empty
+        stats = {
+            "total_matches": 0,
+            "wins": 0,
+            "losses": 0,
+            "draws": 0,
+            "recent_results": []
+        }
         
-        # Identify user's team
-        if team_a.get('owner_id') == user_id:
-            my_score = team_a.get('score', 0)
-            opp_score = team_b.get('score', 0)
-        else:
-            my_score = team_b.get('score', 0)
-            opp_score = team_a.get('score', 0)
-            
-        # Determine Result
-        res = "D"
-        if my_score > opp_score:
-            wins += 1
-            res = "W"
-        elif my_score < opp_score:
-            losses += 1
-            res = "L"
-        else:
-            draws += 1
-            res = "D"
-            
-        recent_results.append(res)
-        
-    # Get last 5 (assuming list is chronological or reverse? simple append means chronological)
-    # We want most recent. Let's take last 5 of list.
-    last_5 = recent_results[-5:]
-    # Ideally reverse for display? User asked: "Recent Matches: G | W | L..."
-    # Usually strictly left-to-right means "Oldest -> Newest" or "Newest -> Oldest"?
-    # The example design showed: 🟢 | ⚪ | 🔴 | 🟢 | 🟢
-    # Let's assume Left = Recent? No, usually Right = Most Recent in charts.
-    # But often Left = Recent in lists.
-    # I'll output Newest -> Oldest (Left to Right)
-    last_5.reverse()
+    wins = stats.get('wins', 0)
+    losses = stats.get('losses', 0)
+    total_matches = stats.get('total_matches', 0)
+    
+    # recent_results are stored in chronological order (push),
+    # so slice -5 gave us last 5.
+    # We want to display them Newest -> Oldest (Left -> Right)?
+    # Or Oldest -> Newest?
+    # User's example: 🟢 | ⚪ | 🔴 | 🟢 | 🟢
+    # Assuming Right = Most Recent based on list append.
+    # But usually UI shows Recents: [Latest] [Prev]...
+    # Let's Reverse for display: [Recent] ... [Old]
+    
+    recent = list(stats.get('recent_results', []))
+    recent.reverse()
+    last_5 = recent[:5]
     
     score_icons = {
         "W": "🟢", # Green Circle
