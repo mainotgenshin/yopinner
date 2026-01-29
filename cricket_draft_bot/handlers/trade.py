@@ -148,8 +148,8 @@ async def handle_trade_respond(update: Update, context: ContextTypes.DEFAULT_TYP
         save_match_state(match)
         
         # Reset Dashboard
-        # Reuse logic from ready.py or simple text
-        await query.message.edit_text("❌ **Trade Rejected.** returning to dashboard...", parse_mode="Markdown")
+        # FIX FLOOD CONTROL: Don't edit text here, just alert and let handle_ready do the edit.
+        await query.answer("❌ Trade Rejected.", show_alert=False)
         # Trigger Ready Refresh?
         from handlers.ready import handle_ready
         # Trigger Ready Refresh
@@ -267,7 +267,9 @@ async def handle_trade_cancel(update: Update, context: ContextTypes.DEFAULT_TYPE
         match.trade_offer = None
         save_match_state(match)
         
-    await query.message.edit_text("❌ **Trade Cancelled.**", parse_mode="Markdown")
+        
+    # FIX FLOOD CONTROL: Don't edit text, just alert.
+    await query.answer("❌ Trade Cancelled.", show_alert=False)
     # Return to dashboard
     from handlers.ready import handle_ready
     # Return to dashboard
