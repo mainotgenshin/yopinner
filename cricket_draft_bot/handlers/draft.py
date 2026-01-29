@@ -350,6 +350,13 @@ async def handle_assign(update: Update, context: ContextTypes.DEFAULT_TYPE, matc
         board_text = format_draft_board(match)
         # Final Board Update
         keyboard = [[InlineKeyboardButton("🚀 READY", callback_data=f"ready_{match.match_id}")]]
+        
+        # Add Trade Button if Limit Not Reached (Global Limit: 1)
+        total_trades = getattr(match.team_a, 'trades_used', 0) + getattr(match.team_b, 'trades_used', 0)
+        if total_trades < 1:
+            keyboard.append([InlineKeyboardButton("🔄 Trade (1 Left)", callback_data=f"trade_start_{match.match_id}")])
+
+        # Banner for Final Screen (To keep Single Pin)
         await update_draft_message(update, context, match, f"{board_text}\n\n✅ **Draft Complete!** Waiting for Ready...", keyboard)
         return
 
