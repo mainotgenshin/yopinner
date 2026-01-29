@@ -566,6 +566,7 @@ async def handle_view_intl_callback(update: Update, context: ContextTypes.DEFAUL
         parts.append(f"🛡️ Mid: {data.get('batting_control')}")
         # Show all relevant for Intl
         parts.append(f"💥 Fin: {data.get('finishing')}")
+        parts.append(f"🧤 WK: {data.get('wicket_keeping')}") # Added WK stat line
         parts.append(f"⚡ Pace: {data.get('bowling_pace')}")
         parts.append(f"🌀 Spin: {data.get('bowling_spin')}")
         parts.append(f"✨ All: {data.get('all_round')}")
@@ -901,7 +902,9 @@ async def set_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
         'mid': 'batting_control',
         'def': 'batting_defence',
         'pacer': 'bowling_pace',
+        'pace': 'bowling_pace',
         'spinner': 'bowling_spin',
+        'spin': 'bowling_spin',
         'all': 'all_round',
         'allrounder': 'all_round',
         'fin': 'finishing',
