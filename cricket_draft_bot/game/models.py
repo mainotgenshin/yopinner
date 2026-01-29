@@ -26,6 +26,7 @@ class Team:
     replacements_remaining: int = 1
     is_ready: bool = False
     score: int = 0
+    trades_used: int = 0 # Track trades used (Limit 1)
 
     # __post_init__ removed to allow dynamic slots via constructor
     
@@ -50,3 +51,4 @@ class Match:
     draft_message_id: Optional[int] = None
     card_message_id: Optional[int] = None
     finished_at: float = 0.0 # Timestamp
+    trade_offer: Optional[Dict] = None # {initiator: int, target_msg: int, picks: {}}
