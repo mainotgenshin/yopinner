@@ -152,9 +152,10 @@ async def handle_trade_respond(update: Update, context: ContextTypes.DEFAULT_TYP
         await query.message.edit_text("❌ **Trade Rejected.** returning to dashboard...", parse_mode="Markdown")
         # Trigger Ready Refresh?
         from handlers.ready import handle_ready
-        # Hack: Modify callback data to trigger ready refresh
-        query.data = f"ready_{match_id}"
-        await handle_ready(update, context) # This refreshes the dashboard with Trade button back
+        # Trigger Ready Refresh
+        from handlers.ready import handle_ready
+        # Hack Fix: Use override
+        await handle_ready(update, context, match_id_override=match_id) # This refreshes the dashboard with Trade button back
         return
 
     if action == "tradeaccept":
@@ -269,8 +270,9 @@ async def handle_trade_cancel(update: Update, context: ContextTypes.DEFAULT_TYPE
     await query.message.edit_text("❌ **Trade Cancelled.**", parse_mode="Markdown")
     # Return to dashboard
     from handlers.ready import handle_ready
-    query.data = f"ready_{match_id}"
-    await handle_ready(update, context)
+    # Return to dashboard
+    from handlers.ready import handle_ready
+    await handle_ready(update, context, match_id_override=match_id)
 
 async def execute_trade_swap(match, query, context, update):
     try:
