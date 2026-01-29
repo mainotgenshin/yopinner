@@ -22,7 +22,8 @@ def create_match_state(chat_id: int, mode: str, owner_id: int, challenger_id: in
     draft_pool = []
     for p in all_players:
         # Check if player has stats for this mode
-        if p['stats'].get(mode.lower()) is not None:
+        stats = p.get('stats', {})
+        if stats and stats.get(mode.lower()) is not None:
              draft_pool.append(p['player_id'])
     
     import random
@@ -69,7 +70,8 @@ def save_match_state(match: Match):
             "redraws_remaining": team.redraws_remaining,
             "replacements_remaining": team.replacements_remaining,
             "is_ready": team.is_ready,
-            "score": team.score
+            "score": team.score,
+            "trades_used": getattr(team, 'trades_used', 0)
         }
 
     state_data = {
@@ -85,7 +87,9 @@ def save_match_state(match: Match):
         "draft_message_id": match.draft_message_id,
         "draft_message_id": match.draft_message_id,
         "card_message_id": match.card_message_id,
-        "finished_at": match.finished_at
+        "card_message_id": match.card_message_id,
+        "finished_at": match.finished_at,
+        "trade_offer": getattr(match, 'trade_offer', None)
     }
     save_match(match.match_id, match.chat_id, state_data)
 
@@ -101,7 +105,9 @@ def load_match_state(match_id: str) -> Optional[Match]:
         t.redraws_remaining = d['redraws_remaining']
         t.replacements_remaining = d.get('replacements_remaining', 1)
         t.is_ready = d.get('is_ready', False)
+        t.is_ready = d.get('is_ready', False)
         t.score = d.get('score', 0)
+        t.trades_used = d.get('trades_used', 0)
         # Reconstruct slots
         for slot, pid in d['slots'].items():
             if pid:
@@ -113,7 +119,7 @@ def load_match_state(match_id: str) -> Optional[Match]:
                  t.slots[slot] = None # Restore empty slot
         return t
 
-    return Match(
+    m = Match(
         match_id=data['match_id'],
         chat_id=data['chat_id'],
         mode=data['mode'],
@@ -127,6 +133,8 @@ def load_match_state(match_id: str) -> Optional[Match]:
         card_message_id=data.get('card_message_id'),
         finished_at=data.get('finished_at', 0.0)
     )
+    m.trade_offer = data.get('trade_offer')
+    return m
 
 def draw_player_for_turn(match: Match) -> Optional[Dict]:
     """Draws a random player for the current turn."""
