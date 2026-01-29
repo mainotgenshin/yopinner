@@ -206,6 +206,9 @@ def save_chat(chat_id: int):
         upsert=True
     )
 
+def get_all_chats() -> list:
+    db = get_db()
+    cursor = db.chats.find({})
     return [doc['chat_id'] for doc in cursor]
 
 def update_user_stats(user_id: int, name: str, result: str):
