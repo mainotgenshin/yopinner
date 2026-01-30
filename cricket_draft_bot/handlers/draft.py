@@ -5,7 +5,7 @@ import logging
 from game.state import load_match_state, save_match_state, draw_player_for_turn, switch_turn
 from game.models import Match
 from utils.validators import validate_draft_action
-from config import MAX_REDRAWS, POSITIONS_T20, POSITIONS_TEST, DRAFT_BANNER_URL, DRAFT_BANNER_INTL, DRAFT_BANNER_IPL
+from config import MAX_REDRAWS, POSITIONS_T20, POSITIONS_TEST, POSITIONS_FIFA, DRAFT_BANNER_URL, DRAFT_BANNER_INTL, DRAFT_BANNER_IPL, DRAFT_BANNER_FIFA
 from telegram.helpers import escape_markdown
 
 def esc(t):
@@ -180,7 +180,7 @@ async def update_draft_message(update: Update, context: ContextTypes.DEFAULT_TYP
                 
             except RetryAfter as e:
                 wait_time = e.retry_after + 1
-                logger.warning(f"Flood limit exceeded. Sleeping {wait_time}s...")
+                logger.info(f"Flood limit exceeded. Sleeping {wait_time}s...")
                 await asyncio.sleep(wait_time)
                 continue # Retry
                 
@@ -204,6 +204,8 @@ async def update_draft_message(update: Update, context: ContextTypes.DEFAULT_TYP
             or "Wrong file identifier" in err
             or "Media_empty" in err
             or "Bad Request" in err
+            or "http url content" in err
+            or "failed to get http" in err.lower()
         )
         
         if is_type_mismatch or "not found" in err:
@@ -274,7 +276,13 @@ async def handle_draw(update: Update, context: ContextTypes.DEFAULT_TYPE, match:
     # Buttons for Card
     keyboard = []
     
-    active_positions = POSITIONS_TEST if "Test" in match.mode else POSITIONS_T20
+    if match.mode == "FIFA":
+        active_positions = POSITIONS_FIFA
+    elif "Test" in match.mode:
+        active_positions = POSITIONS_TEST
+    else:
+        active_positions = POSITIONS_T20
+        
     row = []
     for pos in active_positions:
         if not current_team.slots.get(pos):
@@ -302,15 +310,20 @@ async def handle_draw(update: Update, context: ContextTypes.DEFAULT_TYPE, match:
     from database import get_player
     p_data = get_player(player['player_id'])
     
-    img_key = 'ipl_image_file_id' if "IPL" in match.mode else 'image_file_id'
-    # Fallback to normal image if IPL image missing
-    if "IPL" in match.mode and not p_data.get(img_key):
-        img_key = 'image_file_id'
+    # Image Key Logic
+    if match.mode == "FIFA":
+        img_key = 'fifa_image_url' 
+        # Prefer file_id if available (updated manually)
+        if p_data.get('image_file_id'):
+            img_key = 'image_file_id'
         
-    img_key = 'ipl_image_file_id' if "IPL" in match.mode else 'image_file_id'
-    
-    # Banner fallback should be mode specific
-    default_banner = DRAFT_BANNER_IPL if "IPL" in match.mode else DRAFT_BANNER_INTL
+        default_banner = DRAFT_BANNER_FIFA
+    else:
+        img_key = 'ipl_image_file_id' if "IPL" in match.mode else 'image_file_id'
+        # Fallback to normal image if IPL image missing
+        if "IPL" in match.mode and not p_data.get(img_key):
+            img_key = 'image_file_id'
+        default_banner = DRAFT_BANNER_IPL if "IPL" in match.mode else DRAFT_BANNER_INTL
     
     media = p_data.get(img_key, default_banner)
     
@@ -369,7 +382,12 @@ async def handle_assign(update: Update, context: ContextTypes.DEFAULT_TYPE, matc
     keyboard = [[InlineKeyboardButton("🎲 Draw Player", callback_data=f"draw_{match.match_id}")]]
     
     # Determine Banner
-    banner = DRAFT_BANNER_IPL if "IPL" in match.mode else DRAFT_BANNER_INTL
+    if "IPL" in match.mode:
+        banner = DRAFT_BANNER_IPL
+    elif match.mode == "FIFA":
+        banner = DRAFT_BANNER_FIFA
+    else:
+        banner = DRAFT_BANNER_INTL
     
     # Update
     await update_draft_message(update, context, match, board_text, keyboard, media=banner)
@@ -404,7 +422,12 @@ async def handle_redraw(update: Update, context: ContextTypes.DEFAULT_TYPE, matc
         keyboard = [[InlineKeyboardButton("🎲 Draw Player", callback_data=f"draw_{match.match_id}")]]
         
         # Determine Banner
-        banner = DRAFT_BANNER_IPL if "IPL" in match.mode else DRAFT_BANNER_INTL
+        if "IPL" in match.mode:
+            banner = DRAFT_BANNER_IPL
+        elif match.mode == "FIFA":
+            banner = DRAFT_BANNER_FIFA
+        else:
+            banner = DRAFT_BANNER_INTL
 
         # Update Board (Restore Banner)
         await update_draft_message(update, context, match, f"{board_text}\n\n⏩ {esc(current_team.owner_name)} Skipped! Turn Consumed.", keyboard, media=banner)
@@ -439,7 +462,13 @@ async def handle_replace_start(update: Update, context: ContextTypes.DEFAULT_TYP
     keyboard = []
     
     # Show active filled positions
-    active_positions = POSITIONS_TEST if "Test" in match.mode else POSITIONS_T20
+    if match.mode == "FIFA":
+        active_positions = POSITIONS_FIFA
+    elif "Test" in match.mode:
+        active_positions = POSITIONS_TEST
+    else:
+        active_positions = POSITIONS_T20
+        
     row = []
     for pos in active_positions:
         if current_team.slots.get(pos):
@@ -460,13 +489,17 @@ async def handle_replace_start(update: Update, context: ContextTypes.DEFAULT_TYP
     # Reuse media (banner or player card)
     # We should probably show the player card of the NEW player to keep context
     
-    img_key = 'ipl_image_file_id' if "IPL" in match.mode else 'image_file_id'
-    if "IPL" in match.mode and not player.get(img_key):
+    if "IPL" in match.mode:
+        img_key = 'ipl_image_file_id'
+        if not player.get(img_key): img_key = 'image_file_id'
+    elif match.mode == "FIFA":
+        img_key = 'fifa_image_url'
+    else:
         img_key = 'image_file_id'
         
 
         
-    default_banner = DRAFT_BANNER_IPL if "IPL" in match.mode else DRAFT_BANNER_INTL
+    default_banner = DRAFT_BANNER_IPL if "IPL" in match.mode else (DRAFT_BANNER_FIFA if match.mode == "FIFA" else DRAFT_BANNER_INTL)
     media = player.get(img_key, default_banner)
     
     await update_draft_message(update, context, match, card_caption, keyboard, media=media)
@@ -527,7 +560,13 @@ async def handle_replace_exec(update: Update, context: ContextTypes.DEFAULT_TYPE
     
 
     
-    banner = DRAFT_BANNER_IPL if "IPL" in match.mode else DRAFT_BANNER_INTL
+    
+    if "IPL" in match.mode:
+        banner = DRAFT_BANNER_IPL
+    elif match.mode == "FIFA":
+        banner = DRAFT_BANNER_FIFA
+    else:
+        banner = DRAFT_BANNER_INTL
     
     await update_draft_message(update, context, match, f"{board_text}\n\n♻️ {esc(current_team.owner_name)} replaced {esc(old_player.name)} with {esc(new_player.name)}!", keyboard, media=banner)
 
