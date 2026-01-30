@@ -494,11 +494,23 @@ async def get_player_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
         msg += f"🧠 CAM/CM: {fstat('CAM')} / {fstat('CM')}\n"
         msg += f"🛡️ CB/LB/RB: {fstat('CB')} / {fstat('LB')}\n"
         
+        # Try sending image with fallbacks
+        sent = False
         if p.get('image_file_id'):
-             await update.message.reply_photo(photo=p['image_file_id'], caption=msg, parse_mode="Markdown")
-        elif p.get('fifa_image_url'):
-             await update.message.reply_photo(photo=p['fifa_image_url'], caption=msg, parse_mode="Markdown")
-        else:
+            try:
+                await update.message.reply_photo(photo=p['image_file_id'], caption=msg, parse_mode="Markdown")
+                sent = True
+            except Exception as e:
+                logger.warning(f"Failed to send image_file_id for {p['name']}: {e}")
+        
+        if not sent and p.get('fifa_image_url'):
+            try:
+                 await update.message.reply_photo(photo=p['fifa_image_url'], caption=msg, parse_mode="Markdown")
+                 sent = True
+            except Exception as e:
+                 logger.warning(f"Failed to send fifa_image_url for {p['name']}: {e}")
+                 
+        if not sent:
              await update.message.reply_text(msg, parse_mode="Markdown")
         return
 
