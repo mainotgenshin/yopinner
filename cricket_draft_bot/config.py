@@ -62,6 +62,19 @@ POSITIONS_TEST = [
     "Fielder"
 ]
 
+POSITIONS_FIFA = [
+    "ST",
+    "LW",
+    "CF",
+    "RW",
+    "CAM",
+    "CM",
+    "LB",
+    "CB",
+    "RB",
+    "GK"
+]
+
 # Legacy/Default for import safety (aliased to T20 for now)
 POSITIONS = POSITIONS_T20
 
@@ -69,6 +82,7 @@ POSITIONS = POSITIONS_T20
 MAX_REDRAWS = 2
 DRAFT_BANNER_INTL = "https://files.catbox.moe/8l3ktm.jpg"
 DRAFT_BANNER_IPL = "https://files.catbox.moe/qyrq53.jpg"
+DRAFT_BANNER_FIFA = "https://files.catbox.moe/2o1qxy.jpg" # Official FIFA Banner
 DRAFT_BANNER_URL = DRAFT_BANNER_INTL # Fallback alias
 
 # Simulation Constants
