@@ -112,7 +112,12 @@ def get_player_by_name(name_query: str) -> Optional[Dict[str, Any]]:
     import re
     regex = re.compile(re.escape(name_query), re.IGNORECASE)
     
-    data = db.players.find_one({"name": regex})
+    data = db.players.find_one({
+        "$or": [
+            {"name": regex},
+            {"full_name": regex}
+        ]
+    })
     if data:
         data.pop('_id', None)
         return data
