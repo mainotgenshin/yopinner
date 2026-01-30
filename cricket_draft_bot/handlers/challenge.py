@@ -102,6 +102,15 @@ async def challenge_intl(update: Update, context: ContextTypes.DEFAULT_TYPE):
         parse_mode="Markdown"
     )
 
+async def challenge_fifa(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    key = f"join_FIFA_{update.effective_user.id}"
+    keyboard = [[InlineKeyboardButton("⚔️ Join Game", callback_data=key)]]
+    await update.message.reply_text(
+        f"⚽ **FIFA Challenge!**\nUser: {update.effective_user.first_name}\nMode: FIFA\nWaiting for opponent...",
+        reply_markup=InlineKeyboardMarkup(keyboard),
+        parse_mode="Markdown"
+    )
+
 async def challenge_unified(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """
     /challenge intl - Start Intl Draft
@@ -132,8 +141,10 @@ async def challenge_unified(update: Update, context: ContextTypes.DEFAULT_TYPE):
              return
     elif mode_arg in ['intl', 'international']:
         real_mode = "International"
+    elif mode_arg in ['fifa', 'football']:
+        real_mode = "FIFA"
     else:
-        await update.message.reply_text(f"❌ Unknown mode: {mode_arg}\nUse `intl`, `t20`, `test`.")
+        await update.message.reply_text(f"❌ Unknown mode: {mode_arg}\nUse `intl`, `t20`, `test`, `fifa`.")
         return
     
     # Check for Reply (Targeted Challenge)
