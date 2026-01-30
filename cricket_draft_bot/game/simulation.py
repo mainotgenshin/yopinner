@@ -34,7 +34,10 @@ def calculate_slot_score(player: Player, role: str, mode: str) -> float:
     
     # 1. Stat Dependency Check
     # Get primary stat key for this slot
-    stat_key = ROLE_STATS_MAP.get(role, "all_round")
+    if mode == "FIFA":
+        stat_key = role # Identity mapping (ST -> ST)
+    else:
+        stat_key = ROLE_STATS_MAP.get(role, "all_round")
     
     # Get stat value (fallback 50 if missing, but we handle low stats)
     stat_val = get_stat_value(player, mode, stat_key)
@@ -46,38 +49,50 @@ def calculate_slot_score(player: Player, role: str, mode: str) -> float:
     # 3. Role Match Multiplier
     multiplier = PENALTY_MULTIPLIERS["MISMATCH"]
     
-    # Case-insensitive comparison
-    # Case-insensitive comparison
-    if mode and "IPL" in mode:
-        # Use IPL roles if available, fallback to normal roles
-        effective_roles = player.ipl_roles if player.ipl_roles else player.roles
-    else:
-        effective_roles = player.roles
-
-    player_roles_lower = [r.lower() for r in effective_roles]
-    role_lower = role.lower()
-    
-    if role in effective_roles or role_lower in player_roles_lower:
-        multiplier = PENALTY_MULTIPLIERS["NATURAL"]
-    else:
-        # Partial Match Logic
-        # e.g. "Wicket Keeper" in roles matches "WK" slot
+    if mode == "FIFA":
+        # FIFA Logic: Check player.positions
+        effective_roles = player.positions if player.positions else []
+        effective_roles_lower = [r.lower() for r in effective_roles]
+        role_lower = role.lower()
         
-        if role_lower == "wk" and "wicket keeper" in player_roles_lower:
-            multiplier = PENALTY_MULTIPLIERS["NATURAL"]
-        elif role_lower in ["hitting", "finisher", "defence"] and "batter" in player_roles_lower:
-             multiplier = PENALTY_MULTIPLIERS["PARTIAL"]
-        elif role_lower in ["pace", "spin"] and "bowler" in player_roles_lower:
-             multiplier = PENALTY_MULTIPLIERS["PARTIAL"]
-        elif role_lower == "all-rounder" and ("all rounder" in player_roles_lower or "all-rounder" in player_roles_lower):
+        if role in effective_roles or role_lower in effective_roles_lower:
              multiplier = PENALTY_MULTIPLIERS["NATURAL"]
+        elif role_lower == "cf" and "st" in effective_roles_lower: 
+             multiplier = PENALTY_MULTIPLIERS["PARTIAL"]
+        elif role_lower == "st" and "cf" in effective_roles_lower:
+             multiplier = PENALTY_MULTIPLIERS["PARTIAL"]
+             
+    else:
+        # Cricket Logic
+        if mode and "IPL" in mode:
+            effective_roles = player.ipl_roles if player.ipl_roles else player.roles
+        else:
+            effective_roles = player.roles
+
+        player_roles_lower = [r.lower() for r in effective_roles]
+        role_lower = role.lower()
         
-        # New Rule: Batting Compatibility (Top/Middle/Finisher/Hitting are all partially compatible)
-        # If we reached here, it's not a NATURAL match (exact role).
-        elif role_lower in ["top", "middle", "finisher", "hitting"]:
-            # Check if player has ANY other batting role
-            if any(r in player_roles_lower for r in ["top", "middle", "finisher", "hitting", "batter"]):
-                multiplier = PENALTY_MULTIPLIERS["PARTIAL"]
+        if role in effective_roles or role_lower in player_roles_lower:
+            multiplier = PENALTY_MULTIPLIERS["NATURAL"]
+        else:
+            # Partial Match Logic
+            # e.g. "Wicket Keeper" in roles matches "WK" slot
+            
+            if role_lower == "wk" and "wicket keeper" in player_roles_lower:
+                multiplier = PENALTY_MULTIPLIERS["NATURAL"]
+            elif role_lower in ["hitting", "finisher", "defence"] and "batter" in player_roles_lower:
+                 multiplier = PENALTY_MULTIPLIERS["PARTIAL"]
+            elif role_lower in ["pace", "spin"] and "bowler" in player_roles_lower:
+                 multiplier = PENALTY_MULTIPLIERS["PARTIAL"]
+            elif role_lower == "all-rounder" and ("all rounder" in player_roles_lower or "all-rounder" in player_roles_lower):
+                 multiplier = PENALTY_MULTIPLIERS["NATURAL"]
+            
+            # New Rule: Batting Compatibility (Top/Middle/Finisher/Hitting are all partially compatible)
+            # If we reached here, it's not a NATURAL match (exact role).
+            elif role_lower in ["top", "middle", "finisher", "hitting"]:
+                # Check if player has ANY other batting role
+                if any(r in player_roles_lower for r in ["top", "middle", "finisher", "hitting", "batter"]):
+                    multiplier = PENALTY_MULTIPLIERS["PARTIAL"]
 
     # weight = ROLE_WEIGHTS.get(role, 1.0) # Weight disabled per strict stat comparison request? 
     # Actually user said "overall stat comparison". We should probably keep natural weight of role?
@@ -98,9 +113,14 @@ def run_simulation(match: Match) -> str:
     score_b = 0
     details = []
 
-    from config import POSITIONS_T20, POSITIONS_TEST
+    from config import POSITIONS_T20, POSITIONS_TEST, POSITIONS_FIFA
     
-    active_positions = POSITIONS_TEST if match.mode and "Test" in match.mode else POSITIONS_T20
+    if match.mode and "FIFA" in match.mode:
+        active_positions = POSITIONS_FIFA
+    elif match.mode and "Test" in match.mode:
+        active_positions = POSITIONS_TEST
+    else:
+        active_positions = POSITIONS_T20
     
     details.append("🏟 **MATCH SIMULATION – POSITION COMPARISON**\n")
     
