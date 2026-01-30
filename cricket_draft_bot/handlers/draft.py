@@ -222,8 +222,16 @@ async def update_draft_message(update: Update, context: ContextTypes.DEFAULT_TYP
                       try:
                           msg = await context.bot.send_photo(chat_id=match.chat_id, photo=media, caption=caption, reply_markup=reply_markup, parse_mode="Markdown")
                       except Exception as media_err:
-                          logger.error(f"Failed to send media: {media_err}. Falling back to Text.")
-                          msg = await context.bot.send_message(chat_id=match.chat_id, text=caption + "\n⚠️ Image failed to load.", reply_markup=reply_markup, parse_mode="Markdown")
+                          logger.error(f"Failed to send media: {media_err}. Falling back to Banner.")
+                          
+                          # Fallback to Banner
+                          fallback_banner = DRAFT_BANNER_FIFA if match.mode == "FIFA" else DRAFT_BANNER_INTL
+                          if "IPL" in match.mode: fallback_banner = DRAFT_BANNER_IPL
+                          
+                          try:
+                              msg = await context.bot.send_photo(chat_id=match.chat_id, photo=fallback_banner, caption=caption + "\n\n⚠️ Image Not Available", reply_markup=reply_markup, parse_mode="Markdown")
+                          except:
+                              msg = await context.bot.send_message(chat_id=match.chat_id, text=caption + "\n⚠️ Image failed to load.", reply_markup=reply_markup, parse_mode="Markdown")
                  else:
                       msg = await context.bot.send_message(chat_id=match.chat_id, text=caption, reply_markup=reply_markup, parse_mode="Markdown")
              except Exception as final_err:
