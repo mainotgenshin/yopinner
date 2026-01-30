@@ -22,6 +22,12 @@ def create_match_state(chat_id: int, mode: str, owner_id: int, challenger_id: in
     draft_pool = []
     for p in all_players:
         # Check if player has stats for this mode
+        # FIFA Mode Check
+        if mode == "FIFA":
+            if p.get('sport') == 'football' and p.get('overall', 0) > 80:
+                draft_pool.append(p['player_id'])
+            continue
+
         stats = p.get('stats', {})
         if stats and stats.get(mode.lower()) is not None:
              draft_pool.append(p['player_id'])
@@ -29,11 +35,13 @@ def create_match_state(chat_id: int, mode: str, owner_id: int, challenger_id: in
     import random
     first_drafter = random.choice([owner_id, challenger_id])
     
-    from config import POSITIONS_T20, POSITIONS_TEST
+    from config import POSITIONS_T20, POSITIONS_TEST, POSITIONS_FIFA
     
     # Select Slots
     if mode and "Test" in mode:
         slot_keys = POSITIONS_TEST
+    elif mode == "FIFA":
+        slot_keys = POSITIONS_FIFA
     else:
         slot_keys = POSITIONS_T20
         
