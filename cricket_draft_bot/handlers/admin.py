@@ -471,9 +471,41 @@ async def get_player_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
     intl_data = stats.get('international', {})
     
     # Handle old structure fallback (int) vs new structure (dict)
-    # Helpers for display
-    has_wk = "WK" in [r.upper() for r in p['roles']]
-    has_defence = "DEFENCE" in [r.upper() for r in p['roles']]
+    # FIFA / Football Logic
+    if p.get('sport') == 'football' or p.get('mode') == 'fifa':
+        fifa_stats = stats.get('fifa', {})
+        msg = f"⚽ **{esc(p['name'])}** (FIFA)\n"
+        msg += f"🏅 Overall: {p.get('overall', 'N/A')}\n"
+        msg += f"📍 Positions: {', '.join(p.get('positions', []))}\n"
+        msg += "➖➖➖➖➖➖➖➖➖➖\n"
+        
+        # Display Stats
+        # PAC, SHO, PAS, DRI, DEF, PHY map to ST, LW, blah blah in our schema?
+        # Actually import_fifa.py mapped ST, LW, etc.
+        # Let's just show what we have.
+        
+        # Use schema from import_fifa: ST, LW, CF, RW, CAM, CM, LB, CB, RB, GK
+        
+        # Helper
+        def fstat(k): return fifa_stats.get(k, 0)
+
+        msg += f"🏃 ST/PAC: {fstat('ST')} | 🧤 GK: {fstat('GK')}\n"
+        msg += f"🎯 LW/RW: {fstat('LW')} / {fstat('RW')}\n"
+        msg += f"🧠 CAM/CM: {fstat('CAM')} / {fstat('CM')}\n"
+        msg += f"🛡️ CB/LB/RB: {fstat('CB')} / {fstat('LB')}\n"
+        
+        if p.get('image_file_id'):
+             await update.message.reply_photo(photo=p['image_file_id'], caption=msg, parse_mode="Markdown")
+        elif p.get('fifa_image_url'):
+             await update.message.reply_photo(photo=p['fifa_image_url'], caption=msg, parse_mode="Markdown")
+        else:
+             await update.message.reply_text(msg, parse_mode="Markdown")
+        return
+
+    # Cricket Logic
+    roles = p.get('roles', [])
+    has_wk = "WK" in [r.upper() for r in roles]
+    has_defence = "DEFENCE" in [r.upper() for r in roles]
     
     def format_stats(data):
         if not data: return "N/A"
@@ -498,6 +530,10 @@ async def get_player_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         parts.append(f"💥 Finisher: {g('finishing')}")
         parts.append(f"⚡ Pacer: {g('bowling_pace')}")
+        parts.append(f"🌀 Spinner: {g('bowling_spin')}")
+        parts.append(f"🤾 Fielding: {g('fielding')}")
+        
+        return "\n".join(parts)
         parts.append(f"🌀 Spinner: {g('bowling_spin')}")
         parts.append(f"✨ All Rounder: {g('all_round')}")
         parts.append(f"👟 Fielder: {g('fielding')}")
@@ -1954,3 +1990,58 @@ async def handle_broadcast(update: Update, context: ContextTypes.DEFAULT_TYPE):
             failed += 1
             
     await update.message.reply_text(f"✅ Broadcast Complete.\nSuccess: {success}\nFailed/Kicked: {failed}")
+
+async def update_image_fifa(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """
+    /update_imagefifa Player Name
+    Attach a photo to this command.
+    """
+    if not await check_admin(update): return
+    
+    # Check for photo
+    photo_file_id = None
+    if update.message.photo:
+        photo_file_id = update.message.photo[-1].file_id
+    elif update.message.reply_to_message and update.message.reply_to_message.photo:
+         photo_file_id = update.message.reply_to_message.photo[-1].file_id
+         
+    text = update.message.caption or update.message.text
+    if not text: text = ""
+    name = text.replace('/update_imagefifa', '').strip()
+    
+    # If replying, maybe name is in reply? 
+    # If no name provided, reply "Name needed"
+    
+    # Logic to parse "Name URL" if photo not attached
+    if not photo_file_id:
+        parts = name.split()
+        if len(parts) > 1 and parts[-1].startswith("http"):
+            url = parts[-1]
+            name = " ".join(parts[:-1]) # Name is everything before URL
+            
+            # Try to send photo to get file_id
+            try:
+                msg = await context.bot.send_photo(chat_id=update.effective_chat.id, photo=url, caption=f"Updated image for {name}")
+                photo_file_id = msg.photo[-1].file_id
+            except Exception as e:
+                await update.message.reply_text(f"❌ Failed to download/send image from URL: {e}")
+                return
+
+    from database import get_player_by_name, save_player
+    p = get_player_by_name(name)
+    
+    if not p:
+        await update.message.reply_text(f"❌ Player not found: {name}")
+        return
+        
+    # Check if this player is a FIFA player?
+    if p.get('mode') != 'fifa' and p.get('sport') != 'football':
+         await update.message.reply_text(f"⚠️ **{esc(p['name'])}** is not a FIFA player (Mode: {p.get('mode')}). Use `/update_image` for cricket.")
+         return
+
+    if photo_file_id:
+        p['image_file_id'] = photo_file_id
+        save_player(p)
+        await update.message.reply_text(f"✅ Updated FIFA image for {esc(p['name'])}!")
+    else:
+        await update.message.reply_text("❌ No photo found. Please attach a photo OR provide a URL at the end of the name.")
