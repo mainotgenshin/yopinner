@@ -20,7 +20,7 @@ from telegram.ext import ApplicationBuilder, ContextTypes, CommandHandler, Callb
 from config import BOT_TOKEN
 from database import init_db
 from handlers.admin import add_player, map_api, remove_player, player_list, get_player_stats, reset_matches
-from handlers.challenge import challenge_ipl, challenge_intl, join_challenge, handle_join
+from handlers.challenge import challenge_ipl, challenge_intl, challenge_fifa, join_challenge, handle_join
 from handlers.draft import handle_draft_callback
 from handlers.ready import handle_ready
 
@@ -142,7 +142,7 @@ if __name__ == '__main__':
         run_fix_now_command, revert_command,
         add_player_ipl, add_role_ipl, rem_role_ipl, update_image_command,
         enable_ipl_command, disable_ipl_command,
-        player_list_ipl, handle_remove_ipl, handle_clearcache # NEW
+        player_list_ipl, handle_remove_ipl, handle_clearcache, update_image_fifa # NEW
     )
 
     application.add_handler(CommandHandler('changecap', change_cap))
@@ -172,12 +172,14 @@ if __name__ == '__main__':
     application.add_handler(CommandHandler('disable_ipl', disable_ipl_command))
     application.add_handler(CommandHandler('playerlist_ipl', player_list_ipl))
     application.add_handler(CommandHandler('clearcache', handle_clearcache))
+    application.add_handler(CommandHandler('update_imagefifa', update_image_fifa))
     from handlers.admin import handle_broadcast
     application.add_handler(CommandHandler('broadcast', handle_broadcast))
 
     # Game
     application.add_handler(CommandHandler('challenge_ipl', challenge_ipl))
     application.add_handler(CommandHandler('challenge_intl', challenge_intl))
+    application.add_handler(CommandHandler('challenge_fifa', challenge_fifa))
     from handlers.challenge import challenge_unified
     from handlers.challenge import challenge_unified
     application.add_handler(CommandHandler('challenge', challenge_unified))
