@@ -6,12 +6,21 @@ from typing import List, Dict, Optional
 class Player:
     player_id: str
     name: str
-    roles: List[str]
-    image_file_id: str
+    full_name: Optional[str] = None
+    roles: List[str] = field(default_factory=list) # Cricket Roles
+    image_file_id: Optional[str] = None
     ipl_image_file_id: Optional[str] = None
     api_reference: Dict = field(default_factory=dict)
     stats: Dict = field(default_factory=dict) # {"ipl": 45, "international": 50}
     ipl_roles: List[str] = field(default_factory=list)
+    
+    # FIFA / Generic Fields
+    sport: str = "cricket"
+    mode: str = "default"
+    position: Optional[str] = None # Primary Position (e.g. ST)
+    positions: List[str] = field(default_factory=list) # Football Positions
+    fifa_image_url: Optional[str] = None
+    overall: int = 0 # FIFA Overall Rating
 
     def get_stat(self, mode: str) -> int:
         # Default to 0, or some base value if stats missing
