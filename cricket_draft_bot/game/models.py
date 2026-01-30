@@ -21,6 +21,7 @@ class Player:
     positions: List[str] = field(default_factory=list) # Football Positions
     fifa_image_url: Optional[str] = None
     overall: int = 0 # FIFA Overall Rating
+    broken_image: bool = False # If validated and broken
 
     def get_stat(self, mode: str) -> int:
         # Default to 0, or some base value if stats missing
