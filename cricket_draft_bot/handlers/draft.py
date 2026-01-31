@@ -206,6 +206,8 @@ async def update_draft_message(update: Update, context: ContextTypes.DEFAULT_TYP
             or "Bad Request" in err
             or "http url content" in err
             or "failed to get http" in err.lower()
+            or "Wrong type" in err
+            or "unsupported" in err
         )
         
         if is_type_mismatch or "not found" in err:
@@ -502,6 +504,9 @@ async def handle_replace_start(update: Update, context: ContextTypes.DEFAULT_TYP
         if not player.get(img_key): img_key = 'image_file_id'
     elif match.mode == "FIFA":
         img_key = 'fifa_image_url'
+        # Prefer file_id if manually updated
+        if player.get('image_file_id'):
+            img_key = 'image_file_id'
     else:
         img_key = 'image_file_id'
         
