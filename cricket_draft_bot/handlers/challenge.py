@@ -206,6 +206,13 @@ async def handle_join(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.answer("You can't play against yourself!", show_alert=True)
         return
         
+    # Try to lock the challenge by editing message first (Concurrency Fix)
+    try:
+        await query.message.edit_text("⏳ **Setting up match...**", parse_mode="Markdown")
+    except Exception as e:
+        logger.warning(f"Challenge Race Condition: {e}")
+        return # Failed to grab lock, someone else took it
+    
     chat_id = update.effective_chat.id
     
     # Create Match
@@ -231,7 +238,7 @@ async def handle_join(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     keyboard = [[InlineKeyboardButton("🃏 Draw Player", callback_data=f"draw_{match.match_id}")]]
     
-    # Switch to Text Message (No Banner)
+    # Original logic deleted it.
     try:
         await query.delete_message()
     except:
