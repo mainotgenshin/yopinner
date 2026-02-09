@@ -21,11 +21,27 @@ def create_match_state(chat_id: int, mode: str, owner_id: int, challenger_id: in
     
     draft_pool = []
     for p in all_players:
-        # Check if player has stats for this mode
-        # FIFA Mode Check
         if mode == "FIFA":
-            if p.get('sport') == 'football' and p.get('overall', 0) > 80:
-                draft_pool.append(p['player_id'])
+            if p.get('sport') == 'football':
+                ovr = p.get('overall', 0)
+                league = p.get('league', '')
+                
+                # Filter Logic:
+                # 1. Base requirement: OVR > 80
+                # 2. Quality Control: Must be from a Top 5 League OR be a high-rated star (> 83)
+                # This removes unfamiliar low-rated players from obscure leagues.
+                
+                top_leagues = [
+                    "Premier League", 
+                    "LALIGA EA SPORTS", 
+                    "Bundesliga", 
+                    "Serie A Enilive", 
+                    "Ligue 1 McDonald's"
+                ]
+                
+                if ovr > 80:
+                    if ovr > 83 or league in top_leagues:
+                        draft_pool.append(p['player_id'])
             continue
 
         stats = p.get('stats', {})
