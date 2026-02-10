@@ -88,11 +88,16 @@ async def handle_trade_target_pick(update: Update, context: ContextTypes.DEFAULT
     # Robust find:
     pl_idx = -1
     for i, p in enumerate(parts):
-        if p == 'PL':
+        if p == 'PL' or p == 'fifa':
             pl_idx = i
             break
             
-    if pl_idx == -1: return 
+    # Fallback if no prefix found (e.g. for some legacy or future formats)
+    if pl_idx == -1:
+        if len(parts) >= 4:
+             pl_idx = 3 
+        else:
+             return 
     
     match_id = "_".join(parts[1:pl_idx])
     player_id = "_".join(parts[pl_idx:])
@@ -182,11 +187,16 @@ async def handle_trade_counter_pick(update: Update, context: ContextTypes.DEFAUL
     parts = data.split('_')
     pl_idx = -1
     for i, p in enumerate(parts):
-        if p == 'PL':
+        if p == 'PL' or p == 'fifa':
             pl_idx = i
             break
-    if pl_idx == -1: return 
-    
+            
+    if pl_idx == -1:
+         if len(parts) >= 4:
+             pl_idx = 3
+         else:
+             return 
+
     match_id = "_".join(parts[1:pl_idx])
     player_id = "_".join(parts[pl_idx:])
     
