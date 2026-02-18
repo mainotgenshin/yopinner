@@ -13,7 +13,11 @@ logger = logging.getLogger(__name__)
 # Helper to safe get stat
 def get_stat_value(player: Player, mode: str, stat_key: str) -> int:
     try:
-        stats = player.stats.get(mode.lower(), {})
+        search_key = mode.lower()
+        if search_key == 'intl': 
+             search_key = 'international'
+             
+        stats = player.stats.get(search_key, {})
         # Handle fallback for old int-style stats
         if isinstance(stats, int):
             return stats
@@ -121,7 +125,6 @@ def calculate_slot_score(player: Player, role: str, mode: str) -> float:
                  multiplier = PENALTY_MULTIPLIERS["NATURAL"]
             
             # New Rule: Batting Compatibility (Top/Middle/Finisher/Hitting are all partially compatible)
-            # If we reached here, it's not a NATURAL match (exact role).
             elif role_lower in ["top", "middle", "finisher", "hitting"]:
                 # Check if player has ANY other batting role
                 if any(r in player_roles_lower for r in ["top", "middle", "finisher", "hitting", "batter"]):
