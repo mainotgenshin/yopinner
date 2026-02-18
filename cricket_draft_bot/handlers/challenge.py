@@ -85,28 +85,34 @@ async def join_challenge(update: Update, context: ContextTypes.DEFAULT_TYPE):
     pass
 
 async def challenge_ipl(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    from config import DRAFT_BANNER_IPL
     key = f"join_IPL_{update.effective_user.id}"
     keyboard = [[InlineKeyboardButton("⚔️ Join Game", callback_data=key)]]
-    await update.message.reply_text(
-        f"🏏 **IPL Challenge!**\nUser: {update.effective_user.first_name}\nMode: IPL\nWaiting for opponent...",
+    await update.message.reply_photo(
+        photo=DRAFT_BANNER_IPL,
+        caption=f"🏏 **IPL Challenge!**\nUser: {update.effective_user.first_name}\nMode: IPL\nWaiting for opponent...",
         reply_markup=InlineKeyboardMarkup(keyboard),
         parse_mode="Markdown"
     )
 
 async def challenge_intl(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    from config import DRAFT_BANNER_INTL
     key = f"join_INTL_{update.effective_user.id}"
     keyboard = [[InlineKeyboardButton("⚔️ Join Game", callback_data=key)]]
-    await update.message.reply_text(
-        f"🏏 **International Challenge!**\nUser: {update.effective_user.first_name}\nMode: International\nWaiting for opponent...",
+    await update.message.reply_photo(
+        photo=DRAFT_BANNER_INTL,
+        caption=f"🏏 **International Challenge!**\nUser: {update.effective_user.first_name}\nMode: International\nWaiting for opponent...",
         reply_markup=InlineKeyboardMarkup(keyboard),
         parse_mode="Markdown"
     )
 
 async def challenge_fifa(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    from config import DRAFT_BANNER_FIFA
     key = f"join_FIFA_{update.effective_user.id}"
     keyboard = [[InlineKeyboardButton("⚔️ Join Game", callback_data=key)]]
-    await update.message.reply_text(
-        f"⚽ **FIFA Challenge!**\nUser: {update.effective_user.first_name}\nMode: FIFA\nWaiting for opponent...",
+    await update.message.reply_photo(
+        photo=DRAFT_BANNER_FIFA,
+        caption=f"⚽ **FIFA Challenge!**\nUser: {update.effective_user.first_name}\nMode: FIFA\nWaiting for opponent...",
         reply_markup=InlineKeyboardMarkup(keyboard),
         parse_mode="Markdown"
     )
@@ -114,9 +120,6 @@ async def challenge_fifa(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def challenge_unified(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """
     /challenge intl - Start Intl Draft
-    /challenge t20  - Coming Soon
-    /challenge test - Coming Soon
-    Supports replying to a user to target them.
     """
     if not context.args:
         await update.message.reply_text("Usage: `/challenge intl`", parse_mode="Markdown")
@@ -124,8 +127,11 @@ async def challenge_unified(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     mode_arg = context.args[0].lower()
     
+    from config import DRAFT_BANNER_INTL, DRAFT_BANNER_IPL, DRAFT_BANNER_FIFA
+    
+    banner = DRAFT_BANNER_INTL # Default
+    
     if mode_arg == 'test':
-        # real_mode = "Test"
         await update.message.reply_text("🚧 Test Mode is temporarily disabled. Please use `intl`.")
         return
     elif mode_arg in ['t20', 'ipl']:
@@ -136,13 +142,16 @@ async def challenge_unified(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
         if config and config.get("enabled"):
              real_mode = "IPL"
+             banner = DRAFT_BANNER_IPL
         else:
              await update.message.reply_text("🚧 IPL Mode is currently disabled/under development.")
              return
     elif mode_arg in ['intl', 'international']:
         real_mode = "International"
+        banner = DRAFT_BANNER_INTL
     elif mode_arg in ['fifa', 'football']:
         real_mode = "FIFA"
+        banner = DRAFT_BANNER_FIFA
     else:
         await update.message.reply_text(f"❌ Unknown mode: {mode_arg}\nUse `intl`, `t20`, `test`, `fifa`.")
         return
@@ -156,9 +165,6 @@ async def challenge_unified(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return
             
     # Callback Data
-    # Standard: join_International_OWNERID
-    # Targeted: join_International_OWNERID_TARGETID
-    
     key = f"join_{real_mode}_{update.effective_user.id}"
     if target_user:
         key += f"_{target_user.id}"
@@ -166,10 +172,7 @@ async def challenge_unified(update: Update, context: ContextTypes.DEFAULT_TYPE):
     keyboard = [[InlineKeyboardButton("⚔️ Accept Challenge", callback_data=key)]]
     
     from telegram.helpers import escape_markdown
-    
-    # helper to escape name for V1
-    def esc(t):
-        return escape_markdown(t, version=1)
+    def esc(t): return escape_markdown(t, version=1)
 
     if target_user:
         msg = (
@@ -185,10 +188,14 @@ async def challenge_unified(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"Waiting for opponent..."
         )
         
-    await update.message.reply_text(msg, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="Markdown")
+    await update.message.reply_photo(photo=banner, caption=msg, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="Markdown")
 
 async def handle_join(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
+    
+    # Don't delete! We will edit it.
+    # await query.answer() 
+    # Actually answer() is needed to stop loading spinner, but doesn't affect message.
     await query.answer()
     
     parts = query.data.split('_') # join, MODE, OWNER_ID, [TARGET_ID]
@@ -198,6 +205,63 @@ async def handle_join(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # Check for Targeted Challenge
     if len(parts) > 3:
         target_id = int(parts[3])
+        if query.from_user.id != target_id:
+            await query.answer("⛔ This challenge is not for you!", show_alert=True)
+            return
+
+    # Check Self-Join
+    if query.from_user.id == owner_id:
+        await query.answer("⛔ You cannot play against yourself!", show_alert=True)
+        return
+        
+    # Start Match
+    # Verify Owner Name (from DB or context? We don't have it easily here if stateless)
+    # We'll use "Player 1" if unknown, but better to fetch.
+    # Actually create_match_state usually takes ID and Name.
+    # We can get names from User objects if we had them.
+    # The challenger's name is in the caption, but parsing it is brittle.
+    # Let's use "Challenger" / "Acceptor" or fetch from TG API (get_chat_member)
+    
+    try:
+        challenger_chat = await context.bot.get_chat(owner_id)
+        challenger_name = challenger_chat.first_name
+    except:
+        challenger_name = "Player 1"
+        
+    joiner_name = query.from_user.first_name
+    
+    # Initialize Match
+    match = create_match_state(
+        mode=mode, 
+        p1_id=owner_id, p1_name=challenger_name,
+        p2_id=query.from_user.id, p2_name=joiner_name,
+        chat_id=update.effective_chat.id
+    )
+    
+    # CRITICAL: Reuse Message ID
+    match.draft_message_id = query.message.message_id
+    
+    # Save Initial State
+    from game.state import save_match_state
+    save_match_state(match)
+    
+    # Start Draft (Update the message)
+    from handlers.draft import format_draft_board, update_draft_message
+    from config import DRAFT_BANNER_INTL, DRAFT_BANNER_IPL, DRAFT_BANNER_FIFA
+    
+    board_text = format_draft_board(match)
+    keyboard = [[InlineKeyboardButton("🎲 Draw Player", callback_data=f"draw_{match.match_id}")]]
+    
+    # Determine Banner
+    if "IPL" in mode:
+        banner = DRAFT_BANNER_IPL
+    elif mode == "FIFA":
+        banner = DRAFT_BANNER_FIFA
+    else:
+        banner = DRAFT_BANNER_INTL
+        
+    # Edit the existing message
+    await update_draft_message(update, context, match, board_text, keyboard, media=banner)
         if query.from_user.id != target_id:
             await query.answer("This challenge is not for you!", show_alert=True)
             return
