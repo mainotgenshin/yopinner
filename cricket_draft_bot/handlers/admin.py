@@ -151,7 +151,8 @@ async def add_player_fifa(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(
             "⚠️ **FIFA Player Usage:**\n\n"
             "Reference Example:\n"
-            "`/add_playerfifa name=Mbappe sport=football overall=91 pac=97 sho=90 pas=80 dri=92 def=36 phy=78 image=URL`\n\n"
+            "`/add_playerfifa name=Mbappe sport=football overall=91 pac=97 sho=90 pas=80 dri=92 def=36 phy=78 positions=ST,LW image=URL`\n\n"
+            "*Optional:* positions (comma separated)\n"
             "*Required specific stats:* pac, sho, pas, dri, def, phy",
             parse_mode="Markdown"
         )
@@ -228,9 +229,15 @@ async def add_player_fifa(update: Update, context: ContextTypes.DEFAULT_TYPE):
         }
         
         # Helper to deduce best positions (Top 3)
-        pos_map = {k: v for k, v in fifa_stats.items() if k in ["ST", "CF", "LW", "RW", "CAM", "CM", "CDM", "LB", "RB", "CB"]}
-        sorted_pos = sorted(pos_map.items(), key=lambda item: item[1], reverse=True)
-        best_positions = [x[0] for x in sorted_pos[:3]]
+        # Check if user provided explicit positions
+        if 'positions' in parsed:
+            raw_pos = parsed['positions'].upper().split(',')
+            best_positions = [p.strip() for p in raw_pos if p.strip()]
+        else:
+            # Auto-calculate
+            pos_map = {k: v for k, v in fifa_stats.items() if k in ["ST", "CF", "LW", "RW", "CAM", "CM", "CDM", "LB", "RB", "CB"]}
+            sorted_pos = sorted(pos_map.items(), key=lambda item: item[1], reverse=True)
+            best_positions = [x[0] for x in sorted_pos[:3]]
         
         
         # ID Generation
