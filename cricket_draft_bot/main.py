@@ -36,10 +36,11 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
         "🏏 **Welcome to Cricket Draft Bot!** 🏏\n\n"
         "Commands:\n"
-        "/challenge_ipl - Start IPL Draft\n"
-        "/challenge_intl - Start Intl Draft\n"
-        "/add_player - (Admin) Add Player\n"
-        "/map_api - (Admin) Map Stats\n"
+        "/challengeipl - Start IPL Draft\n"
+        "/challengeintl - Start Intl Draft\n"
+        "/challengefifa - Start FIFA Draft\n"
+        "/addplayer - (Admin) Add Cricket Player\n"
+        "/addplayerfifa - (Admin) Add FIFA Player\n"
         "/help - Show this message",
         parse_mode="Markdown"
     )
@@ -173,15 +174,27 @@ if __name__ == '__main__':
     application.add_handler(CommandHandler('playerlist_ipl', player_list_ipl))
     application.add_handler(CommandHandler('clearcache', handle_clearcache))
     application.add_handler(CommandHandler('update_imagefifa', update_image_fifa))
+    # New FIFA Command
+    from handlers.admin import add_player_fifa
+    application.add_handler(CommandHandler('add_playerfifa', add_player_fifa))
+    application.add_handler(CommandHandler('addplayerfifa', add_player_fifa)) # Alias
+    application.add_handler(CommandHandler('addplayer', add_player)) # Alias for add_player
+
     from handlers.admin import handle_broadcast
     application.add_handler(CommandHandler('broadcast', handle_broadcast))
 
     # Game
+    # Game
+    from handlers.challenge import challenge_unified, challenge_ipl, challenge_intl, challenge_fifa
     application.add_handler(CommandHandler('challenge_ipl', challenge_ipl))
     application.add_handler(CommandHandler('challenge_intl', challenge_intl))
     application.add_handler(CommandHandler('challenge_fifa', challenge_fifa))
-    from handlers.challenge import challenge_unified
-    from handlers.challenge import challenge_unified
+    
+    # Aliases for easier typing
+    application.add_handler(CommandHandler('challengeipl', challenge_ipl))
+    application.add_handler(CommandHandler('challengeintl', challenge_intl))
+    application.add_handler(CommandHandler('challengefifa', challenge_fifa))
+    
     application.add_handler(CommandHandler('challenge', challenge_unified))
 
     # User Profile
