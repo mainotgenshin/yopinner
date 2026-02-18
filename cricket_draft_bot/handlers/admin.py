@@ -162,7 +162,9 @@ async def add_player_fifa(update: Update, context: ContextTypes.DEFAULT_TYPE):
         import re
         
         # Regex to capture key=value pairs
-        pattern = r'(name|sport|overall|pac|sho|pas|dri|def|phy|image)\s*=\s*(.*?)(?=\s+(?:name|sport|overall|pac|sho|pas|dri|def|phy|image)\s*=|$) '[:-1]
+        # Added 'positions' to the list of keys
+        keys = "name|sport|overall|pac|sho|pas|dri|def|phy|image|positions"
+        pattern = f'({keys})\s*=\s*(.*?)(?=\s+(?:{keys})\s*=|$) '[:-1]
         
         raw_text = text + ' '
         matches = re.finditer(pattern, raw_text, re.IGNORECASE | re.DOTALL)
