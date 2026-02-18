@@ -35,12 +35,35 @@ def calculate_slot_score(player: Player, role: str, mode: str) -> float:
     # 1. Stat Dependency Check
     # Get primary stat key for this slot
     if mode == "FIFA":
-        stat_key = role # Identity mapping (ST -> ST)
+        if role == "ST/CF":
+             # Special handling for merged slot: return MAX of ST or CF rating
+             st_val = get_stat_value(player, mode, "ST")
+             cf_val = get_stat_value(player, mode, "CF")
+             return max(st_val, cf_val) * PENALTY_MULTIPLIERS["NATURAL"] # Pre-calc return to avoid double penalty logic below? 
+             # Actually safer to just set stat_key to the better one and let logic proceed, 
+             # but get_stat_value returns int. 
+             # Let's handle it here:
+             stat_val = max(st_val, cf_val)
+             # Multiplier logic below will still check "Natural" position match.
+             # If player has ST or CF, multiplier becomes 1.0 (Natural).
+             # So we just need to pass the better stat.
+             # We set stat_key to None to signal we found it?
+             # No, easier to just update stat_val and skip get_stat_value call?
+             # Refactoring slightly.
+             pass 
+        else:
+             stat_key = role 
     else:
         stat_key = ROLE_STATS_MAP.get(role, "all_round")
     
     # Get stat value (fallback 50 if missing, but we handle low stats)
-    stat_val = get_stat_value(player, mode, stat_key)
+    if mode == "FIFA" and role == "ST/CF":
+        # Logic calculated above implicitly? No, let's do it explicitly.
+        val_st = get_stat_value(player, mode, "ST")
+        val_cf = get_stat_value(player, mode, "CF")
+        stat_val = max(val_st, val_cf)
+    else:
+        stat_val = get_stat_value(player, mode, stat_key)
     
     # 2. Zero-Skill Penalty
     if stat_val < ZERO_SKILL_THRESHOLD:
@@ -55,11 +78,21 @@ def calculate_slot_score(player: Player, role: str, mode: str) -> float:
         effective_roles_lower = [r.lower() for r in effective_roles]
         role_lower = role.lower()
         
+        # Exact Match
         if role in effective_roles or role_lower in effective_roles_lower:
              multiplier = PENALTY_MULTIPLIERS["NATURAL"]
+        
+        # Merged ST/CF Logic - If slot is "ST/CF"
+        elif role_lower == "st/cf":
+             if "st" in effective_roles_lower or "cf" in effective_roles_lower:
+                 multiplier = PENALTY_MULTIPLIERS["NATURAL"]
+        
+        # Partial Matches
         elif role_lower == "cf" and "st" in effective_roles_lower: 
              multiplier = PENALTY_MULTIPLIERS["PARTIAL"]
         elif role_lower == "st" and "cf" in effective_roles_lower:
+             multiplier = PENALTY_MULTIPLIERS["PARTIAL"]
+        elif role_lower == "cdm" and ("cm" in effective_roles_lower or "cb" in effective_roles_lower):
              multiplier = PENALTY_MULTIPLIERS["PARTIAL"]
              
     else:
