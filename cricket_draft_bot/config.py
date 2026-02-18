@@ -63,12 +63,12 @@ POSITIONS_TEST = [
 ]
 
 POSITIONS_FIFA = [
-    "ST",
+    "ST/CF",
     "LW",
-    "CF",
     "RW",
     "CAM",
     "CM",
+    "CDM",
     "LB",
     "CB",
     "RB",
@@ -80,9 +80,9 @@ POSITIONS = POSITIONS_T20
 
 # Draft Settings
 MAX_REDRAWS = 2
-DRAFT_BANNER_INTL = "https://files.catbox.moe/9jqcz1.jpg"
+DRAFT_BANNER_INTL = "https://files.catbox.moe/8l3ktm.jpg"
 DRAFT_BANNER_IPL = "https://files.catbox.moe/qyrq53.jpg"
-DRAFT_BANNER_FIFA = "https://files.catbox.moe/2o1qxy.jpg" # Official FIFA Banner
+DRAFT_BANNER_FIFA = "https://i.ibb.co/Fbd7q7Xm/x.jpg" # Official FIFA Banner
 DRAFT_BANNER_URL = DRAFT_BANNER_INTL # Fallback alias
 
 # Simulation Constants
@@ -120,4 +120,3 @@ EXCLUDED_IPL_PLAYERS = [
     "Mark Chapman",
     "Temba Bavuma"
 ]
-
