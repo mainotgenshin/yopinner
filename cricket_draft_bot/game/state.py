@@ -45,7 +45,11 @@ def create_match_state(chat_id: int, mode: str, owner_id: int, challenger_id: in
             continue
 
         stats = p.get('stats', {})
-        if stats and stats.get(mode.lower()) is not None:
+        search_key = mode.lower()
+        if search_key == 'intl': 
+            search_key = 'international'
+
+        if stats and stats.get(search_key) is not None:
              draft_pool.append(p['player_id'])
     
     import random
