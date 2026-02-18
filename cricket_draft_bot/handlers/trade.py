@@ -68,7 +68,12 @@ async def handle_trade_start(update: Update, context: ContextTypes.DEFAULT_TYPE)
     
     text = f"🔄 **Trade Initiated!**\n\nSelect a player from {esc(opponent.owner_name)}'s squad that you want to **TAKE**."
     
-    await query.message.edit_text(text, reply_markup=InlineKeyboardMarkup(buttons), parse_mode="Markdown")
+    try:
+        await query.message.edit_text(text, reply_markup=InlineKeyboardMarkup(buttons), parse_mode="Markdown")
+    except Exception as e:
+        # Ignore "Message is not modified"
+        if "Message is not modified" not in str(e):
+            logger.error(f"Trade Edit Error: {e}")
 
 async def handle_trade_target_pick(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
