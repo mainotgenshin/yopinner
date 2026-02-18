@@ -137,6 +137,140 @@ async def add_player(update: Update, context: ContextTypes.DEFAULT_TYPE):
         , parse_mode="Markdown")
 
 
+
+async def add_player_fifa(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """
+    /add_playerfifa name=Mbappe sport=football overall=91 pac=97 ...
+    """
+    if not await check_admin(update): return
+
+    text = update.message.text.replace('/add_playerfifa', '').strip()
+    
+    # Help Text if empty or missing "="
+    if not text or "=" not in text:
+        await update.message.reply_text(
+            "⚠️ **FIFA Player Usage:**\n\n"
+            "Reference Example:\n"
+            "`/add_playerfifa name=Mbappe sport=football overall=91 pac=97 sho=90 pas=80 dri=92 def=36 phy=78 image=URL`\n\n"
+            "*Required specific stats:* pac, sho, pas, dri, def, phy",
+            parse_mode="Markdown"
+        )
+        return
+
+    try:
+        import re
+        
+        # Regex to capture key=value pairs
+        pattern = r'(name|sport|overall|pac|sho|pas|dri|def|phy|image)\s*=\s*(.*?)(?=\s+(?:name|sport|overall|pac|sho|pas|dri|def|phy|image)\s*=|$) '[:-1]
+        
+        raw_text = text + ' '
+        matches = re.finditer(pattern, raw_text, re.IGNORECASE | re.DOTALL)
+        parsed = {m.group(1).lower(): m.group(2).strip() for m in matches}
+        
+        # Defaults
+        parsed['sport'] = parsed.get('sport', 'football')
+        
+        # Required Validation
+        required = ['name', 'overall', 'image', 'pac', 'sho', 'pas', 'dri', 'def', 'phy']
+        missing = [k for k in required if k not in parsed]
+        if missing:
+             await update.message.reply_text(f"❌ Missing fields: {', '.join(missing)}")
+             return
+
+        # Parsing Values
+        name = parsed['name']
+        overall = int(parsed['overall'])
+        pac = int(parsed['pac'])
+        sho = int(parsed['sho'])
+        pas = int(parsed['pas'])
+        dri = int(parsed['dri'])
+        df = int(parsed['def'])
+        phy = int(parsed['phy'])
+        image_url = parsed['image']
+        
+        # Calculate Positions (Logic from import_fifa_26.py)
+        # ST, CF: (PAC + SHO + DRI) / 3
+        st_rating = int((pac + sho + dri) / 3)
+        cf_rating = st_rating
+        
+        # LW, RW: (PAC + DRI + PAS) / 3
+        wing_rating = int((pac + dri + pas) / 3)
+        
+        # CAM: (PAS + DRI + SHO) / 3
+        cam_rating = int((pas + dri + sho) / 3)
+        
+        # CM: (PAS + DRI + PHY) / 3
+        cm_rating = int((pas + dri + phy) / 3)
+        
+        # CDM: (PAS + DEF + PHY) / 3 (Approx logic)
+        cdm_rating = int((pas + df + phy) / 3)
+        
+        # LB, RB: (PAC + DEF + PAS) / 3
+        fullback_rating = int((pac + df + pas) / 3)
+        
+        # CB: (DEF + PHY) / 2
+        cb_rating = int((df + phy) / 2)
+        
+        # GK: Default to OVR if unknown (or low if fielder)
+        # If user didn't give GK stats, assume field player
+        gk_rating = 0 
+        
+        fifa_stats = {
+            "ST": st_rating, "CF": cf_rating,
+            "LW": wing_rating, "RW": wing_rating,
+            "CAM": cam_rating, 
+            "CM": cm_rating,
+            "CDM": cdm_rating,
+            "LB": fullback_rating, "RB": fullback_rating,
+            "CB": cb_rating,
+            "GK": gk_rating,
+            "PAC": pac, "SHO": sho, "PAS": pas, "DRI": dri, "DEF": df, "PHY": phy
+        }
+        
+        # Helper to deduce best positions (Top 3)
+        pos_map = {k: v for k, v in fifa_stats.items() if k in ["ST", "CF", "LW", "RW", "CAM", "CM", "CDM", "LB", "RB", "CB"]}
+        sorted_pos = sorted(pos_map.items(), key=lambda item: item[1], reverse=True)
+        best_positions = [x[0] for x in sorted_pos[:3]]
+        
+        
+        # ID Generation
+        clean_name = name.upper().replace(' ', '_')
+        player_id = f"fifa_man_{clean_name[:10]}"
+        
+        # Image Store
+        msg = await context.bot.send_photo(chat_id=update.effective_chat.id, photo=image_url, caption=f"Added {name}")
+        image_file_id = msg.photo[-1].file_id
+        
+        player_doc = {
+            "player_id": player_id,
+            "name": name,
+            "sport": "football",
+            "role": "Footballer",
+            "roles": ["Footballer"],
+            "positions": best_positions,
+            "overall": overall,
+            "stats": {
+                "fifa": fifa_stats
+            },
+            "image_file_id": image_file_id,
+            "fifa_image_url": image_url,
+            "source_db": "manual"
+        }
+        
+        save_player(player_doc)
+        
+        await update.message.reply_text(
+            f"✅ **FIFA Player Added!**\n"
+            f"Name: {name} (OVR: {overall})\n"
+            f"Best Pos: {', '.join(best_positions)}\n"
+            f"Stats: ST:{st_rating} CM:{cm_rating} CB:{cb_rating}",
+            parse_mode="Markdown"
+        )
+
+    except Exception as e:
+        logger.error(f"Add FIFA Error: {e}")
+        await update.message.reply_text(f"❌ Error: {e}")
+
 async def generate_player_stats(player_id: str, update: Update, context: ContextTypes.DEFAULT_TYPE, is_callback=False, mode='intl'):
     """
     Shared logic to generate stats.
