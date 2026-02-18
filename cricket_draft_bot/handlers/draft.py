@@ -591,6 +591,53 @@ async def handle_replace_exec(update: Update, context: ContextTypes.DEFAULT_TYPE
     
     await update_draft_message(update, context, match, f"{board_text}\n\n♻️ {esc(current_team.owner_name)} replaced {esc(old_player.name)} with {esc(new_player.name)}!", keyboard, media=banner)
 
+async def update_draft_message(update, context, match, text, keyboard, media=None):
+    from telegram import InputMediaPhoto
+    from telegram.error import BadRequest
+
+    try:
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        msg_id = match.draft_message_id
+        chat_id = match.chat_id
+        
+        # If media provided, we use edit_message_media logic
+        if media:
+            # Check if it's a file_id or URL
+            # If it's the same as current, maybe just edit caption?
+            # Telegram doesn't let us easily know "current" media file_id without tracking.
+            # So we just try to edit media.
+            
+            try:
+                await context.bot.edit_message_media(
+                    chat_id=chat_id,
+                    message_id=msg_id,
+                    media=InputMediaPhoto(media=media, caption=text, parse_mode="Markdown"),
+                    reply_markup=reply_markup
+                )
+            except BadRequest as e:
+                if "Message is not modified" in str(e):
+                    pass # Ignore
+                else:
+                    raise e
+        else:
+            # Text Only Update
+            try:
+                await context.bot.edit_message_text(
+                    chat_id=chat_id,
+                    message_id=msg_id,
+                    text=text,
+                    reply_markup=reply_markup,
+                    parse_mode="Markdown"
+                )
+            except BadRequest as e:
+                if "Message is not modified" in str(e):
+                    pass
+                else:
+                    raise e
+                    
+    except Exception as e:
+        logger.error(f"Failed to update draft message: {e}")
+
 async def handle_replace_cancel(update: Update, context: ContextTypes.DEFAULT_TYPE, match: Match):
     # Just go back to draw view
     await handle_draw(update, context, match)
