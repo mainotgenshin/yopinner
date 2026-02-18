@@ -164,7 +164,8 @@ async def add_player_fifa(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # Regex to capture key=value pairs
         # Added 'positions' to the list of keys
         keys = "name|sport|overall|pac|sho|pas|dri|def|phy|image|positions"
-        pattern = f'({keys})\s*=\s*(.*?)(?=\s+(?:{keys})\s*=|$) '[:-1]
+        # Use raw string r'' to avoid SyntaxWarning with \s
+        pattern = rf'({keys})\s*=\s*(.*?)(?=\s+(?:{keys})\s*=|$) '[:-1]
         
         raw_text = text + ' '
         matches = re.finditer(pattern, raw_text, re.IGNORECASE | re.DOTALL)
