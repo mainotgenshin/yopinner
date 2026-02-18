@@ -6,11 +6,22 @@ from game.state import load_match_state, save_match_state
 from game.models import Match, Player
 from database import get_player
 from telegram.helpers import escape_markdown
+from config import DRAFT_BANNER_IPL, DRAFT_BANNER_INTL, DRAFT_BANNER_FIFA
+# Import the unified update helper
+from handlers.draft import update_draft_message
 
 logger = logging.getLogger(__name__)
 
 def esc(t):
     return escape_markdown(str(t), version=1)
+
+def get_match_banner(match: Match):
+    if "IPL" in match.mode:
+        return DRAFT_BANNER_IPL
+    elif match.mode == "FIFA":
+        return DRAFT_BANNER_FIFA
+    else:
+        return DRAFT_BANNER_INTL
 
 # Helper to get squad buttons
 def get_squad_buttons(team, callback_prefix, exclude_id=None):
@@ -68,12 +79,7 @@ async def handle_trade_start(update: Update, context: ContextTypes.DEFAULT_TYPE)
     
     text = f"🔄 **Trade Initiated!**\n\nSelect a player from {esc(opponent.owner_name)}'s squad that you want to **TAKE**."
     
-    try:
-        await query.message.edit_text(text, reply_markup=InlineKeyboardMarkup(buttons), parse_mode="Markdown")
-    except Exception as e:
-        # Ignore "Message is not modified"
-        if "Message is not modified" not in str(e):
-            logger.error(f"Trade Edit Error: {e}")
+    await update_draft_message(update, context, match, text, buttons, media=get_match_banner(match))
 
 async def handle_trade_target_pick(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -135,7 +141,7 @@ async def handle_trade_target_pick(update: Update, context: ContextTypes.DEFAULT
         [InlineKeyboardButton("❌ Reject", callback_data=f"tradereject_{match_id}")]
     ]
     
-    await query.message.edit_text(text, reply_markup=InlineKeyboardMarkup(buttons), parse_mode="Markdown")
+    await update_draft_message(update, context, match, text, buttons, media=get_match_banner(match))
 
 async def handle_trade_respond(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -182,7 +188,7 @@ async def handle_trade_respond(update: Update, context: ContextTypes.DEFAULT_TYP
         buttons.append([InlineKeyboardButton("❌ Cancel", callback_data=f"tradereject_{match_id}")]) # Reuse reject to cancel
         
         text = f"🔄 **Trade Accepted!**\n\nNow select a player from {esc(initiator_team.owner_name)}'s squad to **TAKE** in return."
-        await query.message.edit_text(text, reply_markup=InlineKeyboardMarkup(buttons), parse_mode="Markdown")
+        await update_draft_message(update, context, match, text, buttons, media=get_match_banner(match))
 
 async def handle_trade_counter_pick(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -201,7 +207,7 @@ async def handle_trade_counter_pick(update: Update, context: ContextTypes.DEFAUL
              pl_idx = 3
          else:
              return 
-
+    
     match_id = "_".join(parts[1:pl_idx])
     player_id = "_".join(parts[pl_idx:])
     
@@ -237,7 +243,7 @@ async def handle_trade_counter_pick(update: Update, context: ContextTypes.DEFAUL
         [InlineKeyboardButton("❌ Cancel", callback_data=f"tradecancel_{match_id}")]
     ]
     
-    await query.message.edit_text(text, reply_markup=InlineKeyboardMarkup(buttons), parse_mode="Markdown")
+    await update_draft_message(update, context, match, text, buttons, media=get_match_banner(match))
 
 async def handle_trade_confirm(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -318,7 +324,7 @@ async def execute_trade_swap(match, query, context, update):
                 break
                 
         if not slot_i or not slot_o:
-            await query.message.edit_text("❌ Error: Player not found in slot. Trade failed.")
+            await query.answer("❌ Error: Player not found in slot.", show_alert=True)
             match.trade_offer = None
             save_match_state(match)
             return
@@ -339,7 +345,7 @@ async def execute_trade_swap(match, query, context, update):
         match.trade_offer = None # Clear
         save_match_state(match)
         
-        await query.message.edit_text("✅ **Trade Successful!** Players Swapped.", parse_mode="Markdown")
+        await query.answer("✅ Trade Successful!", show_alert=True)
         
         # Return to Dashboard
         from handlers.ready import handle_ready
@@ -348,4 +354,4 @@ async def execute_trade_swap(match, query, context, update):
         
     except Exception as e:
         logger.error(f"Trade Execution Failed: {e}")
-        await query.message.edit_text("❌ Critical Error during swap.")
+        await query.answer("❌ Critical Error during swap.", show_alert=True)
