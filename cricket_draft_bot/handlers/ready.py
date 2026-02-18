@@ -79,31 +79,24 @@ async def handle_ready(update: Update, context: ContextTypes.DEFAULT_TYPE, match
         match.finished_at = time.time()
         save_match_state(match)
         
-        # Send Result
-        # Send Result with Retry
-        from telegram.error import RetryAfter
-        import asyncio
-        
-        for attempt in range(3):
-            try:
-                await context.bot.send_message(
-                    chat_id=match.chat_id,
-                    text=result_text,
+        # Merge Result into Banner (Edit Caption)
+        try:
+            if query.message.photo:
+                # Keep the same photo, just update caption
+                await query.message.edit_caption(
+                    caption=f"{result_text}", 
                     parse_mode="Markdown"
                 )
-                break
-            except RetryAfter as e:
-                wait_time = e.retry_after + 1
-                logger.warning(f"Flood limit exceeded in Ready Handler. Sleeping {wait_time}s...")
-                await asyncio.sleep(wait_time)
-                continue
-            except Exception as e:
-                 logger.error(f"Failed to send simulation result: {e}")
-                 # Try without markdown
-                 try:
-                     await context.bot.send_message(chat_id=match.chat_id, text=result_text)
-                 except: pass # Give up
-                 break
+            else:
+                 # Fallback if somehow text-only
+                 await query.message.edit_text(
+                    text=f"{result_text}", 
+                    parse_mode="Markdown"
+                 )
+        except Exception as e:
+            logger.error(f"Failed to edit simulation result into banner: {e}")
+            # Fallback to sending new message if edit fails
+            await context.bot.send_message(chat_id=match.chat_id, text=result_text, parse_mode="Markdown")
     else:
         # Update message to show who is ready
         a_status = "✅" if match.team_a.is_ready else "⏳"
