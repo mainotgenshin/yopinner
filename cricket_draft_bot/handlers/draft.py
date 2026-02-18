@@ -380,7 +380,15 @@ async def handle_assign(update: Update, context: ContextTypes.DEFAULT_TYPE, matc
             keyboard.append([InlineKeyboardButton("🔄 Trade (1 Left)", callback_data=f"trade_start_{match.match_id}")])
 
         # Banner for Final Screen (To keep Single Pin)
-        await update_draft_message(update, context, match, f"{board_text}\n\n✅ **Draft Complete!** Waiting for Ready...", keyboard)
+        # Determine Banner
+        if "IPL" in match.mode:
+            banner = DRAFT_BANNER_IPL
+        elif match.mode == "FIFA":
+            banner = DRAFT_BANNER_FIFA
+        else:
+            banner = DRAFT_BANNER_INTL
+            
+        await update_draft_message(update, context, match, f"{board_text}\n\n✅ **Draft Complete!** Waiting for Ready...", keyboard, media=banner)
         return
 
     # Switch Turn
