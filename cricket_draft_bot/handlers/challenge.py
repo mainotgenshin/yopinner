@@ -231,11 +231,15 @@ async def handle_join(update: Update, context: ContextTypes.DEFAULT_TYPE):
     joiner_name = query.from_user.first_name
     
     # Initialize Match
+    # Initialize Match
+    # Signature: chat_id, mode, owner_id, challenger_id, owner_name, challenger_name
     match = create_match_state(
+        chat_id=update.effective_chat.id,
         mode=mode, 
-        p1_id=owner_id, p1_name=challenger_name,
-        p2_id=query.from_user.id, p2_name=joiner_name,
-        chat_id=update.effective_chat.id
+        owner_id=owner_id, 
+        challenger_id=query.from_user.id,
+        owner_name=challenger_name, # In state.py owner_name is param 5
+        challenger_name=joiner_name # In state.py challenger_name is param 6
     )
     
     # CRITICAL: Reuse Message ID
