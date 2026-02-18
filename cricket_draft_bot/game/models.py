@@ -7,6 +7,7 @@ class Player:
     player_id: str
     name: str
     full_name: Optional[str] = None
+    role: Optional[str] = None # Legacy singular role
     roles: List[str] = field(default_factory=list) # Cricket Roles
     image_file_id: Optional[str] = None
     ipl_image_file_id: Optional[str] = None
