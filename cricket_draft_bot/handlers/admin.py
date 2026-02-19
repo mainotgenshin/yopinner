@@ -163,7 +163,7 @@ async def add_player_fifa(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
         # Regex to capture key=value pairs
         # Added 'positions' to the list of keys
-        keys = "name|sport|overall|pac|sho|pas|dri|def|phy|image|positions"
+        keys = "name|sport|overall|pac|sho|pas|dri|def|phy|div|han|kic|ref|spd|pos|image|positions"
         # Use raw string r'' to avoid SyntaxWarning with \s
         pattern = rf'({keys})\s*=\s*(.*?)(?=\s+(?:{keys})\s*=|$) '[:-1]
         
@@ -175,21 +175,45 @@ async def add_player_fifa(update: Update, context: ContextTypes.DEFAULT_TYPE):
         parsed['sport'] = parsed.get('sport', 'football')
         
         # Required Validation
-        required = ['name', 'overall', 'image', 'pac', 'sho', 'pas', 'dri', 'def', 'phy']
-        missing = [k for k in required if k not in parsed]
-        if missing:
-             await update.message.reply_text(f"❌ Missing fields: {', '.join(missing)}")
+        required = ['name', 'overall', 'image']
+        # Relax requirement for pac/sho etc if GK stats provided?
+        # Let's say if positions=GK, we might look for div/han/etc.
+        # But simpler: check if ANY stats provided.
+        # Original: required = ['name', 'overall', 'image', 'pac', 'sho', 'pas', 'dri', 'def', 'phy']
+        # The user might provide GK stats INSTEAD of outfield stats.
+        
+        is_gk_stats = any(k in parsed for k in ['div', 'han', 'kic', 'ref', 'spd', 'pos'])
+        
+        if not is_gk_stats:
+             # Standard outfield check
+             missing = [k for k in ['pac', 'sho', 'pas', 'dri', 'def', 'phy'] if k not in parsed]
+             if missing:
+                  await update.message.reply_text(f"❌ Missing outfield stats: {', '.join(missing)}")
+                  return
+        
+        missing_basic = [k for k in required if k not in parsed]
+        if missing_basic:
+             await update.message.reply_text(f"❌ Missing basic fields: {', '.join(missing_basic)}")
              return
 
         # Parsing Values
         name = parsed['name']
         overall = int(parsed['overall'])
-        pac = int(parsed['pac'])
-        sho = int(parsed['sho'])
-        pas = int(parsed['pas'])
-        dri = int(parsed['dri'])
-        df = int(parsed['def'])
-        phy = int(parsed['phy'])
+        pac = int(parsed.get('pac', 0))
+        sho = int(parsed.get('sho', 0))
+        pas = int(parsed.get('pas', 0))
+        dri = int(parsed.get('dri', 0))
+        df = int(parsed.get('def', 0))
+        phy = int(parsed.get('phy', 0))
+        
+        # GK Stats
+        div = int(parsed.get('div', 0))
+        han = int(parsed.get('han', 0))
+        kic = int(parsed.get('kic', 0))
+        ref = int(parsed.get('ref', 0))
+        spd_gk = int(parsed.get('spd', 0))
+        pos_gk = int(parsed.get('pos', 0))
+        
         image_url = parsed['image']
         
         # Calculate Positions (Logic from import_fifa_26.py)
@@ -215,9 +239,19 @@ async def add_player_fifa(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # CB: (DEF + PHY) / 2
         cb_rating = int((df + phy) / 2)
         
-        # GK: Default to OVR if unknown (or low if fielder)
-        # If user didn't give GK stats, assume field player
-        gk_rating = 0 
+        # GK Rating Logic
+        if is_gk_stats:
+            # Average of main attributes (approx OVR)
+            # DIV, HAN, KIC, REF, SPD, POS
+            gk_sum = div + han + kic + ref + spd_gk + pos_gk
+            gk_rating = int(gk_sum / 6) if gk_sum > 0 else overall
+        else:
+            # Fallback for outfielders or missing GK stats
+            gk_rating = 0
+            
+        # If user explicitly said Position=GK, prioritize GK rating = Overall
+        if 'positions' in parsed and 'GK' in parsed['positions'].upper():
+            if gk_rating == 0: gk_rating = overall
         
         fifa_stats = {
             "ST": st_rating, "CF": cf_rating,
@@ -228,7 +262,8 @@ async def add_player_fifa(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "LB": fullback_rating, "RB": fullback_rating,
             "CB": cb_rating,
             "GK": gk_rating,
-            "PAC": pac, "SHO": sho, "PAS": pas, "DRI": dri, "DEF": df, "PHY": phy
+            "PAC": pac, "SHO": sho, "PAS": pas, "DRI": dri, "DEF": df, "PHY": phy,
+            "DIV": div, "HAN": han, "KIC": kic, "REF": ref, "SPD": spd_gk, "POS": pos_gk
         }
         
         # Helper to deduce best positions (Top 3)
