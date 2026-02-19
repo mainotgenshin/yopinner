@@ -143,8 +143,11 @@ if __name__ == '__main__':
         run_fix_now_command, revert_command,
         add_player_ipl, add_role_ipl, rem_role_ipl, update_image_command,
         enable_ipl_command, disable_ipl_command,
-        player_list_ipl, handle_remove_ipl, handle_clearcache, update_image_fifa # NEW
+        player_list_ipl, handle_remove_ipl, handle_clearcache, update_image_fifa,
+        remove_player_fifa # NEW
     )
+
+    application.add_handler(CommandHandler('removeplayerfifa', remove_player_fifa))
 
     application.add_handler(CommandHandler('changecap', change_cap))
     application.add_handler(CommandHandler('changewk', change_wk))
