@@ -150,10 +150,11 @@ async def add_player_fifa(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not text or "=" not in text:
         await update.message.reply_text(
             "⚠️ **FIFA Player Usage:**\n\n"
-            "Reference Example:\n"
+            "**Outfielder:**\n"
             "`/add_playerfifa name=Mbappe sport=football overall=91 pac=97 sho=90 pas=80 dri=92 def=36 phy=78 positions=ST,LW image=URL`\n\n"
-            "*Optional:* positions (comma separated)\n"
-            "*Required specific stats:* pac, sho, pas, dri, def, phy",
+            "**Goalkeeper:**\n"
+            "`/add_playerfifa name=Yashin overall=94 div=95 han=90 kic=85 ref=96 spd=60 pos=93 positions=GK image=URL`\n"
+            "*(You can also mix outfield stats like pac, sho if relevant)*",
             parse_mode="Markdown"
         )
         return
@@ -2236,3 +2237,23 @@ async def update_image_fifa(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(f"✅ Updated FIFA image for {esc(p['name'])}!")
     else:
         await update.message.reply_text("❌ No photo found. Please attach a photo OR provide a URL at the end of the name.")
+
+async def remove_player_fifa(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """
+    /removeplayerfifa [name]
+    """
+    if not await check_admin(update): return
+    
+    text = update.message.text.replace('/removeplayerfifa', '').strip()
+    if not text:
+        await update.message.reply_text("Usage: /removeplayerfifa [Name or ID]")
+        return
+        
+    from database import delete_player
+    
+    deleted = delete_player(text)
+    
+    if deleted:
+        await update.message.reply_text(f"✅ Player '{text}' removed from database.")
+    else:
+        await update.message.reply_text(f"❌ Player '{text}' not found.")
