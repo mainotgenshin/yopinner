@@ -98,6 +98,17 @@ def get_player(player_id: str) -> Optional[Dict[str, Any]]:
         return data
     return None
 
+def delete_player(name: str) -> bool:
+    """Deletes a player by name (case-insensitive)."""
+    db = get_db()
+    # Find first to get ID for cache clearing? 
+    # Or just delete by name. 
+    # Names are not unique in schema, but practically are.
+    # Safe delete:
+    result = db.players.delete_one({"name": {"$regex":f"^{name}$", "$options": "i"}})
+    get_player.cache_clear()
+    return result.deleted_count > 0
+
 def clear_player_cache():
     """Manually clear the player cache."""
     get_player.cache_clear()
@@ -123,11 +134,23 @@ def get_player_by_name(name_query: str) -> Optional[Dict[str, Any]]:
         return data
     return None
 
-def delete_player(player_id: str) -> bool:
+def delete_player(identifier: str) -> bool:
+    """Deletes a player by ID or Name (case-insensitive)."""
     db = get_db()
-    result = db.players.delete_one({"player_id": player_id})
+    
+    # Try ID First
+    res = db.players.delete_one({"player_id": identifier})
+    if res.deleted_count > 0:
+        get_player.cache_clear()
+        return True
+        
+    # Try Name Regex
+    # Case insensitive exact match anchor
+    regex = f"^{identifier}$"
+    res = db.players.delete_one({"name": {"$regex": regex, "$options": "i"}})
+    
     get_player.cache_clear()
-    return result.deleted_count > 0
+    return res.deleted_count > 0
 
 def get_all_players() -> list:
     db = get_db()
