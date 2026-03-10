@@ -61,7 +61,7 @@ async def handle_draft_callback(update: Update, context: ContextTypes.DEFAULT_TY
             pass # Ignore expiry
     
     try:
-        match = load_match_state(match_id)
+        match = await load_match_state(match_id)
         if not match:
             logger.error(f"DEBUG: Match not found! ID: {match_id}")
             await safe_answer(f"Match ended or expired. ({match_id})", alert=True)
@@ -148,7 +148,7 @@ async def update_draft_message(update: Update, context: ContextTypes.DEFAULT_TYP
         except:
              pass
         match.draft_message_id = msg.message_id
-        save_match_state(match)
+        await save_match_state(match)
         return
 
     # Attempt to Edit
@@ -246,7 +246,7 @@ async def update_draft_message(update: Update, context: ContextTypes.DEFAULT_TYP
                  await context.bot.pin_chat_message(chat_id=match.chat_id, message_id=msg.message_id)
              except:
                  pass
-             save_match_state(match)
+             await save_match_state(match)
         else:
              logger.error(f"Failed to update draft message: {e}")
 
@@ -263,7 +263,7 @@ async def handle_draw(update: Update, context: ContextTypes.DEFAULT_TYPE, match:
             player = p_data
     
     if not player:
-        player = draw_player_for_turn(match)
+        player = await draw_player_for_turn(match)
         
     if not player:
         try:
@@ -272,7 +272,7 @@ async def handle_draw(update: Update, context: ContextTypes.DEFAULT_TYPE, match:
         return
         
     match.pending_player_id = player['player_id']
-    save_match_state(match)
+    await save_match_state(match)
     
     current_team = match.team_a if match.team_a.owner_id == match.current_turn else match.team_b
     
@@ -328,6 +328,7 @@ async def handle_draw(update: Update, context: ContextTypes.DEFAULT_TYPE, match:
             img_key = 'image_file_id'
         
         default_banner = DRAFT_BANNER_FIFA
+        media = p_data.get(img_key, default_banner)
     else:
         img_key = 'ipl_image_file_id' if "IPL" in match.mode else 'image_file_id'
         # Fallback to normal image if IPL image missing
@@ -368,7 +369,7 @@ async def handle_assign(update: Update, context: ContextTypes.DEFAULT_TYPE, matc
     # Check Complete
     if match.team_a.is_complete() and match.team_b.is_complete():
         match.state = "READY_CHECK"
-        save_match_state(match)
+        await save_match_state(match)
         
         board_text = format_draft_board(match)
         # Final Board Update
@@ -392,8 +393,8 @@ async def handle_assign(update: Update, context: ContextTypes.DEFAULT_TYPE, matc
         return
 
     # Switch Turn
-    switch_turn(match)
-    save_match_state(match)
+    await switch_turn(match)
+    await save_match_state(match)
     
     # Update Board for Next Turn (Restore Draw Button and Banner)
     board_text = format_draft_board(match)
@@ -432,8 +433,8 @@ async def handle_redraw(update: Update, context: ContextTypes.DEFAULT_TYPE, matc
             match.pending_player_id = None
         
         # Switch Turn
-        switch_turn(match)
-        save_match_state(match)
+        await switch_turn(match)
+        await save_match_state(match)
         
         # Update Board (Restore Banner)
         board_text = format_draft_board(match)
@@ -572,8 +573,8 @@ async def handle_replace_exec(update: Update, context: ContextTypes.DEFAULT_TYPE
     match.pending_player_id = None
     
     # Switch Turn
-    switch_turn(match)
-    save_match_state(match)
+    await switch_turn(match)
+    await save_match_state(match)
     
     # Update Board
     board_text = format_draft_board(match)
@@ -590,53 +591,6 @@ async def handle_replace_exec(update: Update, context: ContextTypes.DEFAULT_TYPE
         banner = DRAFT_BANNER_INTL
     
     await update_draft_message(update, context, match, f"{board_text}\n\n♻️ {esc(current_team.owner_name)} replaced {esc(old_player.name)} with {esc(new_player.name)}!", keyboard, media=banner)
-
-async def update_draft_message(update, context, match, text, keyboard, media=None):
-    from telegram import InputMediaPhoto
-    from telegram.error import BadRequest
-
-    try:
-        reply_markup = InlineKeyboardMarkup(keyboard)
-        msg_id = match.draft_message_id
-        chat_id = match.chat_id
-        
-        # If media provided, we use edit_message_media logic
-        if media:
-            # Check if it's a file_id or URL
-            # If it's the same as current, maybe just edit caption?
-            # Telegram doesn't let us easily know "current" media file_id without tracking.
-            # So we just try to edit media.
-            
-            try:
-                await context.bot.edit_message_media(
-                    chat_id=chat_id,
-                    message_id=msg_id,
-                    media=InputMediaPhoto(media=media, caption=text, parse_mode="Markdown"),
-                    reply_markup=reply_markup
-                )
-            except BadRequest as e:
-                if "Message is not modified" in str(e):
-                    pass # Ignore
-                else:
-                    raise e
-        else:
-            # Text Only Update
-            try:
-                await context.bot.edit_message_text(
-                    chat_id=chat_id,
-                    message_id=msg_id,
-                    text=text,
-                    reply_markup=reply_markup,
-                    parse_mode="Markdown"
-                )
-            except BadRequest as e:
-                if "Message is not modified" in str(e):
-                    pass
-                else:
-                    raise e
-                    
-    except Exception as e:
-        logger.error(f"Failed to update draft message: {e}")
 
 async def handle_replace_cancel(update: Update, context: ContextTypes.DEFAULT_TYPE, match: Match):
     # Just go back to draw view
