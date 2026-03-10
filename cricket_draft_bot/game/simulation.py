@@ -141,7 +141,7 @@ def calculate_slot_score(player: Player, role: str, mode: str) -> float:
     score = stat_val * multiplier
     return score
 
-def run_simulation(match: Match) -> str:
+async def run_simulation(match: Match) -> str:
     """
     Runs the simulation with enhanced stats and output format.
     """
@@ -189,12 +189,14 @@ def run_simulation(match: Match) -> str:
         
         if s_a > s_b:
             score_a += 1
-            details.append(f"🔵 {esc(p_a.name)} wins against {esc(p_b.name)}\n(+1 Point to {esc(match.team_a.owner_name)})\n")
+            details.append(f"🔵 {esc(p_a.name)} > {esc(p_b.name)}")
         elif s_b > s_a:
             score_b += 1
-            details.append(f"🔴 {esc(p_b.name)} wins against {esc(p_a.name)}\n(+1 Point to {esc(match.team_b.owner_name)})\n")
+            details.append(f"🔴 {esc(p_b.name)} > {esc(p_a.name)}")
         else:
-            details.append(f"⚖️ Draw: {esc(p_a.name)} vs {esc(p_b.name)}\n(0 Points)\n")
+            details.append(f"⚖️ Draw: {esc(p_a.name)} vs {esc(p_b.name)}")
+            
+        details.append("") # Empty line for spacing
             
     # Final Result
     details.append("➖➖➖➖➖➖➖➖➖➖")
@@ -233,8 +235,8 @@ def run_simulation(match: Match) -> str:
             res_a = "L"
             res_b = "W"
             
-        update_user_stats(match.team_a.owner_id, match.team_a.owner_name, res_a)
-        update_user_stats(match.team_b.owner_id, match.team_b.owner_name, res_b)
+        await update_user_stats(match.team_a.owner_id, match.team_a.owner_name, res_a)
+        await update_user_stats(match.team_b.owner_id, match.team_b.owner_name, res_b)
         
     except Exception as e:
         logger.error(f"Failed to persist user stats: {e}")
