@@ -24,7 +24,7 @@ async def challenge_handler(update: Update, context: ContextTypes.DEFAULT_TYPE, 
         
     # Track Group for Broadcasts
     from database import save_chat
-    save_chat(update.effective_chat.id)
+    await save_chat(update.effective_chat.id)
         
     # Get entities
     # Assuming first mention is opponent
