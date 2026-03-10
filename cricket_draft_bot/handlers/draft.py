@@ -546,7 +546,7 @@ async def handle_replace_exec(update: Update, context: ContextTypes.DEFAULT_TYPE
     from database import get_player
     from game.models import Player
     
-    new_player_data = get_player(match.pending_player_id)
+    new_player_data = await get_player(match.pending_player_id)
     if not new_player_data:
         try:
              await update.callback_query.answer("Error: Pending player lost. Please redraw.", show_alert=True)
