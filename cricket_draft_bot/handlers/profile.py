@@ -12,7 +12,7 @@ async def handle_profile(update: Update, context: ContextTypes.DEFAULT_TYPE):
     name = user.first_name
     
     from database import get_user_stats
-    stats = get_user_stats(user_id)
+    stats = await get_user_stats(user_id)
     
     if not stats:
         # Fallback or empty
