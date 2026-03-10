@@ -72,7 +72,7 @@ async def handle_ready(update: Update, context: ContextTypes.DEFAULT_TYPE, match
             pass # Ignore flood/other errors during cosmetic update 
         
         # Run Simulation
-        result_text = run_simulation(match)
+        result_text = await run_simulation(match)
         
         import time
         match.state = "FINISHED"
