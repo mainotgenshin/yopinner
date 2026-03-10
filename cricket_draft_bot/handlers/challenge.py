@@ -88,34 +88,55 @@ async def challenge_ipl(update: Update, context: ContextTypes.DEFAULT_TYPE):
     from config import DRAFT_BANNER_IPL
     key = f"join_IPL_{update.effective_user.id}"
     keyboard = [[InlineKeyboardButton("⚔️ Join Game", callback_data=key)]]
-    await update.message.reply_photo(
-        photo=DRAFT_BANNER_IPL,
-        caption=f"🏏 **IPL Challenge!**\nUser: {update.effective_user.first_name}\nMode: IPL\nWaiting for opponent...",
-        reply_markup=InlineKeyboardMarkup(keyboard),
-        parse_mode="Markdown"
-    )
+    try:
+        await update.message.reply_photo(
+            photo=DRAFT_BANNER_IPL,
+            caption=f"🏏 **IPL Challenge!**\nUser: {update.effective_user.first_name}\nMode: IPL\nWaiting for opponent...",
+            reply_markup=InlineKeyboardMarkup(keyboard),
+            parse_mode="Markdown"
+        )
+    except Exception as e:
+        await update.message.reply_text(
+            f"🏏 **IPL Challenge!**\nUser: {update.effective_user.first_name}\nMode: IPL\nWaiting for opponent...\n*(Enable media permissions in this chat to see banners)*",
+            reply_markup=InlineKeyboardMarkup(keyboard),
+            parse_mode="Markdown"
+        )
 
 async def challenge_intl(update: Update, context: ContextTypes.DEFAULT_TYPE):
     from config import DRAFT_BANNER_INTL
     key = f"join_INTL_{update.effective_user.id}"
     keyboard = [[InlineKeyboardButton("⚔️ Join Game", callback_data=key)]]
-    await update.message.reply_photo(
-        photo=DRAFT_BANNER_INTL,
-        caption=f"🏏 **International Challenge!**\nUser: {update.effective_user.first_name}\nMode: International\nWaiting for opponent...",
-        reply_markup=InlineKeyboardMarkup(keyboard),
-        parse_mode="Markdown"
-    )
+    try:
+        await update.message.reply_photo(
+            photo=DRAFT_BANNER_INTL,
+            caption=f"🏏 **International Challenge!**\nUser: {update.effective_user.first_name}\nMode: International\nWaiting for opponent...",
+            reply_markup=InlineKeyboardMarkup(keyboard),
+            parse_mode="Markdown"
+        )
+    except Exception as e:
+        await update.message.reply_text(
+            f"🏏 **International Challenge!**\nUser: {update.effective_user.first_name}\nMode: International\nWaiting for opponent...\n*(Enable media permissions in this chat to see banners)*",
+            reply_markup=InlineKeyboardMarkup(keyboard),
+            parse_mode="Markdown"
+        )
 
 async def challenge_fifa(update: Update, context: ContextTypes.DEFAULT_TYPE):
     from config import DRAFT_BANNER_FIFA
     key = f"join_FIFA_{update.effective_user.id}"
     keyboard = [[InlineKeyboardButton("⚔️ Join Game", callback_data=key)]]
-    await update.message.reply_photo(
-        photo=DRAFT_BANNER_FIFA,
-        caption=f"⚽ **FIFA Challenge!**\nUser: {update.effective_user.first_name}\nMode: FIFA\nWaiting for opponent...",
-        reply_markup=InlineKeyboardMarkup(keyboard),
-        parse_mode="Markdown"
-    )
+    try:
+        await update.message.reply_photo(
+            photo=DRAFT_BANNER_FIFA,
+            caption=f"⚽ **FIFA Challenge!**\nUser: {update.effective_user.first_name}\nMode: FIFA\nWaiting for opponent...",
+            reply_markup=InlineKeyboardMarkup(keyboard),
+            parse_mode="Markdown"
+        )
+    except Exception as e:
+        await update.message.reply_text(
+            f"⚽ **FIFA Challenge!**\nUser: {update.effective_user.first_name}\nMode: FIFA\nWaiting for opponent...\n*(Enable media permissions in this chat to see banners)*",
+            reply_markup=InlineKeyboardMarkup(keyboard),
+            parse_mode="Markdown"
+        )
 
 async def challenge_unified(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """
@@ -188,7 +209,10 @@ async def challenge_unified(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"Waiting for opponent..."
         )
         
-    await update.message.reply_photo(photo=banner, caption=msg, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="Markdown")
+    try:
+        await update.message.reply_photo(photo=banner, caption=msg, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="Markdown")
+    except Exception as e:
+        await update.message.reply_text(f"{msg}\n*(Enable media permissions in this chat to see banners)*", reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="Markdown")
 
 async def handle_join(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -232,8 +256,7 @@ async def handle_join(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     # Initialize Match
     # Initialize Match
-    # Signature: chat_id, mode, owner_id, challenger_id, owner_name, challenger_name
-    match = create_match_state(
+    match = await create_match_state(
         chat_id=update.effective_chat.id,
         mode=mode, 
         owner_id=owner_id, 
@@ -247,7 +270,7 @@ async def handle_join(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     # Save Initial State
     from game.state import save_match_state
-    save_match_state(match)
+    await save_match_state(match)
     
     # Start Draft (Update the message)
     from handlers.draft import format_draft_board, update_draft_message
