@@ -27,7 +27,7 @@ async def handle_ready(update: Update, context: ContextTypes.DEFAULT_TYPE, match
         except:
              pass
 
-    match = load_match_state(match_id)
+    match = await load_match_state(match_id)
     if not match:
         await safe_answer("Match expired.", alert=True)
         return
@@ -50,13 +50,13 @@ async def handle_ready(update: Update, context: ContextTypes.DEFAULT_TYPE, match
         await safe_answer("You are not part of this match.", alert=True)
         return
         
-    save_match_state(match)
+    await save_match_state(match)
     
     # Check if both ready
     if match.team_a.is_ready and match.team_b.is_ready:
         # Prevent double-entry here
         match.state = "SIMULATING"
-        save_match_state(match)
+        await save_match_state(match)
         
         # Update text to "Simulating..."
         try:
@@ -77,7 +77,7 @@ async def handle_ready(update: Update, context: ContextTypes.DEFAULT_TYPE, match
         import time
         match.state = "FINISHED"
         match.finished_at = time.time()
-        save_match_state(match)
+        await save_match_state(match)
         
         # Merge Result into Banner (Edit Caption)
         try:
