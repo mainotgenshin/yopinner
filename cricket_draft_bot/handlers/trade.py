@@ -41,7 +41,7 @@ async def handle_trade_start(update: Update, context: ContextTypes.DEFAULT_TYPE)
     match_id = "_".join(query.data.split('_')[2:])
     user_id = query.from_user.id
     
-    match = load_match_state(match_id)
+    match = await load_match_state(match_id)
     if not match: return
     
     # 1. Validation
@@ -70,7 +70,7 @@ async def handle_trade_start(update: Update, context: ContextTypes.DEFAULT_TYPE)
         'target_msg_id': None,
         'picks': {} # 'initiator_gets', 'opponent_gets'
     }
-    save_match_state(match)
+    await save_match_state(match)
     
     # Show Opponent Squad to Initiator
     # "Select a player to TAKE from opponent"
@@ -113,7 +113,7 @@ async def handle_trade_target_pick(update: Update, context: ContextTypes.DEFAULT
     match_id = "_".join(parts[1:pl_idx])
     player_id = "_".join(parts[pl_idx:])
     
-    match = load_match_state(match_id)
+    match = await load_match_state(match_id)
     if not match or not match.trade_offer: return
     
     user_id = query.from_user.id
@@ -122,10 +122,10 @@ async def handle_trade_target_pick(update: Update, context: ContextTypes.DEFAULT
     # Store Pick
     match.trade_offer['picks']['initiator_gets'] = player_id
     match.trade_offer['step'] = 'WAIT_ACCEPT'
-    save_match_state(match)
+    await save_match_state(match)
     
     # Notify Opponent
-    player_obj = get_player(player_id)
+    player_obj = await get_player(player_id)
     p_name = player_obj.get('name', 'Unknown')
     
     initiator_team = match.team_a if match.team_a.owner_id == user_id else match.team_b
@@ -148,8 +148,17 @@ async def handle_trade_respond(update: Update, context: ContextTypes.DEFAULT_TYP
     action = query.data.split('_')[0] # tradeaccept / tradereject
     match_id = "_".join(query.data.split('_')[1:])
     
-    match = load_match_state(match_id)
-    if not match or not match.trade_offer: return
+    from handlers.draft import PROCESSING_LOCKS
+    if match_id in PROCESSING_LOCKS:
+        try: await query.answer("⏳ Processing...", show_alert=False)
+        except: pass
+        return
+    PROCESSING_LOCKS.add(match_id)
+    
+    match = await load_match_state(match_id)
+    if not match or not match.trade_offer:
+        if match_id in PROCESSING_LOCKS: PROCESSING_LOCKS.remove(match_id)
+        return
     
     user_id = query.from_user.id
     initiator_id = match.trade_offer['initiator_id']
@@ -157,11 +166,12 @@ async def handle_trade_respond(update: Update, context: ContextTypes.DEFAULT_TYP
     # Ensure responder is NOT initiator
     if user_id == initiator_id:
         await query.answer("Waiting for opponent...", show_alert=True)
+        if match_id in PROCESSING_LOCKS: PROCESSING_LOCKS.remove(match_id)
         return
 
     if action == "tradereject":
         match.trade_offer = None
-        save_match_state(match)
+        await save_match_state(match)
         
         # Reset Dashboard
         # FIX FLOOD CONTROL: Don't edit text here, just alert and let handle_ready do the edit.
@@ -172,11 +182,12 @@ async def handle_trade_respond(update: Update, context: ContextTypes.DEFAULT_TYP
         from handlers.ready import handle_ready
         # Hack Fix: Use override
         await handle_ready(update, context, match_id_override=match_id) # This refreshes the dashboard with Trade button back
+        if match_id in PROCESSING_LOCKS: PROCESSING_LOCKS.remove(match_id)
         return
 
     if action == "tradeaccept":
         match.trade_offer['step'] = 'PICK_COUNTER'
-        save_match_state(match)
+        await save_match_state(match)
         
         # Show Initiator's Squad to Responder
         # "Select a player to TAKE from Initiator"
@@ -189,6 +200,8 @@ async def handle_trade_respond(update: Update, context: ContextTypes.DEFAULT_TYP
         
         text = f"🔄 **Trade Accepted!**\n\nNow select a player from {esc(initiator_team.owner_name)}'s squad to **TAKE** in return."
         await update_draft_message(update, context, match, text, buttons, media=get_match_banner(match))
+        
+    if match_id in PROCESSING_LOCKS: PROCESSING_LOCKS.remove(match_id)
 
 async def handle_trade_counter_pick(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -211,21 +224,21 @@ async def handle_trade_counter_pick(update: Update, context: ContextTypes.DEFAUL
     match_id = "_".join(parts[1:pl_idx])
     player_id = "_".join(parts[pl_idx:])
     
-    match = load_match_state(match_id)
+    match = await load_match_state(match_id)
     if not match or not match.trade_offer: return
     
     # Store Pick
     match.trade_offer['picks']['opponent_gets'] = player_id
     match.trade_offer['step'] = 'CONFIRM'
     match.trade_offer['confirms'] = [] # List of IDs who confirmed
-    save_match_state(match)
+    await save_match_state(match)
     
     # Show Final Summary
     p1_id = match.trade_offer['picks']['initiator_gets']
     p2_id = match.trade_offer['picks']['opponent_gets']
     
-    p1 = get_player(p1_id)
-    p2 = get_player(p2_id)
+    p1 = await get_player(p1_id)
+    p2 = await get_player(p2_id)
     
     initiator_id = match.trade_offer['initiator_id']
     initiator_name = match.team_a.owner_name if match.team_a.owner_id == initiator_id else match.team_b.owner_name
@@ -250,7 +263,7 @@ async def handle_trade_confirm(update: Update, context: ContextTypes.DEFAULT_TYP
     match_id = "_".join(query.data.split('_')[1:])
     user_id = query.from_user.id
     
-    match = load_match_state(match_id)
+    match = await load_match_state(match_id)
     if not match or not match.trade_offer: return
     
     confirms = match.trade_offer.get('confirms', [])
@@ -261,7 +274,7 @@ async def handle_trade_confirm(update: Update, context: ContextTypes.DEFAULT_TYP
         
     confirms.append(user_id)
     match.trade_offer['confirms'] = confirms
-    save_match_state(match)
+    await save_match_state(match)
     
     # Update Button Text (1/2 or 2/2)
     count = len(confirms)
@@ -283,10 +296,10 @@ async def handle_trade_cancel(update: Update, context: ContextTypes.DEFAULT_TYPE
     query = update.callback_query
     match_id = "_".join(query.data.split('_')[1:])
     
-    match = load_match_state(match_id)
+    match = await load_match_state(match_id)
     if match:
         match.trade_offer = None
-        save_match_state(match)
+        await save_match_state(match)
         
         
     # FIX FLOOD CONTROL: Don't edit text, just alert.
@@ -326,7 +339,7 @@ async def execute_trade_swap(match, query, context, update):
         if not slot_i or not slot_o:
             await query.answer("❌ Error: Player not found in slot.", show_alert=True)
             match.trade_offer = None
-            save_match_state(match)
+            await save_match_state(match)
             return
             
         # Perform Swap
@@ -343,7 +356,7 @@ async def execute_trade_swap(match, query, context, update):
         team_i.trades_used += 1
 
         match.trade_offer = None # Clear
-        save_match_state(match)
+        await save_match_state(match)
         
         await query.answer("✅ Trade Successful!", show_alert=True)
         
