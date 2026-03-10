@@ -118,7 +118,7 @@ async def add_player(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "api_reference": {},
             "stats": {} 
         }
-        save_player(player)
+        await save_player(player)
         
         from telegram import InlineKeyboardButton, InlineKeyboardMarkup
         keyboard = [[InlineKeyboardButton("🎲 Generate Stats (Intl)", callback_data=f"gen_intl_{player_id}")]]
@@ -309,7 +309,7 @@ async def add_player_fifa(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "source_db": "manual"
         }
         
-        save_player(player_doc)
+        await save_player(player_doc)
         
         await update.message.reply_text(
             f"✅ **FIFA Player Added!**\n"
@@ -329,12 +329,13 @@ async def generate_player_stats(player_id: str, update: Update, context: Context
     mode: 'intl' or 'ipl'
     """
     from database import get_player, save_player
-    p = get_player(player_id)
+    p = await get_player(player_id)
     
     if not p:
         msg = f"Player not found ({player_id})"
         if is_callback:
-            await update.callback_query.answer(msg, show_alert=True)
+            try: await update.callback_query.answer(msg, show_alert=True)
+            except: pass
         else:
             await update.message.reply_text(msg)
         return
@@ -370,7 +371,7 @@ async def generate_player_stats(player_id: str, update: Update, context: Context
         p['api_reference']['provider'] = ai_stats.get('source_label', 'Seeded')
         
     p['stats'] = current_stats
-    save_player(p)
+    await save_player(p)
          
     # Nicer output
     stat_data = current_stats.get(mode, {})
@@ -452,7 +453,7 @@ async def handle_remove_ipl(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
     from database import get_player_by_name, save_player
     
-    player = get_player_by_name(name)
+    player = await get_player_by_name(name)
     if not player:
         await update.message.reply_text(f"Player not found: {name}")
         return
@@ -471,7 +472,7 @@ async def handle_remove_ipl(update: Update, context: ContextTypes.DEFAULT_TYPE):
             cleaned = True
             
     if cleaned:
-        save_player(player)
+        await save_player(player)
         await update.message.reply_text(f"✅ Removed IPL data for **{esc(player['name'])}**.", parse_mode="Markdown")
         logger.info(f"Admin {update.effective_user.id} removed IPL data for {player['name']}")
     else:
@@ -507,11 +508,11 @@ async def remove_player(update: Update, context: ContextTypes.DEFAULT_TYPE):
         player_id = text.split('=')[1].strip() if '=' in text else text.strip()
         from database import delete_player, get_player
         
-        p = get_player(player_id)
+        p = await get_player(player_id)
         if not p:
             # Fallback: Try by name
             from database import get_player_by_name
-            p = get_player_by_name(player_id) # player_id variable holds the search text here
+            p = await get_player_by_name(player_id) # player_id variable holds the search text here
             
             if not p:
                 await update.message.reply_text(f"❌ Player not found by ID or Name: '{player_id}'")
@@ -644,7 +645,7 @@ async def get_player_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
         
     from database import get_player_by_name
-    p = get_player_by_name(text)
+    p = await get_player_by_name(text)
     
     if not p:
         await update.message.reply_text(f"❌ Player matching '{text}' not found.", parse_mode="Markdown")
@@ -776,7 +777,7 @@ async def handle_view_intl_callback(update: Update, context: ContextTypes.DEFAUL
     player_id = query.data.split('_', 2)[2] # view_intl_ID
     
     from database import get_player
-    p = get_player(player_id)
+    p = await get_player(player_id)
     if not p: return
 
     # Intl Default
@@ -833,7 +834,7 @@ async def handle_view_ipl_callback(update: Update, context: ContextTypes.DEFAULT
     player_id = query.data.split('_', 2)[2] # view_ipl_ID
     
     from database import get_player
-    p = get_player(player_id)
+    p = await get_player(player_id)
     if not p:
         await query.answer("Player not found", show_alert=True)
         return
@@ -901,7 +902,7 @@ async def handle_view_intl_callback(update: Update, context: ContextTypes.DEFAUL
     player_id = query.data.split('_', 2)[2] # view_intl_ID
     
     from database import get_player
-    p = get_player(player_id)
+    p = await get_player(player_id)
     if not p: return
 
     # Intl Default
@@ -987,7 +988,7 @@ async def modify_stat_generic(update: Update, context: ContextTypes.DEFAULT_TYPE
     delta = int(match.group(2))
     
     from database import get_player_by_name, save_player
-    p = get_player_by_name(player_name)
+    p = await get_player_by_name(player_name)
     
     if not p:
         await update.message.reply_text(f"❌ Player '{player_name}' not found.")
@@ -1014,7 +1015,7 @@ async def modify_stat_generic(update: Update, context: ContextTypes.DEFAULT_TYPE
         changes.append(f"{mode.upper()}: {current} -> {new_val}")
         
     p['stats'] = stats
-    save_player(p)
+    await save_player(p)
     
     await update.message.reply_text(
         f"✅ Updated {p['name']} ({stat_key})\n"
@@ -1122,7 +1123,7 @@ async def set_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
          return
 
     from database import get_player_by_name, save_player
-    p = get_player_by_name(player_name)
+    p = await get_player_by_name(player_name)
     
     if not p:
         await update.message.reply_text(f"❌ Player '{player_name}' not found.")
@@ -1201,7 +1202,7 @@ async def set_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     p['stats'] = stats
-    save_player(p)
+    await save_player(p)
     
     # Summary
     summary = "\n".join(changes)
@@ -1360,7 +1361,7 @@ async def fix_roles_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 
         if changed:
             p['roles'] = new_roles
-            save_player(p)
+            await save_player(p)
             updated_count += 1
             
     await update.message.reply_text(f"✅ Migration Complete. Updated {updated_count} players.")
@@ -1447,7 +1448,7 @@ async def migrate_roles_command(update: Update, context: ContextTypes.DEFAULT_TY
                 
         if is_modified:
             p['roles'] = unique_roles
-            save_player(p)
+            await save_player(p)
             total_updated += 1
             
     await update.message.reply_text(
@@ -1529,10 +1530,10 @@ async def set_roles_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     from database import get_player, get_player_by_name, save_player
     
     # Try ID first
-    p = get_player(identifier)
+    p = await get_player(identifier)
     if not p:
         # Try Name
-        p = get_player_by_name(identifier)
+        p = await get_player_by_name(identifier)
     
     if not p:
         await update.message.reply_text(f"❌ Player not found: `{identifier}`", parse_mode="Markdown")
@@ -1582,7 +1583,7 @@ async def set_roles_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
         
     p['roles'] = final_roles
-    save_player(p)
+    await save_player(p)
     
     await update.message.reply_text(
         f"✅ **Updated Roles for {p['name']}**\n"
@@ -1640,7 +1641,7 @@ async def add_role_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
     # Find Player
     from database import get_player, get_player_by_name, save_player
-    p = get_player(identifier) or get_player_by_name(identifier)
+    p = await get_player(identifier) or await get_player_by_name(identifier)
     
     if not p:
         await update.message.reply_text(f"❌ Player not found: `{identifier}`", parse_mode="Markdown")
@@ -1653,7 +1654,7 @@ async def add_role_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
          
     current_roles.append(target_role)
     p['roles'] = current_roles
-    save_player(p)
+    await save_player(p)
     
     await update.message.reply_text(f"✅ Added **{target_role}** to **{p['name']}**.\nCurrent Roles: {', '.join(current_roles)}", parse_mode="Markdown")
 
@@ -1707,7 +1708,7 @@ async def rem_role_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
     # Find Player
     from database import get_player, get_player_by_name, save_player
-    p = get_player(identifier) or get_player_by_name(identifier)
+    p = await get_player(identifier) or await get_player_by_name(identifier)
     
     if not p:
         await update.message.reply_text(f"❌ Player not found: `{identifier}`", parse_mode="Markdown")
@@ -1720,7 +1721,7 @@ async def rem_role_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
          
     current_roles.remove(target_role)
     p['roles'] = current_roles
-    save_player(p)
+    await save_player(p)
     
     await update.message.reply_text(f"✅ Removed **{target_role}** from **{p['name']}**.\nCurrent Roles: {', '.join(current_roles)}", parse_mode="Markdown")
 
@@ -1769,7 +1770,7 @@ async def non_role_fix(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 
         if has_change:
             p['stats'] = stats
-            save_player(p)
+            await save_player(p)
             updated_players += 1
             
         count += 1
@@ -1915,7 +1916,7 @@ async def add_player_ipl(update: Update, context: ContextTypes.DEFAULT_TYPE):
     clean_name = name.upper().replace(' ', '_')
     player_id = f"PL_{clean_name[:10]}"
     
-    p = get_player(player_id) or get_player_by_name(name)
+    p = await get_player(player_id) or await get_player_by_name(name)
     
     if not p:
         p = {
@@ -1934,7 +1935,7 @@ async def add_player_ipl(update: Update, context: ContextTypes.DEFAULT_TYPE):
     file_id = msg.photo[-1].file_id
     p['ipl_image_file_id'] = file_id
     
-    save_player(p)
+    await save_player(p)
     
     from telegram import InlineKeyboardButton, InlineKeyboardMarkup
     keyboard = [[InlineKeyboardButton("🎲 Generate Stats (IPL)", callback_data=f"gen_ipl_{player_id}")]]
@@ -1968,7 +1969,7 @@ async def add_role_ipl(update: Update, context: ContextTypes.DEFAULT_TYPE):
     target_role = valid_map.get(ri_lower, aliases.get(ri_lower, role_input))
     
     from database import get_player_by_name, save_player
-    p = get_player_by_name(name)
+    p = await get_player_by_name(name)
     if not p:
         await update.message.reply_text("Player not found.")
         return
@@ -1977,7 +1978,7 @@ async def add_role_ipl(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if target_role not in current:
         current.append(target_role)
         p['ipl_roles'] = current
-        save_player(p)
+        await save_player(p)
         await update.message.reply_text(f"✅ Added {target_role} to {p['name']} (IPL).\nIPL Roles: {', '.join(current)}")
     else:
         await update.message.reply_text(f"⚠️ {p['name']} already has {target_role} in IPL.")
@@ -1994,7 +1995,7 @@ async def rem_role_ipl(update: Update, context: ContextTypes.DEFAULT_TYPE):
     role_input = parts[1].strip()
     
     from database import get_player_by_name, save_player
-    p = get_player_by_name(name)
+    p = await get_player_by_name(name)
     if not p:
         await update.message.reply_text("Player not found.")
         return
@@ -2013,7 +2014,7 @@ async def rem_role_ipl(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if found:
         current.remove(found)
         p['ipl_roles'] = current
-        save_player(p)
+        await save_player(p)
         await update.message.reply_text(f"✅ Removed {found} from {p['name']} (IPL).\nIPL Roles: {', '.join(current)}")
     else:
          await update.message.reply_text(f"⚠️ Role {role_input} not found in {p['name']}'s IPL roles.")
@@ -2040,7 +2041,7 @@ async def update_image_command(update: Update, context: ContextTypes.DEFAULT_TYP
     url = parts[1].strip()
     
     from database import get_player_by_name, save_player
-    p = get_player_by_name(name)
+    p = await get_player_by_name(name)
     if not p:
         await update.message.reply_text("Player not found.")
         return
@@ -2054,7 +2055,7 @@ async def update_image_command(update: Update, context: ContextTypes.DEFAULT_TYP
         else:
             p['image_file_id'] = fid
             
-        save_player(p)
+        await save_player(p)
         await update.message.reply_text(f"✅ Image updated.")
     except Exception as e:
          await update.message.reply_text(f"❌ Failed: {e}")
@@ -2235,7 +2236,7 @@ async def update_image_fifa(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 return
 
     from database import get_player_by_name, save_player
-    p = get_player_by_name(name)
+    p = await get_player_by_name(name)
     
     if not p:
         await update.message.reply_text(f"❌ Player not found: {name}")
@@ -2248,7 +2249,7 @@ async def update_image_fifa(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if photo_file_id:
         p['image_file_id'] = photo_file_id
-        save_player(p)
+        await save_player(p)
         await update.message.reply_text(f"✅ Updated FIFA image for {esc(p['name'])}!")
     else:
         await update.message.reply_text("❌ No photo found. Please attach a photo OR provide a URL at the end of the name.")
