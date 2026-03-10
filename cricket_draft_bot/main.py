@@ -95,11 +95,11 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         from handlers.admin import handle_playerlist_ipl_callback
         await handle_playerlist_ipl_callback(update, context)
 
-if __name__ == '__main__':
-    import asyncio
-    # Initialize DB
-    asyncio.run(init_db())
+async def post_init(application):
+    from database import init_db
+    await init_db()
 
+if __name__ == '__main__':
     # Build application
     application = (
         ApplicationBuilder()
@@ -108,6 +108,7 @@ if __name__ == '__main__':
         .read_timeout(30)
         .write_timeout(30)
         .connection_pool_size(1024)
+        .post_init(post_init)
         .build()
     )
 
