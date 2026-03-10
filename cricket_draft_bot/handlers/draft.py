@@ -257,7 +257,7 @@ async def handle_draw(update: Update, context: ContextTypes.DEFAULT_TYPE, match:
     player = None
     if match.pending_player_id:
         from database import get_player
-        p_data = get_player(match.pending_player_id)
+        p_data = await get_player(match.pending_player_id)
         if p_data:
             # logger.info(f"DEBUG: Draw Request Idempotency...")
             player = p_data
@@ -318,7 +318,7 @@ async def handle_draw(update: Update, context: ContextTypes.DEFAULT_TYPE, match:
     
     # Get Player Image
     from database import get_player
-    p_data = get_player(player['player_id'])
+    p_data = await get_player(player['player_id'])
     
     # Image Key Logic
     if match.mode == "FIFA":
@@ -346,7 +346,7 @@ async def handle_assign(update: Update, context: ContextTypes.DEFAULT_TYPE, matc
     from database import get_player
     from game.models import Player
     
-    p_data = get_player(player_id)
+    p_data = await get_player(player_id)
     current_team = match.team_a if match.team_a.owner_id == match.current_turn else match.team_b
     
     # Filter p_data to only known fields
