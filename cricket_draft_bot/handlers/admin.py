@@ -406,7 +406,7 @@ async def map_api(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def handle_gen_intl_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     player_id = query.data.split('_', 2)[2] # gen_intl_ID
-    if not can_manage_bot(update.effective_user.id):
+    if not await can_manage_bot(update.effective_user.id):
         await query.answer("⛔ Admin Only", show_alert=True)
         return
     await generate_player_stats(player_id, update, context, is_callback=True, mode='intl')
@@ -414,7 +414,7 @@ async def handle_gen_intl_callback(update: Update, context: ContextTypes.DEFAULT
 async def handle_gen_ipl_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     player_id = query.data.split('_', 2)[2] # gen_ipl_ID
-    if not can_manage_bot(update.effective_user.id):
+    if not await can_manage_bot(update.effective_user.id):
         await query.answer("⛔ Admin Only", show_alert=True)
         return
     await generate_player_stats(player_id, update, context, is_callback=True, mode='ipl')
