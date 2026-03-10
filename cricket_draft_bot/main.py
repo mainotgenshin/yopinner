@@ -96,8 +96,9 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await handle_playerlist_ipl_callback(update, context)
 
 if __name__ == '__main__':
+    import asyncio
     # Initialize DB
-    init_db()
+    asyncio.run(init_db())
 
     # Build application
     application = (
