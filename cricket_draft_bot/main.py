@@ -31,7 +31,7 @@ logging.basicConfig(
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     from database import save_chat
-    save_chat(update.effective_chat.id)
+    await save_chat(update.effective_chat.id)
     
     await update.message.reply_text(
         "🏏 **Welcome to Cricket Draft Bot!** 🏏\n\n"
