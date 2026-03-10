@@ -2,14 +2,13 @@
 import os
 import json
 import logging
-from typing import Optional, Dict, Any
-from pymongo import MongoClient, ASCENDING
+from typing import Optional, Dict, Any, List
+from motor.motor_asyncio import AsyncIOMotorClient
+from pymongo import ASCENDING
 from config import MONGO_URI
 from urllib.parse import urlparse
-from functools import lru_cache
-
-# Fallback for local testing (though we want to encourage Mongo now)
-DB_FILE = "cricket_bot.db"
+import datetime
+import re
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -17,6 +16,10 @@ logger = logging.getLogger(__name__)
 # Global Client
 _mongo_client = None
 _db = None
+
+# A simple custom cache for get_player
+_player_cache: Dict[str, Dict[str, Any]] = {}
+CACHE_MAX_SIZE = 2000
 
 def get_db():
     global _mongo_client, _db
@@ -26,104 +29,79 @@ def get_db():
         
     if MONGO_URI:
         try:
-            # Create a connection using MongoClient
             import certifi
-            _mongo_client = MongoClient(MONGO_URI, tlsCAFile=certifi.where())
+            _mongo_client = AsyncIOMotorClient(MONGO_URI, tlsCAFile=certifi.where())
             
-            # Extract DB name from URI or default to 'cricket_bot'
-            # Uri format: mongodb+srv://user:pass@host/dbname?params
             parsed = urlparse(MONGO_URI)
             db_name = parsed.path[1:] if parsed.path and len(parsed.path) > 1 else 'cricket_bot'
             
             _db = _mongo_client[db_name]
-            logger.info(f"Connected to MongoDB: {db_name}")
+            logger.info(f"Connected to Async MongoDB: {db_name}")
             return _db
         except Exception as e:
-            logger.error(f"Failed to connect to MongoDB: {e}")
+            logger.error(f"Failed to connect to Async MongoDB: {e}")
             raise e
     else:
         logger.error("No MONGO_URI found!")
         raise ValueError("MONGO_URI is not set in environment.")
 
-def init_db():
+async def init_db():
     """Initializes collections and indexes."""
     try:
         db = get_db()
-        # Initialize Indexes
-        db.players.create_index([("player_id", ASCENDING)], unique=True)
-        db.players.create_index([("name", ASCENDING)]) # For partial search
+        await db.players.create_index([("player_id", ASCENDING)], unique=True)
+        await db.players.create_index([("name", ASCENDING)])
         
-        db.matches.create_index([("match_id", ASCENDING)], unique=True)
+        await db.matches.create_index([("match_id", ASCENDING)], unique=True)
+        await db.mods.create_index([("user_id", ASCENDING)], unique=True)
         
-        db.mods.create_index([("user_id", ASCENDING)], unique=True)
+        await db.matches.create_index([("last_updated", ASCENDING)], expireAfterSeconds=86400)
+        await db.users.create_index([("user_id", ASCENDING)], unique=True)
         
-        
-        # TTL Index: Expire matches after 24 hours (86400 seconds)
-        # Note: MongoDB requires 'last_updated' to be a BSON Date object
-        db.matches.create_index([("last_updated", ASCENDING)], expireAfterSeconds=86400)
-        
-        # User Stats Index
-        db.users.create_index([("user_id", ASCENDING)], unique=True)
-        
-        logger.info("MongoDB Indexes Verified.")
+        logger.info("Async MongoDB Indexes Verified.")
     except Exception as e:
         logger.error(f"DB Init Failed: {e}")
 
-def save_player(player_data: Dict[str, Any]):
+async def save_player(player_data: Dict[str, Any]):
     db = get_db()
-    # MongoDB stores dicts directly, no JSON stringification needed
-    # But code expects `roles` as list, etc.
-    # Player data passed here is already a dict, assuming it matches the model.
-    # Ensure player_id is the _id or indexed
-    
-    # Clean data to ensure it's Mongo compatible (no specialized objects)
-    # The current app passes simple dicts, so we are good.
-    
-    # Upsert
-    db.players.update_one(
+    await db.players.update_one(
         {"player_id": player_data['player_id']},
         {"$set": player_data},
         upsert=True
     )
-    # Clear cache to reflect updates
-    get_player.cache_clear()
+    clear_player_cache()
 
-@lru_cache(maxsize=2000)
-def get_player(player_id: str) -> Optional[Dict[str, Any]]:
+async def get_player(player_id: str) -> Optional[Dict[str, Any]]:
+    # Simple LRU-like cache retrieval
+    if player_id in _player_cache:
+        # Move to end to mark as recently used
+        data = _player_cache.pop(player_id)
+        _player_cache[player_id] = data
+        return data
+
     db = get_db()
-    data = db.players.find_one({"player_id": player_id})
+    data = await db.players.find_one({"player_id": player_id})
     if data:
-        # Remove _id (ObjectId)
         data.pop('_id', None)
+        # Cache management
+        if len(_player_cache) >= CACHE_MAX_SIZE:
+            # Pop oldest (first item in dict)
+            _player_cache.pop(next(iter(_player_cache)))
+        _player_cache[player_id] = data
         return data
     return None
 
-def delete_player(name: str) -> bool:
-    """Deletes a player by name (case-insensitive)."""
-    db = get_db()
-    # Find first to get ID for cache clearing? 
-    # Or just delete by name. 
-    # Names are not unique in schema, but practically are.
-    # Safe delete:
-    result = db.players.delete_one({"name": {"$regex":f"^{name}$", "$options": "i"}})
-    get_player.cache_clear()
-    return result.deleted_count > 0
-
 def clear_player_cache():
     """Manually clear the player cache."""
-    get_player.cache_clear()
+    global _player_cache
+    _player_cache.clear()
     logger.info("Player cache cleared manually.")
 
-def get_player_by_name(name_query: str) -> Optional[Dict[str, Any]]:
+async def get_player_by_name(name_query: str) -> Optional[Dict[str, Any]]:
     db = get_db()
-    # Case-insensitive partial regex
-    # Warning: Regex at start is efficient with index only if anchored, which this isn't.
-    # But for 50 players it's fine.
-    
-    import re
     regex = re.compile(re.escape(name_query), re.IGNORECASE)
     
-    data = db.players.find_one({
+    data = await db.players.find_one({
         "$or": [
             {"name": regex},
             {"full_name": regex}
@@ -134,52 +112,67 @@ def get_player_by_name(name_query: str) -> Optional[Dict[str, Any]]:
         return data
     return None
 
-def delete_player(identifier: str) -> bool:
+async def delete_player(identifier: str) -> bool:
     """Deletes a player by ID or Name (case-insensitive)."""
     db = get_db()
     
     # Try ID First
-    res = db.players.delete_one({"player_id": identifier})
+    res = await db.players.delete_one({"player_id": identifier})
     if res.deleted_count > 0:
-        get_player.cache_clear()
+        clear_player_cache()
         return True
         
-    # Try Name Regex
-    # Case insensitive exact match anchor
     regex = f"^{identifier}$"
-    res = db.players.delete_one({"name": {"$regex": regex, "$options": "i"}})
+    res = await db.players.delete_one({"name": {"$regex": regex, "$options": "i"}})
     
-    get_player.cache_clear()
+    clear_player_cache()
     return res.deleted_count > 0
 
-def get_all_players() -> list:
+async def get_all_players() -> list:
     db = get_db()
     cursor = db.players.find({})
     players = []
-    for doc in cursor:
+    async for doc in cursor:
         doc.pop('_id', None)
         players.append(doc)
     return players
 
-def save_match(match_id: str, chat_id: int, state_data: Dict[str, Any]):
+async def get_eligible_players_for_mode(mode: str) -> List[str]:
+    """
+    Optimized DB projection to only fetch player IDs needed for a given mode.
+    Solves memory bloat by not deserializing entire player objects.
+    """
     db = get_db()
-    # Save the whole state dict
-    # Add metadata fields for query convenience
-    document = {
-        "match_id": match_id,
-        "chat_id": chat_id,
-        "state_data": state_data # Storing nested or flattened?
-        # SQLite used serialized JSON string for state_data.
-        # Mongo can store it natively. 
-        # But `game/state.py` expects to load it back.
-        # If we store natively, load_match_state in state.py needs to NOT json.load it?
-        # WAIT. state.py calls `get_match` which returned `json.loads(row[0])`.
-        # We need `get_match` to return the dict directly.
-    }
+    draft_pool_ids = []
     
-    import datetime
-    
-    db.matches.update_one(
+    if mode == "FIFA":
+        # FIFA Memory Optimization: Only pull players meeting criteria
+        query = {
+            "sport": "football",
+            "overall": {"$gt": 80},
+            "$or": [
+                {"overall": {"$gt": 83}},
+                {"league": {"$in": ["Premier League", "LALIGA EA SPORTS", "Bundesliga", "Serie A Enilive", "Ligue 1 McDonald's"]}}
+            ]
+        }
+    else:
+        # Cricket Optimization
+        search_key = 'international' if mode.lower() == 'intl' else mode.lower()
+        query = {
+            f"stats.{search_key}": {"$ne": None}
+        }
+
+    # Projection to return ONLY the player_id string
+    cursor = db.players.find(query, {"player_id": 1, "_id": 0})
+    async for doc in cursor:
+        if "player_id" in doc:
+            draft_pool_ids.append(doc["player_id"])
+            
+    return draft_pool_ids
+
+async def save_match(match_id: str, chat_id: int, state_data: Dict[str, Any]):
+    db = get_db()
+    await db.matches.update_one(
         {"match_id": match_id},
         {"$set": {
             "state_data": state_data, 
@@ -190,63 +183,56 @@ def save_match(match_id: str, chat_id: int, state_data: Dict[str, Any]):
     )
     logger.info(f"DEBUG: Saved Match {match_id} to Mongo")
 
-def get_match(match_id: str) -> Optional[Dict[str, Any]]:
+async def get_match(match_id: str) -> Optional[Dict[str, Any]]:
     db = get_db()
-    doc = db.matches.find_one({"match_id": match_id})
+    doc = await db.matches.find_one({"match_id": match_id})
     if doc:
         logger.info(f"DEBUG: Found Match {match_id}")
         return doc.get('state_data')
     logger.warning(f"DEBUG: NOT Found Match {match_id}")
     return None
     
-def clear_all_matches():
+async def clear_all_matches():
     db = get_db()
-    db.matches.delete_many({})
+    await db.matches.delete_many({})
 
-def add_mod(user_id: int):
+async def add_mod(user_id: int):
     db = get_db()
-    db.mods.update_one(
+    await db.mods.update_one(
         {"user_id": user_id},
         {"$set": {"user_id": user_id}},
         upsert=True
     )
 
-def remove_mod(user_id: int):
+async def remove_mod(user_id: int):
     db = get_db()
-    db.mods.delete_one({"user_id": user_id})
+    await db.mods.delete_one({"user_id": user_id})
 
-def is_mod(user_id: int) -> bool:
+async def is_mod(user_id: int) -> bool:
     db = get_db()
-    doc = db.mods.find_one({"user_id": user_id})
+    doc = await db.mods.find_one({"user_id": user_id})
     return doc is not None
 
-def get_all_mods() -> list:
+async def get_all_mods() -> list:
     db = get_db()
     cursor = db.mods.find({})
-    return [doc['user_id'] for doc in cursor]
+    return [doc['user_id'] async for doc in cursor]
 
-def save_chat(chat_id: int):
-    """Upsert chat to known chats list for broadcasting."""
+async def save_chat(chat_id: int):
     db = get_db()
-    db.chats.update_one(
+    await db.chats.update_one(
         {"chat_id": chat_id},
         {"$set": {"chat_id": chat_id}},
         upsert=True
     )
 
-def get_all_chats() -> list:
+async def get_all_chats() -> list:
     db = get_db()
     cursor = db.chats.find({})
-    return [doc['chat_id'] for doc in cursor]
+    return [doc['chat_id'] async for doc in cursor]
 
-def update_user_stats(user_id: int, name: str, result: str):
-    """
-    Updates persistent user stats.
-    result: 'W', 'L', 'D'
-    """
+async def update_user_stats(user_id: int, name: str, result: str):
     db = get_db()
-    
-    # Init update fields
     inc_updates = {
         "total_matches": 1,
         "wins": 1 if result == "W" else 0,
@@ -254,23 +240,21 @@ def update_user_stats(user_id: int, name: str, result: str):
         "draws": 1 if result == "D" else 0
     }
     
-    # Atomic Update
-    db.users.update_one(
+    await db.users.update_one(
         {"user_id": user_id},
         {
-            "$set": {"name": name, "user_id": user_id}, # Update name in case changed
+            "$set": {"name": name, "user_id": user_id},
             "$inc": inc_updates,
             "$push": {
                 "recent_results": {
                     "$each": [result],
-                    "$slice": -5 # Keep last 5
+                    "$slice": -5
                 }
             }
         },
         upsert=True
     )
 
-def get_user_stats(user_id: int) -> Optional[Dict[str, Any]]:
+async def get_user_stats(user_id: int) -> Optional[Dict[str, Any]]:
     db = get_db()
-    return db.users.find_one({"user_id": user_id})
-
+    return await db.users.find_one({"user_id": user_id})
