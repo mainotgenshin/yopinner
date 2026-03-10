@@ -473,7 +473,7 @@ async def handle_replace_start(update: Update, context: ContextTypes.DEFAULT_TYP
         
     # Get Player Data
     from database import get_player
-    player = get_player(match.pending_player_id)
+    player = await get_player(match.pending_player_id)
     
     # UI: Show Filled Slots to Replace
     card_caption = f"♻️ *Replacing Player*\nNew Player: {esc(player['name'])}\n\nSelect a position to replace:"
