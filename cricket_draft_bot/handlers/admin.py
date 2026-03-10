@@ -240,19 +240,25 @@ async def add_player_fifa(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # CB: (DEF + PHY) / 2
         cb_rating = int((df + phy) / 2)
         
-        # GK Rating Logic
         if is_gk_stats:
-            # Average of main attributes (approx OVR)
-            # DIV, HAN, KIC, REF, SPD, POS
-            gk_sum = div + han + kic + ref + spd_gk + pos_gk
-            gk_rating = int(gk_sum / 6) if gk_sum > 0 else overall
+            # Calculate Average of PROVIDED stats
+            provided_gk_stats = [v for v in [div, han, kic, ref, spd_gk, pos_gk] if v > 0]
+            if provided_gk_stats:
+                 gk_avg = int(sum(provided_gk_stats) / len(provided_gk_stats))
+                 # Fill zeros with average? Or just use average as rating?
+                 # If user misses 'pos', it's better to ignore it than avg in a 0.
+                 gk_rating = gk_avg
+            else:
+                 gk_rating = overall
         else:
             # Fallback for outfielders or missing GK stats
             gk_rating = 0
             
-        # If user explicitly said Position=GK, prioritize GK rating = Overall
+        # If user explicitly said Position=GK, force GK rating to be at least Overall
+        # This fixes the issue where missing stats drag down the rating
         if 'positions' in parsed and 'GK' in parsed['positions'].upper():
-            if gk_rating == 0: gk_rating = overall
+             if gk_rating < (overall - 5): 
+                 gk_rating = overall
         
         fifa_stats = {
             "ST": st_rating, "CF": cf_rating,
@@ -2170,7 +2176,16 @@ async def handle_broadcast(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     for chat_id in chats:
         try:
-            await context.bot.send_message(chat_id=chat_id, text=f"📢 **Announcement**\n\n{msg}", parse_mode="Markdown")
+            # HTML parse mode is much safer for user-input broadcasts because it ignores unescaped markdown characters.
+            # We convert basic markdown back to HTML to support user intent if needed, or just let them use raw text/html.
+            # For simplicity and safety, we will just use HTML parsing.
+            import re
+            html_msg = msg.replace('\n', '<br>')
+            html_msg = re.sub(r'\*\*(.*?)\*\*', r'<b>\1</b>', html_msg)
+            html_msg = re.sub(r'__(.*?)__', r'<i>\1</i>', html_msg)
+            html_msg = html_msg.replace('<br>', '\n')
+            
+            await context.bot.send_message(chat_id=chat_id, text=f"📢 <b>Announcement</b>\n\n{html_msg}", parse_mode="HTML")
             success += 1
             await asyncio.sleep(0.05) # Throttle to 20/sec
         except Forbidden:
