@@ -123,21 +123,19 @@ def format_draft_board(match: Match) -> str:
 
 import asyncio
 from telegram.error import RetryAfter
+from utils.rate_limit import debouncer
 
 async def update_draft_message(update: Update, context: ContextTypes.DEFAULT_TYPE, match: Match, caption: str, keyboard: list, media=None):
     """
-    Unified handler to update the draft message.
+    Unified handler to update the draft message using the Rate Limiter (Debouncer).
     Logic:
-    - If `media` is None -> Board View (Text Message)
-    - If `media` is URL -> Card View (Photo Message)
-    - If type changes (Text <-> Photo), Delete & Resend.
-    - If type same, Edit.
+    - If no message exists, send a new one synchronously.
+    - If message exists, push the update to the Debouncer queue to prevent Error 429.
     """
     reply_markup = InlineKeyboardMarkup(keyboard)
     
-    # Validation
+    # 1. Initial Creation (Synchronous)
     if not match.draft_message_id:
-        # Fallback: Send new
         if media:
              msg = await context.bot.send_photo(chat_id=match.chat_id, photo=media, caption=caption, reply_markup=reply_markup, parse_mode="Markdown")
         else:
@@ -151,104 +149,8 @@ async def update_draft_message(update: Update, context: ContextTypes.DEFAULT_TYP
         await save_match_state(match)
         return
 
-    # Attempt to Edit
-    
-    # Attempt to Edit
-    from telegram.error import RetryAfter
-
-    try:
-        for attempt in range(3): # Max 3 retries
-            try:
-                if media:
-                     # Want Photo
-                     await context.bot.edit_message_media(
-                        chat_id=match.chat_id,
-                        message_id=match.draft_message_id,
-                        media=InputMediaPhoto(media=media, caption=caption, parse_mode="Markdown"),
-                        reply_markup=reply_markup
-                     )
-                else:
-                     # Want Text
-                     await context.bot.edit_message_text(
-                        chat_id=match.chat_id,
-                        message_id=match.draft_message_id,
-                        text=caption, # 'text' not 'caption'
-                        reply_markup=reply_markup,
-                        parse_mode="Markdown"
-                     )
-                return # Success!
-                
-            except RetryAfter as e:
-                wait_time = e.retry_after + 1
-                logger.info(f"Flood limit exceeded. Sleeping {wait_time}s...")
-                await asyncio.sleep(wait_time)
-                continue # Retry
-                
-            except Exception:
-                # If it's the last attempt or a different error, raise to let the outer handler manage it
-                if attempt == 2: raise 
-                # If not RetryAfter, raise immediately (don't retry logic errors)
-                raise
-             
-    except Exception as e:
-        err = str(e)
-        logger.warning(f"Draft Message Update Error: {err}")
-        
-        # Check if type mismatch OR invalid file ID ("Wrong file identifier")
-        is_type_mismatch = (
-            "not a text message" in err 
-            or "not a media message" in err 
-            or "no caption" in err 
-            or "photo" in err
-            or "There is no text" in err
-            or "Wrong file identifier" in err
-            or "Media_empty" in err
-            or "Bad Request" in err
-            or "http url content" in err
-            or "failed to get http" in err.lower()
-            or "Wrong type" in err
-            or "unsupported" in err
-        )
-        
-        if is_type_mismatch or "not found" in err:
-             logger.info(f"Switching Message Type or Recovering from Error (Error: {err})")
-             # Delete Old
-             try:
-                 await context.bot.delete_message(chat_id=match.chat_id, message_id=match.draft_message_id)
-             except:
-                 pass
-             
-             # Send New - with Safety Fallback
-             try:
-                 if media and str(media).strip(): # Ensure media is not empty string
-                      try:
-                          msg = await context.bot.send_photo(chat_id=match.chat_id, photo=media, caption=caption, reply_markup=reply_markup, parse_mode="Markdown")
-                      except Exception as media_err:
-                          logger.error(f"Failed to send media: {media_err}. Falling back to Banner.")
-                          
-                          # Fallback to Banner
-                          fallback_banner = DRAFT_BANNER_FIFA if match.mode == "FIFA" else DRAFT_BANNER_INTL
-                          if "IPL" in match.mode: fallback_banner = DRAFT_BANNER_IPL
-                          
-                          try:
-                              msg = await context.bot.send_photo(chat_id=match.chat_id, photo=fallback_banner, caption=caption + "\n\n⚠️ Image Not Available", reply_markup=reply_markup, parse_mode="Markdown")
-                          except:
-                              msg = await context.bot.send_message(chat_id=match.chat_id, text=caption + "\n⚠️ Image failed to load.", reply_markup=reply_markup, parse_mode="Markdown")
-                 else:
-                      msg = await context.bot.send_message(chat_id=match.chat_id, text=caption, reply_markup=reply_markup, parse_mode="Markdown")
-             except Exception as final_err:
-                 logger.error(f"CRITICAL: Failed to recover draft message: {final_err}")
-                 return
-
-             match.draft_message_id = msg.message_id
-             
-             try:
-                 await context.bot.pin_chat_message(chat_id=match.chat_id, message_id=msg.message_id)
-             except:
-                 pass
-             await save_match_state(match)
-        else:
-             logger.error(f"Failed to update draft message: {e}")
+    # 2. Batched Editing (Asynchronous)
+    await debouncer.schedule_update(match, context.bot, caption, reply_markup, media=media, parse_mode="Markdown")
 
 
 
