@@ -536,7 +536,7 @@ async def player_list(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not await check_admin(update): return
 
     from database import get_all_players
-    players = get_all_players()
+    players = await get_all_players()
     
     if not players:
         await update.message.reply_text("No players found.")
@@ -583,7 +583,7 @@ async def show_player_page(update: Update, context: ContextTypes.DEFAULT_TYPE, p
     from database import get_all_players
     from telegram import InlineKeyboardButton, InlineKeyboardMarkup
     
-    players = get_all_players()
+    players = await get_all_players()
     grouped = {}
     for p in players:
         pid = p['player_id']
@@ -1284,7 +1284,7 @@ async def check_role_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
          return
          
     from database import get_all_players
-    players = get_all_players()
+    players = await get_all_players()
     
     results = []
     
@@ -1791,7 +1791,7 @@ async def list_mods_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not await check_admin(update): return
     
     from database import get_all_mods
-    mod_ids = get_all_mods()
+    mod_ids = await get_all_mods()
     
     if not mod_ids:
         await update.message.reply_text("ℹ️ No moderators found.")
@@ -2161,7 +2161,7 @@ async def handle_broadcast(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     from database import get_all_chats, get_db
-    chats = get_all_chats()
+    chats = await get_all_chats()
     
     if not chats:
         await update.message.reply_text("❌ No active chats found in database.")
@@ -2191,7 +2191,7 @@ async def handle_broadcast(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await asyncio.sleep(0.05) # Throttle to 20/sec
         except Forbidden:
             # Bot kicked from group, remove from DB
-            get_db().chats.delete_one({"chat_id": chat_id})
+            await get_db().chats.delete_one({"chat_id": chat_id})
             failed += 1
         except Exception as e:
             logger.warning(f"Broadcast failed for {chat_id}: {e}")
