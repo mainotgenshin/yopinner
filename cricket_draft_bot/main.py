@@ -31,9 +31,17 @@ logging.basicConfig(
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     from database import save_chat
-    await save_chat(update.effective_chat.id)
-    
-    await update.message.reply_text(
+    # Save group chats for broadcast
+    if update.effective_chat.type != "private":
+        await save_chat(update.effective_chat.id)
+
+    # Handle deep-link for Swap (DM only)
+    if update.effective_chat.type == "private" and context.args and context.args[0].startswith("swap_"):
+        from handlers.swap import handle_swap_dm_start
+        await handle_swap_dm_start(update, context)
+        return
+
+    await update.effective_message.reply_text(
         "🏏 **Welcome to Cricket Draft Bot!** 🏏\n\n"
         "Commands:\n"
         "/challengeipl - Start IPL Draft\n"
@@ -218,6 +226,15 @@ if __name__ == '__main__':
     application.add_handler(CallbackQueryHandler(handle_trade_counter_pick, pattern="^tradecounter_"))
     application.add_handler(CallbackQueryHandler(handle_trade_confirm, pattern="^tradeconfirm_"))
     application.add_handler(CallbackQueryHandler(handle_trade_cancel, pattern="^tradecancel_"))
+
+    # Swap System
+    from handlers.swap import (
+        handle_swap_start, handle_swap_pick1, handle_swap_pick2, handle_swap_cancel
+    )
+    application.add_handler(CallbackQueryHandler(handle_swap_start, pattern="^swapstart_"))
+    application.add_handler(CallbackQueryHandler(handle_swap_pick1, pattern="^swap1_"))
+    application.add_handler(CallbackQueryHandler(handle_swap_pick2, pattern="^swap2_"))
+    application.add_handler(CallbackQueryHandler(handle_swap_cancel, pattern="^swapcancel_"))
 
     # Callbacks
     application.add_handler(CallbackQueryHandler(handle_callback))
