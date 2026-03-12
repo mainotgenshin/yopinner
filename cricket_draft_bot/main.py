@@ -218,9 +218,9 @@ if __name__ == '__main__':
     from handlers.swap import (
         handle_swap_pick1, handle_swap_pick2, handle_swap_cancel
     )
-    application.add_handler(CallbackQueryHandler(handle_swap_pick1, pattern="^swap1|"))
-    application.add_handler(CallbackQueryHandler(handle_swap_pick2, pattern="^swap2|"))
-    application.add_handler(CallbackQueryHandler(handle_swap_cancel, pattern="^swapcancel|"))
+    application.add_handler(CallbackQueryHandler(handle_swap_pick1, pattern=r"^swap1\|"))
+    application.add_handler(CallbackQueryHandler(handle_swap_pick2, pattern=r"^swap2\|"))
+    application.add_handler(CallbackQueryHandler(handle_swap_cancel, pattern=r"^swapcancel\|"))
 
     # Callbacks
     application.add_handler(CallbackQueryHandler(handle_callback))
