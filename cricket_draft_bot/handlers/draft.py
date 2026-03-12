@@ -277,17 +277,13 @@ async def handle_assign(update: Update, context: ContextTypes.DEFAULT_TYPE, matc
         # Final Board Update
         keyboard = [[InlineKeyboardButton("🚀 READY", callback_data=f"ready_{match.match_id}")]]
         
-        # Add Trade Button if Limit Not Reached (Global Limit: 1)
-        total_trades = getattr(match.team_a, 'trades_used', 0) + getattr(match.team_b, 'trades_used', 0)
-        if total_trades < 1:
-            keyboard.append([InlineKeyboardButton("🔄 Trade (1 Left)", callback_data=f"trade_start_{match.match_id}")])
-
-        # Add Swap button — each team independently gets 1 swap
+        # Add Swap button as a direct DM deep-link (each team gets 1 swap)
         a_swaps = getattr(match.team_a, 'swaps_used', 0)
         b_swaps = getattr(match.team_b, 'swaps_used', 0)
         if a_swaps < 1 or b_swaps < 1:
-            keyboard.append([InlineKeyboardButton("🔀 Swap Positions (1 Left)", callback_data=f"swapstart_{match.match_id}")])
-
+            bot_uname = context.bot.username
+            swap_url = f"https://t.me/{bot_uname}?start=swap_{match.match_id}"
+            keyboard.append([InlineKeyboardButton("🔀 Swap Positions (1 Left)", url=swap_url)])
         # Banner for Final Screen (To keep Single Pin)
         # Determine Banner
         if "IPL" in match.mode:
