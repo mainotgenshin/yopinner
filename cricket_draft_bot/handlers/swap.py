@@ -58,55 +58,6 @@ def _build_squad_buttons(team, cb_prefix, exclude_player_id=None):
 
 
 # ─────────────────────────────────────────────────────────────
-# Step 0: Group button → send deep-link to DM
-# ─────────────────────────────────────────────────────────────
-
-async def handle_swap_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """User tapped 🔀 Swap in the group. Send them a DM deep-link button."""
-    query = update.callback_query
-    await query.answer()
-
-    match_id = query.data.replace("swapstart_", "", 1)
-    user_id = query.from_user.id
-
-    match = await load_match_state(match_id)
-    if not match:
-        await query.answer("Match not found.", show_alert=True)
-        return
-
-    # Validate match state
-    if match.state not in ("READY_CHECK", "DRAFTING"):
-        await query.answer("Swap is only available after the draft completes.", show_alert=True)
-        return
-
-    team = _get_user_team(match, user_id)
-    if not team:
-        await query.answer("You are not part of this match.", show_alert=True)
-        return
-
-    if getattr(team, "swaps_used", 0) >= 1:
-        await query.answer("You already used your swap!", show_alert=True)
-        return
-
-    # Send deep-link button so user can open DM
-    bot_username = (await context.bot.get_me()).username
-    deep_link_url = f"https://t.me/{bot_username}?start=swap_{match_id}"
-
-    await query.answer("Check your private messages with the bot!", show_alert=False)
-    await context.bot.send_message(
-        chat_id=query.message.chat_id,
-        text=(
-            f"👤 {esc(query.from_user.first_name)}, tap the button below to swap "
-            f"two players' positions in private:"
-        ),
-        parse_mode="Markdown",
-        reply_markup=InlineKeyboardMarkup([
-            [InlineKeyboardButton("🔀 Open Swap in DM", url=deep_link_url)]
-        ])
-    )
-
-
-# ─────────────────────────────────────────────────────────────
 # Step 0b: /start swap_MATCHID received in DM
 # ─────────────────────────────────────────────────────────────
 
@@ -335,7 +286,9 @@ async def handle_swap_pick2(update: Update, context: ContextTypes.DEFAULT_TYPE):
         a_swaps = getattr(match.team_a, 'swaps_used', 0)
         b_swaps = getattr(match.team_b, 'swaps_used', 0)
         if a_swaps < 1 or b_swaps < 1:
-            keyboard.append([InlineKeyboardButton("🔀 Swap Positions (1 Left)", callback_data=f"swapstart_{match.match_id}")])
+            bot_uname = context.bot.username
+            swap_url = f"https://t.me/{bot_uname}?start=swap_{match.match_id}"
+            keyboard.append([InlineKeyboardButton("🔀 Swap Positions (1 Left)", url=swap_url)])
 
         if "IPL" in match.mode:
             banner = DRAFT_BANNER_IPL
