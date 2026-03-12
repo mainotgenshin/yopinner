@@ -214,24 +214,10 @@ if __name__ == '__main__':
     from handlers.profile import handle_profile
     application.add_handler(CommandHandler('myprofile', handle_profile))
 
-    # Trade System
-    from handlers.trade import (
-        handle_trade_start, handle_trade_target_pick, handle_trade_respond, 
-        handle_trade_counter_pick, handle_trade_confirm, handle_trade_cancel
-    )
-    
-    application.add_handler(CallbackQueryHandler(handle_trade_start, pattern="^trade_start_"))
-    application.add_handler(CallbackQueryHandler(handle_trade_target_pick, pattern="^tradetarget_"))
-    application.add_handler(CallbackQueryHandler(handle_trade_respond, pattern="^tradeaccept_|^tradereject_"))
-    application.add_handler(CallbackQueryHandler(handle_trade_counter_pick, pattern="^tradecounter_"))
-    application.add_handler(CallbackQueryHandler(handle_trade_confirm, pattern="^tradeconfirm_"))
-    application.add_handler(CallbackQueryHandler(handle_trade_cancel, pattern="^tradecancel_"))
-
     # Swap System
     from handlers.swap import (
-        handle_swap_start, handle_swap_pick1, handle_swap_pick2, handle_swap_cancel
+        handle_swap_pick1, handle_swap_pick2, handle_swap_cancel
     )
-    application.add_handler(CallbackQueryHandler(handle_swap_start, pattern="^swapstart_"))
     application.add_handler(CallbackQueryHandler(handle_swap_pick1, pattern="^swap1_"))
     application.add_handler(CallbackQueryHandler(handle_swap_pick2, pattern="^swap2_"))
     application.add_handler(CallbackQueryHandler(handle_swap_cancel, pattern="^swapcancel_"))
