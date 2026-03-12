@@ -521,7 +521,7 @@ async def remove_player(update: Update, context: ContextTypes.DEFAULT_TYPE):
             # Found by name, update player_id to the actual ID found
             player_id = p['player_id']
 
-        if delete_player(player_id):
+        if await delete_player(player_id):
             await update.message.reply_text(f"✅ Player *{esc(p['name'])}* (`{player_id}`) has been removed.", parse_mode="Markdown")
         else:
             await update.message.reply_text("❌ Failed to remove player (DB Error).")
@@ -1061,7 +1061,7 @@ async def add_mod_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     try:
         target_id = int(context.args[0])
-        add_mod(target_id)
+        await add_mod(target_id)
         await update.message.reply_text(f"✅ User `{target_id}` is now a Moderator.", parse_mode="Markdown")
     except (IndexError, ValueError):
         await update.message.reply_text("Usage: `/mod <user_id>`", parse_mode="Markdown")
@@ -1075,7 +1075,7 @@ async def remove_mod_handler(update: Update, context: ContextTypes.DEFAULT_TYPE)
     
     try:
         target_id = int(context.args[0])
-        remove_mod(target_id)
+        await remove_mod(target_id)
         await update.message.reply_text(f"✅ User `{target_id}` removed from Moderators.", parse_mode="Markdown")
     except (IndexError, ValueError):
         await update.message.reply_text("Usage: `/unmod <user_id>`", parse_mode="Markdown")
@@ -1378,7 +1378,7 @@ async def migrate_roles_command(update: Update, context: ContextTypes.DEFAULT_TY
     from database import get_all_players, save_player
     from config import POSITIONS_T20, POSITIONS_TEST
     
-    players = get_all_players()
+    players = await get_all_players()
     total_updated = 0
     cleaned_top_count = 0
     
@@ -1738,7 +1738,7 @@ async def non_role_fix(update: Update, context: ContextTypes.DEFAULT_TYPE):
     from config import ROLE_STATS_MAP
     import random
 
-    players = get_all_players()
+    players = await get_all_players()
     count = 0
     updated_players = 0
     
@@ -2080,7 +2080,7 @@ async def player_list_ipl(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     from database import get_all_players
     from telegram import InlineKeyboardButton, InlineKeyboardMarkup
-    players = get_all_players()
+    players = await get_all_players()
     
     # Filter for IPL Players (Must have ipl_roles)
     ipl_players = [p for p in players if p.get('ipl_roles')]
@@ -2096,7 +2096,7 @@ async def show_player_page_ipl(update: Update, context: ContextTypes.DEFAULT_TYP
     # Fetch if not passed (for callback)
     if players is None:
         from database import get_all_players
-        all_p = get_all_players()
+        all_p = await get_all_players()
         players = [p for p in all_p if p.get('ipl_roles')]
 
     # Prepare Lines
@@ -2266,8 +2266,7 @@ async def remove_player_fifa(update: Update, context: ContextTypes.DEFAULT_TYPE)
         return
         
     from database import delete_player
-    
-    deleted = delete_player(text)
+    deleted = await delete_player(text)
     
     if deleted:
         await update.message.reply_text(f"✅ Player '{text}' removed from database.")
