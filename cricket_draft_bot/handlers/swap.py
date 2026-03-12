@@ -266,11 +266,6 @@ async def handle_swap_pick2(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         keyboard = [[InlineKeyboardButton("🚀 READY", callback_data=f"ready_{match.match_id}")]]
 
-        # Re-add trade button if still available
-        total_trades = getattr(match.team_a, 'trades_used', 0) + getattr(match.team_b, 'trades_used', 0)
-        if total_trades < 1:
-            keyboard.append([InlineKeyboardButton("🔄 Trade (1 Left)", callback_data=f"trade_start_{match.match_id}")])
-
         # Keep Swap button visible if EITHER team still has their swap unconsumed
         a_swaps = getattr(match.team_a, 'swaps_used', 0)
         b_swaps = getattr(match.team_b, 'swaps_used', 0)
