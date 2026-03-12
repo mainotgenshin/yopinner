@@ -117,7 +117,10 @@ async def handle_swap_dm_start(update: Update, context: ContextTypes.DEFAULT_TYP
 async def handle_swap_pick1(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """User picked the first player. Ask for the second."""
     query = update.callback_query
-    await query.answer()
+    try:
+        await query.answer()
+    except Exception:
+        pass  # Query may have timed out (e.g. stale callback after bot restart)
 
     # Format: swap1|<match_id>|<player_id>
     parts = query.data.split("|")
@@ -180,7 +183,10 @@ async def handle_swap_pick1(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def handle_swap_pick2(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """User picked the second player. Execute the position swap."""
     query = update.callback_query
-    await query.answer()
+    try:
+        await query.answer()
+    except Exception:
+        pass  # Query may have timed out (e.g. stale callback after bot restart)
 
     # Format: swap2|<match_id>|<p1_id>|<p2_id>
     parts = query.data.split("|")
