@@ -40,7 +40,8 @@ class Team:
     replacements_remaining: int = 1
     is_ready: bool = False
     score: int = 0
-    trades_used: int = 0 # Track trades used (Limit 1)
+    trades_used: int = 0   # Track trades used (Limit 1 per match)
+    swaps_used: int = 0    # Track position swaps used (Limit 1 per team)
 
     # __post_init__ removed to allow dynamic slots via constructor
     
