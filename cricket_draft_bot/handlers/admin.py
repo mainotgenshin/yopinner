@@ -566,7 +566,8 @@ async def player_list(update: Update, context: ContextTypes.DEFAULT_TYPE):
         for p in grouped[nation]:
             # Check if provider exists (scraped/seeded) or old ID logic
             mapped = "✅" if p.get('api_reference', {}).get('provider') or p.get('api_reference', {}).get('international_id') else "❌"
-            lines.append(f"• {esc(p['name'])} (`{p['player_id']}`) - {', '.join(p['roles'][:2])} - Map: {mapped}")
+            roles = p.get('roles', p.get('positions', []))
+            lines.append(f"• {esc(p['name'])} (`{p['player_id']}`) - {', '.join(roles[:2]) if roles else 'N/A'} - Map: {mapped}")
         lines.append("") # Spacer
         
     # Pagination
