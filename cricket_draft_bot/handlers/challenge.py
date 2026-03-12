@@ -86,18 +86,22 @@ async def join_challenge(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def challenge_ipl(update: Update, context: ContextTypes.DEFAULT_TYPE):
     from config import DRAFT_BANNER_IPL
+    from telegram.error import BadRequest
     key = f"join_IPL_{update.effective_user.id}"
     keyboard = [[InlineKeyboardButton("⚔️ Join Game", callback_data=key)]]
+    caption = f"🏏 **IPL Challenge!**\nUser: {update.effective_user.first_name}\nMode: IPL\nWaiting for opponent..."
     try:
-        await update.effective_message.reply_photo(
+        await context.bot.send_photo(
+            chat_id=update.effective_chat.id,
             photo=DRAFT_BANNER_IPL,
-            caption=f"🏏 **IPL Challenge!**\nUser: {update.effective_user.first_name}\nMode: IPL\nWaiting for opponent...",
+            caption=caption,
             reply_markup=InlineKeyboardMarkup(keyboard),
             parse_mode="Markdown"
         )
-    except Exception as e:
-        await update.effective_message.reply_text(
-            f"🏏 **IPL Challenge!**\nUser: {update.effective_user.first_name}\nMode: IPL\nWaiting for opponent...\n*(Enable media permissions in this chat to see banners)*",
+    except Exception:
+        await context.bot.send_message(
+            chat_id=update.effective_chat.id,
+            text=caption + "\n*(Enable media permissions in this chat to see banners)*",
             reply_markup=InlineKeyboardMarkup(keyboard),
             parse_mode="Markdown"
         )
@@ -106,16 +110,19 @@ async def challenge_intl(update: Update, context: ContextTypes.DEFAULT_TYPE):
     from config import DRAFT_BANNER_INTL
     key = f"join_INTL_{update.effective_user.id}"
     keyboard = [[InlineKeyboardButton("⚔️ Join Game", callback_data=key)]]
+    caption = f"🏏 **International Challenge!**\nUser: {update.effective_user.first_name}\nMode: International\nWaiting for opponent..."
     try:
-        await update.effective_message.reply_photo(
+        await context.bot.send_photo(
+            chat_id=update.effective_chat.id,
             photo=DRAFT_BANNER_INTL,
-            caption=f"🏏 **International Challenge!**\nUser: {update.effective_user.first_name}\nMode: International\nWaiting for opponent...",
+            caption=caption,
             reply_markup=InlineKeyboardMarkup(keyboard),
             parse_mode="Markdown"
         )
-    except Exception as e:
-        await update.effective_message.reply_text(
-            f"🏏 **International Challenge!**\nUser: {update.effective_user.first_name}\nMode: International\nWaiting for opponent...\n*(Enable media permissions in this chat to see banners)*",
+    except Exception:
+        await context.bot.send_message(
+            chat_id=update.effective_chat.id,
+            text=caption + "\n*(Enable media permissions in this chat to see banners)*",
             reply_markup=InlineKeyboardMarkup(keyboard),
             parse_mode="Markdown"
         )
@@ -124,16 +131,19 @@ async def challenge_fifa(update: Update, context: ContextTypes.DEFAULT_TYPE):
     from config import DRAFT_BANNER_FIFA
     key = f"join_FIFA_{update.effective_user.id}"
     keyboard = [[InlineKeyboardButton("⚔️ Join Game", callback_data=key)]]
+    caption = f"⚽ **FIFA Challenge!**\nUser: {update.effective_user.first_name}\nMode: FIFA\nWaiting for opponent..."
     try:
-        await update.effective_message.reply_photo(
+        await context.bot.send_photo(
+            chat_id=update.effective_chat.id,
             photo=DRAFT_BANNER_FIFA,
-            caption=f"⚽ **FIFA Challenge!**\nUser: {update.effective_user.first_name}\nMode: FIFA\nWaiting for opponent...",
+            caption=caption,
             reply_markup=InlineKeyboardMarkup(keyboard),
             parse_mode="Markdown"
         )
-    except Exception as e:
-        await update.effective_message.reply_text(
-            f"⚽ **FIFA Challenge!**\nUser: {update.effective_user.first_name}\nMode: FIFA\nWaiting for opponent...\n*(Enable media permissions in this chat to see banners)*",
+    except Exception:
+        await context.bot.send_message(
+            chat_id=update.effective_chat.id,
+            text=caption + "\n*(Enable media permissions in this chat to see banners)*",
             reply_markup=InlineKeyboardMarkup(keyboard),
             parse_mode="Markdown"
         )
