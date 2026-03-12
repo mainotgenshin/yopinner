@@ -282,6 +282,12 @@ async def handle_assign(update: Update, context: ContextTypes.DEFAULT_TYPE, matc
         if total_trades < 1:
             keyboard.append([InlineKeyboardButton("🔄 Trade (1 Left)", callback_data=f"trade_start_{match.match_id}")])
 
+        # Add Swap button — each team independently gets 1 swap
+        a_swaps = getattr(match.team_a, 'swaps_used', 0)
+        b_swaps = getattr(match.team_b, 'swaps_used', 0)
+        if a_swaps < 1 or b_swaps < 1:
+            keyboard.append([InlineKeyboardButton("🔀 Swap Positions (1 Left)", callback_data=f"swapstart_{match.match_id}")])
+
         # Banner for Final Screen (To keep Single Pin)
         # Determine Banner
         if "IPL" in match.mode:
