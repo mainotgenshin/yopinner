@@ -57,7 +57,8 @@ async def save_match_state(match: Match):
             "replacements_remaining": getattr(team, 'replacements_remaining', 1),
             "is_ready": team.is_ready,
             "score": team.score,
-            "trades_used": getattr(team, 'trades_used', 0)
+            "trades_used": getattr(team, 'trades_used', 0),
+            "swaps_used": getattr(team, 'swaps_used', 0)
         }
 
     state_data = {
@@ -89,6 +90,7 @@ async def load_match_state(match_id: str) -> Optional[Match]:
         t.is_ready = d.get('is_ready', False)
         t.score = d.get('score', 0)
         t.trades_used = d.get('trades_used', 0)
+        t.swaps_used = d.get('swaps_used', 0)
         # Reconstruct slots
         for slot, pid in d['slots'].items():
             if pid:
