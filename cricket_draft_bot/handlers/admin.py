@@ -2216,10 +2216,10 @@ async def handle_broadcast(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chats = await get_all_chats()
 
     if not chats:
-        await update.message.reply_text("\u274c No active chats found in database.")
+        await update.message.reply_text("❌ No active chats found in database.")
         return
 
-    status_msg = await update.message.reply_text(f"\ud83d\udce2 Broadcasting to {len(chats)} chats in the background\u2026")
+    status_msg = await update.message.reply_text(f"📢 Broadcasting to {len(chats)} chats in the background...")
 
     import asyncio, re
     from telegram.error import Forbidden
@@ -2230,7 +2230,7 @@ async def handle_broadcast(update: Update, context: ContextTypes.DEFAULT_TYPE):
         html_msg = re.sub(r'\*\*(.*?)\*\*', r'<b>\1</b>', html_msg)
         html_msg = re.sub(r'__(.*?)__', r'<i>\1</i>', html_msg)
         html_msg = html_msg.replace('<br>', '\n')
-        text_out = f"\ud83d\udce2 <b>Announcement</b>\n\n{html_msg}"
+        text_out = f"📢 <b>Announcement</b>\n\n{html_msg}"
         for chat_id in chats:
             try:
                 await context.bot.send_message(chat_id=chat_id, text=text_out, parse_mode="HTML")
@@ -2243,7 +2243,7 @@ async def handle_broadcast(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 logger.warning(f"Broadcast failed for {chat_id}: {e}")
                 failed += 1
         try:
-            await status_msg.edit_text(f"\u2705 Broadcast Complete.\nSent: {success} \u2705  |  Failed/Kicked: {failed} \u274c")
+            await status_msg.edit_text(f"✅ Broadcast Complete.\nSent: {success} ✅  |  Failed/Kicked: {failed} ❌")
         except Exception:
             pass
 
