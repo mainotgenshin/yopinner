@@ -193,8 +193,9 @@ if __name__ == '__main__':
     application.add_handler(CommandHandler('addplayerfifa', add_player_fifa)) # Alias
     application.add_handler(CommandHandler('addplayer', add_player)) # Alias for add_player
 
-    from handlers.admin import handle_broadcast
+    from handlers.admin import handle_broadcast, handle_banner
     application.add_handler(CommandHandler('broadcast', handle_broadcast))
+    application.add_handler(CommandHandler('banner', handle_banner))
 
     # Game
     # Game
