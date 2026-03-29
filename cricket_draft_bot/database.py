@@ -258,3 +258,19 @@ async def update_user_stats(user_id: int, name: str, result: str):
 async def get_user_stats(user_id: int) -> Optional[Dict[str, Any]]:
     db = get_db()
     return await db.users.find_one({"user_id": user_id})
+
+# ── Banner helpers ──────────────────────────────────────────────────────────
+async def get_banner(mode: str) -> Optional[str]:
+    """Return the overridden banner URL for 'mode' (ipl/intl/fifa), or None."""
+    db = get_db()
+    doc = await db.config.find_one({"key": f"banner_{mode}"})
+    return doc["value"] if doc else None
+
+async def set_banner(mode: str, url: str) -> None:
+    """Persist a banner URL override for the given mode."""
+    db = get_db()
+    await db.config.update_one(
+        {"key": f"banner_{mode}"},
+        {"$set": {"key": f"banner_{mode}", "value": url}},
+        upsert=True
+    )
