@@ -283,19 +283,18 @@ async def handle_join(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     # Start Draft (Update the message)
     from handlers.draft import format_draft_board, update_draft_message
-    from config import DRAFT_BANNER_INTL, DRAFT_BANNER_IPL, DRAFT_BANNER_FIFA
-    
+    from utils.banners import get_banner_for_mode
+
     board_text = format_draft_board(match)
     keyboard = [[InlineKeyboardButton("🎲 Draw Player", callback_data=f"draw_{match.match_id}")]]
-    
-    # Determine Banner
+
     if "IPL" in mode:
-        banner = DRAFT_BANNER_IPL
+        banner = await get_banner_for_mode("ipl")
     elif mode == "FIFA":
-        banner = DRAFT_BANNER_FIFA
+        banner = await get_banner_for_mode("fifa")
     else:
-        banner = DRAFT_BANNER_INTL
-        
+        banner = await get_banner_for_mode("intl")
+
     # Edit the existing message
     await update_draft_message(update, context, match, board_text, keyboard, media=banner)
 
