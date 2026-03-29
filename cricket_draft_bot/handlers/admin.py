@@ -2149,13 +2149,64 @@ async def handle_playerlist_ipl_callback(update: Update, context: ContextTypes.D
     page = int(data.split('_')[1])
     await show_player_page_ipl(update, context, page)
 
+async def handle_banner(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """
+    /banner <mode> <url>
+    mode: ipl | intl | fifa | all
+    Changes the draft screen banner image for one or all modes.
+    Persisted in MongoDB so it survives restarts.
+    """
+    if not await check_admin(update): return
+
+    args = context.args
+    if len(args) < 2:
+        await update.message.reply_text(
+            "ℹ️ **Usage:** `/banner <mode> <url>`\n\n"
+            "**Modes:** `ipl` | `intl` | `fifa` | `all`\n\n"
+            "**Examples:**\n"
+            "`/banner ipl https://example.com/ipl.jpg`\n"
+            "`/banner all https://example.com/maintenance.jpg`",
+            parse_mode="Markdown"
+        )
+        return
+
+    mode = args[0].lower()
+    url = args[1].strip()
+
+    valid_modes = {"ipl", "intl", "fifa", "all"}
+    if mode not in valid_modes:
+        await update.message.reply_text(f"❌ Invalid mode `{mode}`. Use: `ipl`, `intl`, `fifa`, or `all`.", parse_mode="Markdown")
+        return
+
+    from database import set_banner
+    if mode == "all":
+        for m in ("ipl", "intl", "fifa"):
+            await set_banner(m, url)
+        await update.message.reply_text(f"✅ All banners updated!\nURL: `{url}`", parse_mode="Markdown")
+    else:
+        await set_banner(mode, url)
+        await update.message.reply_text(f"✅ `{mode.upper()}` banner updated!\nURL: `{url}`", parse_mode="Markdown")
+
+
+async def get_current_banner(mode: str) -> str:
+    """
+    Returns the active banner URL for the given mode ('ipl', 'intl', 'fifa').
+    Checks MongoDB override first, falls back to config defaults.
+    """
+    from database import get_banner
+    from config import DRAFT_BANNER_IPL, DRAFT_BANNER_INTL, DRAFT_BANNER_FIFA
+    defaults = {"ipl": DRAFT_BANNER_IPL, "intl": DRAFT_BANNER_INTL, "fifa": DRAFT_BANNER_FIFA}
+    override = await get_banner(mode)
+    return override if override else defaults.get(mode, DRAFT_BANNER_INTL)
+
+
 async def handle_broadcast(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """
     /broadcast Message content here...
-    Sends message to all active groups.
+    Sends message to all active groups in the background (non-blocking).
     """
     if not await check_admin(update): return
-    
+
     msg = update.message.text.replace('/broadcast', '').strip()
     if not msg:
         await update.message.reply_text("Usage: /broadcast [Your Message]")
@@ -2163,42 +2214,40 @@ async def handle_broadcast(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     from database import get_all_chats, get_db
     chats = await get_all_chats()
-    
+
     if not chats:
-        await update.message.reply_text("❌ No active chats found in database.")
+        await update.message.reply_text("\u274c No active chats found in database.")
         return
-        
-    await update.message.reply_text(f"📢 Starting broadcast to {len(chats)} chats...")
-    
-    success = 0
-    failed = 0
-    
-    import asyncio
+
+    status_msg = await update.message.reply_text(f"\ud83d\udce2 Broadcasting to {len(chats)} chats in the background\u2026")
+
+    import asyncio, re
     from telegram.error import Forbidden
-    
-    for chat_id in chats:
+
+    async def _do_broadcast():
+        success = failed = 0
+        html_msg = msg.replace('\n', '<br>')
+        html_msg = re.sub(r'\*\*(.*?)\*\*', r'<b>\1</b>', html_msg)
+        html_msg = re.sub(r'__(.*?)__', r'<i>\1</i>', html_msg)
+        html_msg = html_msg.replace('<br>', '\n')
+        text_out = f"\ud83d\udce2 <b>Announcement</b>\n\n{html_msg}"
+        for chat_id in chats:
+            try:
+                await context.bot.send_message(chat_id=chat_id, text=text_out, parse_mode="HTML")
+                success += 1
+                await asyncio.sleep(0.05)  # ~20 msg/sec
+            except Forbidden:
+                await get_db().chats.delete_one({"chat_id": chat_id})
+                failed += 1
+            except Exception as e:
+                logger.warning(f"Broadcast failed for {chat_id}: {e}")
+                failed += 1
         try:
-            # HTML parse mode is much safer for user-input broadcasts because it ignores unescaped markdown characters.
-            # We convert basic markdown back to HTML to support user intent if needed, or just let them use raw text/html.
-            # For simplicity and safety, we will just use HTML parsing.
-            import re
-            html_msg = msg.replace('\n', '<br>')
-            html_msg = re.sub(r'\*\*(.*?)\*\*', r'<b>\1</b>', html_msg)
-            html_msg = re.sub(r'__(.*?)__', r'<i>\1</i>', html_msg)
-            html_msg = html_msg.replace('<br>', '\n')
-            
-            await context.bot.send_message(chat_id=chat_id, text=f"📢 <b>Announcement</b>\n\n{html_msg}", parse_mode="HTML")
-            success += 1
-            await asyncio.sleep(0.05) # Throttle to 20/sec
-        except Forbidden:
-            # Bot kicked from group, remove from DB
-            await get_db().chats.delete_one({"chat_id": chat_id})
-            failed += 1
-        except Exception as e:
-            logger.warning(f"Broadcast failed for {chat_id}: {e}")
-            failed += 1
-            
-    await update.message.reply_text(f"✅ Broadcast Complete.\nSuccess: {success}\nFailed/Kicked: {failed}")
+            await status_msg.edit_text(f"\u2705 Broadcast Complete.\nSent: {success} \u2705  |  Failed/Kicked: {failed} \u274c")
+        except Exception:
+            pass
+
+    asyncio.ensure_future(_do_broadcast())
 
 async def update_image_fifa(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """
