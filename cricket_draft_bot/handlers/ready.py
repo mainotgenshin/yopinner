@@ -96,13 +96,34 @@ async def handle_ready(update: Update, context: ContextTypes.DEFAULT_TYPE, match
         except Exception as e:
             logger.error(f"Failed to edit simulation result into banner: {e}")
             # Fallback to sending new message if edit fails
-            await context.bot.send_message(chat_id=match.chat_id, text=result_text, parse_mode="Markdown")
+            from telegram.error import RetryAfter
+            import asyncio
+            try:
+                await context.bot.send_message(chat_id=match.chat_id, text=result_text, parse_mode="Markdown")
+            except RetryAfter as retry_err:
+                wait = retry_err.retry_after + 1
+                logger.warning(f"Flood control on result send, retrying in {wait}s")
+                await asyncio.sleep(wait)
+                try:
+                    await context.bot.send_message(chat_id=match.chat_id, text=result_text, parse_mode="Markdown")
+                except Exception as final_e:
+                    logger.error(f"Final retry also failed sending result: {final_e}")
+            except Exception as send_e:
+                logger.error(f"Fallback send_message also failed: {send_e}")
     else:
-        # Update message to show who is ready
+        # Update message to show who is ready, keeping the full board visible
+        from handlers.draft import format_draft_board
         a_status = "✅" if match.team_a.is_ready else "⏳"
         b_status = "✅" if match.team_b.is_ready else "⏳"
-        
-        text = f"✅ *Draft Complete!*\n\n{esc(match.team_a.owner_name)}: {a_status}\n{esc(match.team_b.owner_name)}: {b_status}\n\nWaiting for both..."
+        board = format_draft_board(match, include_turn=False)
+
+        text = (
+            f"{board}\n\n"
+            f"✅ *Draft Complete!*\n\n"
+            f"{esc(match.team_a.owner_name)}: {a_status}\n"
+            f"{esc(match.team_b.owner_name)}: {b_status}\n\n"
+            f"Waiting for both..."
+        )
         
         # Build Keyboard
         row1 = [InlineKeyboardButton("🚀 READY", callback_data=f"ready_{match.match_id}")]
