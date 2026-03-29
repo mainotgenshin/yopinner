@@ -103,7 +103,7 @@ async def handle_draft_callback(update: Update, context: ContextTypes.DEFAULT_TY
             PROCESSING_LOCKS.remove(match_id)
 
 
-def format_draft_board(match: Match) -> str:
+def format_draft_board(match: Match, include_turn: bool = True) -> str:
     """Creates the text for the draft board (Static UI Rule 1)."""
     def format_team(team):
         lines = [f"🔵 {esc(team.owner_name)}" if team == match.team_a else f"🔴 {esc(team.owner_name)}"]
@@ -114,10 +114,11 @@ def format_draft_board(match: Match) -> str:
 
     board = f"🏁 *Drafting Phase*\n\n"
     board += format_team(match.team_a) + "\n\n"
-    board += format_team(match.team_b) + "\n\n"
-    
-    current_name = match.team_a.owner_name if match.current_turn == match.team_a.owner_id else match.team_b.owner_name
-    board += f"🎯 *Turn:* {esc(current_name)}"
+    board += format_team(match.team_b)
+
+    if include_turn:
+        current_name = match.team_a.owner_name if match.current_turn == match.team_a.owner_id else match.team_b.owner_name
+        board += f"\n\n🎯 *Turn:* {esc(current_name)}"
 
     return board
 
@@ -293,7 +294,7 @@ async def handle_assign(update: Update, context: ContextTypes.DEFAULT_TYPE, matc
         else:
             banner = DRAFT_BANNER_INTL
             
-        await update_draft_message(update, context, match, f"{board_text}\n\n✅ **Draft Complete!** Waiting for Ready...", keyboard, media=banner)
+        await update_draft_message(update, context, match, f"{format_draft_board(match, include_turn=False)}\n\n✅ *Draft Complete!* Waiting for Ready...", keyboard, media=banner)
         return
 
     # Switch Turn
