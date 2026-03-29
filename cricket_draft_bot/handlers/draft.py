@@ -6,6 +6,7 @@ from game.state import load_match_state, save_match_state, draw_player_for_turn,
 from game.models import Match
 from utils.validators import validate_draft_action
 from config import MAX_REDRAWS, POSITIONS_T20, POSITIONS_TEST, POSITIONS_FIFA, DRAFT_BANNER_URL, DRAFT_BANNER_INTL, DRAFT_BANNER_IPL, DRAFT_BANNER_FIFA
+from utils.banners import get_banner_for_match, get_banner_for_mode
 from telegram.helpers import escape_markdown
 
 def esc(t):
@@ -285,15 +286,7 @@ async def handle_assign(update: Update, context: ContextTypes.DEFAULT_TYPE, matc
             bot_uname = context.bot.username
             swap_url = f"https://t.me/{bot_uname}?start=swap_{match.match_id}"
             keyboard.append([InlineKeyboardButton("🔀 Swap Positions (1 Left)", url=swap_url)])
-        # Banner for Final Screen (To keep Single Pin)
-        # Determine Banner
-        if "IPL" in match.mode:
-            banner = DRAFT_BANNER_IPL
-        elif match.mode == "FIFA":
-            banner = DRAFT_BANNER_FIFA
-        else:
-            banner = DRAFT_BANNER_INTL
-            
+        banner = await get_banner_for_match(match)
         await update_draft_message(update, context, match, f"{format_draft_board(match, include_turn=False)}\n\n✅ *Draft Complete!* Waiting for Ready...", keyboard, media=banner)
         return
 
@@ -305,15 +298,7 @@ async def handle_assign(update: Update, context: ContextTypes.DEFAULT_TYPE, matc
     board_text = format_draft_board(match)
     keyboard = [[InlineKeyboardButton("🎲 Draw Player", callback_data=f"draw_{match.match_id}")]]
     
-    # Determine Banner
-    if "IPL" in match.mode:
-        banner = DRAFT_BANNER_IPL
-    elif match.mode == "FIFA":
-        banner = DRAFT_BANNER_FIFA
-    else:
-        banner = DRAFT_BANNER_INTL
-    
-    # Update
+    banner = await get_banner_for_match(match)
     await update_draft_message(update, context, match, board_text, keyboard, media=banner)
 
 
@@ -345,15 +330,7 @@ async def handle_redraw(update: Update, context: ContextTypes.DEFAULT_TYPE, matc
         board_text = format_draft_board(match)
         keyboard = [[InlineKeyboardButton("🎲 Draw Player", callback_data=f"draw_{match.match_id}")]]
         
-        # Determine Banner
-        if "IPL" in match.mode:
-            banner = DRAFT_BANNER_IPL
-        elif match.mode == "FIFA":
-            banner = DRAFT_BANNER_FIFA
-        else:
-            banner = DRAFT_BANNER_INTL
-
-        # Update Board (Restore Banner)
+        banner = await get_banner_for_match(match)
         await update_draft_message(update, context, match, f"{board_text}\n\n⏩ {esc(current_team.owner_name)} Skipped! Turn Consumed.", keyboard, media=banner)
         
     else:
@@ -488,13 +465,7 @@ async def handle_replace_exec(update: Update, context: ContextTypes.DEFAULT_TYPE
 
     
     
-    if "IPL" in match.mode:
-        banner = DRAFT_BANNER_IPL
-    elif match.mode == "FIFA":
-        banner = DRAFT_BANNER_FIFA
-    else:
-        banner = DRAFT_BANNER_INTL
-    
+    banner = await get_banner_for_match(match)
     await update_draft_message(update, context, match, f"{board_text}\n\n♻️ {esc(current_team.owner_name)} replaced {esc(old_player.name)} with {esc(new_player.name)}!", keyboard, media=banner)
 
 async def handle_replace_cancel(update: Update, context: ContextTypes.DEFAULT_TYPE, match: Match):
