@@ -40,23 +40,22 @@ def _get_user_team(match, user_id):
     return None
 
 
-def _build_squad_buttons(team, cb_prefix, exclude_player_id=None):
-    """Return inline keyboard rows for each filled slot, excluding one player.
-    
-    Uses | as separator between parts so any player ID format works
-    (cricket PL_NAME or FIFA IDs that don't contain |).
+def _build_squad_buttons(team, cb_prefix, exclude_slot=None):
+    """Return inline keyboard rows for each filled slot, keyed by SLOT NAME.
+
+    Using slot names (e.g. 'ST/CF', 'Captain') keeps callback_data short and
+    avoids the 64-byte Telegram limit that truncated long FIFA player IDs like
+    'Ronaldo Luis Nazario de Lima', making player lookup fail silently.
     """
     buttons = []
     for slot_name, player in team.slots.items():
         if not player:
             continue
-        if exclude_player_id and player.player_id == exclude_player_id:
+        if exclude_slot and slot_name == exclude_slot:
             continue
         label = f"{player.name}  ({slot_name})"
-        cb = f"{cb_prefix}|{player.player_id}"
-        # Telegram callback_data limit is 64 bytes
-        if len(cb.encode()) > 64:
-            cb = cb[:64]
+        cb = f"{cb_prefix}|{slot_name}"
+        # Slot names are always short — no truncation needed
         buttons.append([InlineKeyboardButton(label, callback_data=cb)])
     return buttons
 
@@ -122,14 +121,14 @@ async def handle_swap_pick1(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except Exception:
         pass  # Query may have timed out (e.g. stale callback after bot restart)
 
-    # Format: swap1|<match_id>|<player_id>
+    # Format: swap1|<match_id>|<slot_name>
     parts = query.data.split("|")
     if len(parts) < 3:
         await query.edit_message_text("⛔ Invalid selection. Please try again.")
         return
 
     match_id = parts[1]
-    p1_id = parts[2]
+    p1_slot = parts[2]  # This is the slot name now, not the player_id
 
     user_id = query.from_user.id
     match = await load_match_state(match_id)
@@ -146,21 +145,16 @@ async def handle_swap_pick1(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.edit_message_text("⛔ You already used your swap.")
         return
 
-    # Find the chosen player's current slot
-    p1_slot = None
-    p1_name = p1_id
-    for slot, player in team.slots.items():
-        if player and player.player_id == p1_id:
-            p1_slot = slot
-            p1_name = player.name
-            break
-
-    if not p1_slot:
+    # Look up the player by slot name
+    p1_obj = team.slots.get(p1_slot)
+    if not p1_obj:
         await query.edit_message_text("⛔ Player not found in your squad.")
         return
 
-    # Build step 2 buttons — format: swap2|<match_id>|<p1_id>|<p2_id>
-    buttons = _build_squad_buttons(team, f"swap2|{match_id}|{p1_id}", exclude_player_id=p1_id)
+    p1_name = p1_obj.name
+
+    # Build step 2 buttons — format: swap2|<match_id>|<p1_slot>|<p2_slot>
+    buttons = _build_squad_buttons(team, f"swap2|{match_id}|{p1_slot}", exclude_slot=p1_slot)
     if not buttons:
         await query.edit_message_text("⛔ No other players to swap with.")
         return
@@ -188,15 +182,15 @@ async def handle_swap_pick2(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except Exception:
         pass  # Query may have timed out (e.g. stale callback after bot restart)
 
-    # Format: swap2|<match_id>|<p1_id>|<p2_id>
+    # Format: swap2|<match_id>|<p1_slot>|<p2_slot>
     parts = query.data.split("|")
     if len(parts) < 4:
         await query.edit_message_text("⛔ Invalid selection. Please try again.")
         return
 
     match_id = parts[1]
-    p1_id = parts[2]
-    p2_id = parts[3]
+    p1_slot = parts[2]  # Slot name for player 1
+    p2_slot = parts[3]  # Slot name for player 2
 
     user_id = query.from_user.id
     match = await load_match_state(match_id)
@@ -217,25 +211,17 @@ async def handle_swap_pick2(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.edit_message_text("⛔ You already used your swap.")
         return
 
-    # Locate both players and their slots
-    slot_of_p1 = slot_of_p2 = None
-    p1_obj = p2_obj = None
-    for slot, player in team.slots.items():
-        if player:
-            if player.player_id == p1_id:
-                slot_of_p1 = slot
-                p1_obj = player
-            elif player.player_id == p2_id:
-                slot_of_p2 = slot
-                p2_obj = player
+    # Look up both players by their slot name
+    p1_obj = team.slots.get(p1_slot)
+    p2_obj = team.slots.get(p2_slot)
 
-    if not slot_of_p1 or not slot_of_p2:
+    if not p1_obj or not p2_obj:
         await query.edit_message_text("⛔ Could not find one or both players in your squad. Please try again.")
         return
 
     # Execute the swap
-    team.slots[slot_of_p1] = p2_obj
-    team.slots[slot_of_p2] = p1_obj
+    team.slots[p1_slot] = p2_obj
+    team.slots[p2_slot] = p1_obj
     team.swaps_used = 1
 
     await save_match_state(match)
@@ -243,8 +229,8 @@ async def handle_swap_pick2(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # Confirm to user in DM
     await query.edit_message_text(
         f"✅ *Swap Complete!*\n\n"
-        f"• *{esc(p1_obj.name)}* is now in the *{slot_of_p2}* slot\n"
-        f"• *{esc(p2_obj.name)}* is now in the *{slot_of_p1}* slot\n\n"
+        f"• *{esc(p1_obj.name)}* is now in the *{p2_slot}* slot\n"
+        f"• *{esc(p2_obj.name)}* is now in the *{p1_slot}* slot\n\n"
         f"Head back to the group to click *🚀 READY* when you're set!",
         parse_mode="Markdown"
     )
@@ -254,7 +240,7 @@ async def handle_swap_pick2(update: Update, context: ContextTypes.DEFAULT_TYPE):
         from handlers.draft import format_draft_board
         from config import DRAFT_BANNER_IPL, DRAFT_BANNER_INTL, DRAFT_BANNER_FIFA
 
-        board_text = format_draft_board(match)
+        board_text = format_draft_board(match, include_turn=False)
         a_status = "✅" if match.team_a.is_ready else "⏳"
         b_status = "✅" if match.team_b.is_ready else "⏳"
         ready_text = (
