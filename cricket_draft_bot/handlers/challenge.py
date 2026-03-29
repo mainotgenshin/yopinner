@@ -85,15 +85,16 @@ async def join_challenge(update: Update, context: ContextTypes.DEFAULT_TYPE):
     pass
 
 async def challenge_ipl(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    from config import DRAFT_BANNER_IPL
+    from utils.banners import get_banner_for_mode
     from telegram.error import BadRequest
     key = f"join_IPL_{update.effective_user.id}"
     keyboard = [[InlineKeyboardButton("⚔️ Join Game", callback_data=key)]]
     caption = f"🏏 **IPL Challenge!**\nUser: {update.effective_user.first_name}\nMode: IPL\nWaiting for opponent..."
+    banner = await get_banner_for_mode("ipl")
     try:
         await context.bot.send_photo(
             chat_id=update.effective_chat.id,
-            photo=DRAFT_BANNER_IPL,
+            photo=banner,
             caption=caption,
             reply_markup=InlineKeyboardMarkup(keyboard),
             parse_mode="Markdown"
@@ -107,14 +108,15 @@ async def challenge_ipl(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
 
 async def challenge_intl(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    from config import DRAFT_BANNER_INTL
+    from utils.banners import get_banner_for_mode
     key = f"join_INTL_{update.effective_user.id}"
     keyboard = [[InlineKeyboardButton("⚔️ Join Game", callback_data=key)]]
     caption = f"🏏 **International Challenge!**\nUser: {update.effective_user.first_name}\nMode: International\nWaiting for opponent..."
+    banner = await get_banner_for_mode("intl")
     try:
         await context.bot.send_photo(
             chat_id=update.effective_chat.id,
-            photo=DRAFT_BANNER_INTL,
+            photo=banner,
             caption=caption,
             reply_markup=InlineKeyboardMarkup(keyboard),
             parse_mode="Markdown"
@@ -128,14 +130,15 @@ async def challenge_intl(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
 
 async def challenge_fifa(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    from config import DRAFT_BANNER_FIFA
+    from utils.banners import get_banner_for_mode
     key = f"join_FIFA_{update.effective_user.id}"
     keyboard = [[InlineKeyboardButton("⚔️ Join Game", callback_data=key)]]
     caption = f"⚽ **FIFA Challenge!**\nUser: {update.effective_user.first_name}\nMode: FIFA\nWaiting for opponent..."
+    banner = await get_banner_for_mode("fifa")
     try:
         await context.bot.send_photo(
             chat_id=update.effective_chat.id,
-            photo=DRAFT_BANNER_FIFA,
+            photo=banner,
             caption=caption,
             reply_markup=InlineKeyboardMarkup(keyboard),
             parse_mode="Markdown"
@@ -158,31 +161,27 @@ async def challenge_unified(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     mode_arg = context.args[0].lower()
     
-    from config import DRAFT_BANNER_INTL, DRAFT_BANNER_IPL, DRAFT_BANNER_FIFA
-    
-    banner = DRAFT_BANNER_INTL # Default
-    
+    from utils.banners import get_banner_for_mode
+    banner = await get_banner_for_mode("intl")  # default
+
     if mode_arg == 'test':
         await update.effective_message.reply_text("🚧 Test Mode is temporarily disabled. Please use `intl`.")
         return
     elif mode_arg in ['t20', 'ipl']:
-        # Check if enabled
         from database import get_db
         db = get_db()
         config = await db.system_config.find_one({"key": "ipl_mode"})
-        
         if config and config.get("enabled"):
              real_mode = "IPL"
-             banner = DRAFT_BANNER_IPL
+             banner = await get_banner_for_mode("ipl")
         else:
              await update.effective_message.reply_text("🚧 IPL Mode is currently disabled/under development.")
              return
     elif mode_arg in ['intl', 'international']:
         real_mode = "International"
-        banner = DRAFT_BANNER_INTL
     elif mode_arg in ['fifa', 'football']:
         real_mode = "FIFA"
-        banner = DRAFT_BANNER_FIFA
+        banner = await get_banner_for_mode("fifa")
     else:
         await update.effective_message.reply_text(f"❌ Unknown mode: {mode_arg}\nUse `intl`, `t20`, `test`, `fifa`.")
         return
