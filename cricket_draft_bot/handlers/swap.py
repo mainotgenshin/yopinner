@@ -238,7 +238,7 @@ async def handle_swap_pick2(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # Silently refresh the group message to remove the Swap button for this user
     try:
         from handlers.draft import format_draft_board
-        from config import DRAFT_BANNER_IPL, DRAFT_BANNER_INTL, DRAFT_BANNER_FIFA
+        from utils.banners import get_banner_for_match
 
         board_text = format_draft_board(match, include_turn=False)
         a_status = "✅" if match.team_a.is_ready else "⏳"
@@ -260,12 +260,7 @@ async def handle_swap_pick2(update: Update, context: ContextTypes.DEFAULT_TYPE):
             swap_url = f"https://t.me/{bot_uname}?start=swap_{match.match_id}"
             keyboard.append([InlineKeyboardButton("🔀 Swap Positions (1 Left)", url=swap_url)])
 
-        if "IPL" in match.mode:
-            banner = DRAFT_BANNER_IPL
-        elif match.mode == "FIFA":
-            banner = DRAFT_BANNER_FIFA
-        else:
-            banner = DRAFT_BANNER_INTL
+        banner = await get_banner_for_match(match)
 
         await context.bot.edit_message_caption(
             chat_id=match.chat_id,
