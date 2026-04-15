@@ -215,6 +215,11 @@ if __name__ == '__main__':
     from handlers.profile import handle_profile
     application.add_handler(CommandHandler('myprofile', handle_profile))
 
+    # Standings / Leaderboard
+    from handlers.standings import handle_standings, handle_standings_callback
+    application.add_handler(CommandHandler('standings', handle_standings))
+    application.add_handler(CallbackQueryHandler(handle_standings_callback, pattern=r"^lb_"))
+
     # Swap System
     from handlers.swap import (
         handle_swap_pick1, handle_swap_pick2, handle_swap_cancel
