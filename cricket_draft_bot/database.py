@@ -285,9 +285,9 @@ async def update_user_stats(user_id: int, name: str, result: str,
         set_updates["weekly_reset_at"] = monday
 
     if not doc:
-        # New user — initialise sport counters
-        set_updates.setdefault("cricket_wins", 0)
-        set_updates.setdefault("fifa_wins", 0)
+        # New user — set anchor timestamps only.
+        # DO NOT initialise cricket_wins/fifa_wins in $set — $inc handles them
+        # (MongoDB auto-creates missing fields starting from 0).
         if not reset_daily:
             set_updates["daily_reset_at"]  = midnight
         if not reset_weekly:
@@ -304,9 +304,11 @@ async def update_user_stats(user_id: int, name: str, result: str,
         "wins":    1 if is_win else 0,
         "losses":  1 if result == "L" else 0,
         "draws":   1 if result == "D" else 0,
-        sport_win_field: 1 if is_win else 0,
     }
-    # Only increment daily/weekly via $inc if we did NOT reset them above
+    # sport_win_field: only add to $inc if NOT already in $set
+    if sport_win_field not in set_updates:
+        inc_updates[sport_win_field] = 1 if is_win else 0
+    # daily_wins / weekly_wins: only $inc if not reset (already written via $set)
     if not reset_daily:
         inc_updates["daily_wins"]  = 1 if is_win else 0
     if not reset_weekly:
