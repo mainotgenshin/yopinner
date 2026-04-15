@@ -235,8 +235,10 @@ async def run_simulation(match: Match) -> str:
             res_a = "L"
             res_b = "W"
             
-        await update_user_stats(match.team_a.owner_id, match.team_a.owner_name, res_a)
-        await update_user_stats(match.team_b.owner_id, match.team_b.owner_name, res_b)
+        await update_user_stats(match.team_a.owner_id, match.team_a.owner_name, res_a,
+                                 mode=match.mode, chat_id=match.chat_id)
+        await update_user_stats(match.team_b.owner_id, match.team_b.owner_name, res_b,
+                                 mode=match.mode, chat_id=match.chat_id)
         
     except Exception as e:
         logger.error(f"Failed to persist user stats: {e}")
