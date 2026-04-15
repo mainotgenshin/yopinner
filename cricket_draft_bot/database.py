@@ -232,16 +232,16 @@ async def get_all_chats() -> list:
     return [doc['chat_id'] async for doc in cursor]
 
 async def update_user_stats(user_id: int, name: str, result: str,
-                             mode: str = "", chat_id: int | None = None):
+                             mode: str = "", chat_id=None):
     """
     Updates user stats after a match.
     mode: 'FIFA', 'IPL', 'International', etc.
     chat_id: the group where the match was played.
     """
-    import datetime, time as _time
+    import time as _t
     db = get_db()
 
-    now = _time.time()
+    now = _t.time()
     is_win = result == "W"
 
     # --- Fetch current doc to check reset timestamps ---
@@ -252,7 +252,6 @@ async def update_user_stats(user_id: int, name: str, result: str,
     })
 
     # Next UTC midnight anchor
-    import time as _t
     dt = _t.gmtime(now)
     midnight = _t.mktime(_t.strptime(
         f"{dt.tm_year}-{dt.tm_mon:02d}-{dt.tm_mday:02d} 00:00:00", "%Y-%m-%d %H:%M:%S"
@@ -264,57 +263,56 @@ async def update_user_stats(user_id: int, name: str, result: str,
     days_until_monday = (7 - dt.tm_wday) % 7 or 7
     monday = midnight + (days_until_monday - 1) * 86400
 
-    reset_set = {}
-    reset_daily = False
-    reset_weekly = False
-
-    if doc:
-        daily_reset_at = doc.get("daily_reset_at", 0)
-        weekly_reset_at = doc.get("weekly_reset_at", 0)
-        # If anchor has passed, reset
-        if now >= daily_reset_at:
-            reset_daily = True
-            reset_set["daily_wins"] = 0
-            reset_set["daily_reset_at"] = midnight
-        if now >= weekly_reset_at:
-            reset_weekly = True
-            reset_set["weekly_wins"] = 0
-            reset_set["weekly_reset_at"] = monday
-    else:
-        # New user — set anchors
-        reset_set["daily_wins"] = 0
-        reset_set["weekly_wins"] = 0
-        reset_set["daily_reset_at"] = midnight
-        reset_set["weekly_reset_at"] = monday
-        reset_set["cricket_wins"] = 0
-        reset_set["fifa_wins"] = 0
+    # Determine which period counters need resetting
+    daily_reset_at  = (doc or {}).get("daily_reset_at",  0)
+    weekly_reset_at = (doc or {}).get("weekly_reset_at", 0)
+    reset_daily  = now >= daily_reset_at
+    reset_weekly = now >= weekly_reset_at
 
     # Determine sport
     is_fifa = "FIFA" in mode.upper() if mode else False
     sport_win_field = "fifa_wins" if is_fifa else "cricket_wins"
 
-    inc_updates = {
-        "total_matches": 1,
-        "wins":    1 if is_win else 0,
-        "losses":  1 if result == "L" else 0,
-        "draws":   1 if result == "D" else 0,
-        "daily_wins":  1 if is_win and not reset_daily else 0,
-        "weekly_wins": 1 if is_win and not reset_weekly else 0,
-        sport_win_field: 1 if is_win else 0,
-    }
-    # Remove zeros to avoid overriding reset
-    if reset_daily and is_win:
-        inc_updates["daily_wins"] = 1
-    if reset_weekly and is_win:
-        inc_updates["weekly_wins"] = 1
+    # Build $set — never overlap with $inc fields
+    set_updates: dict = {"name": name, "user_id": user_id}
 
-    set_updates = {"name": name, "user_id": user_id, **reset_set}
+    if reset_daily:
+        # Write the final value directly into $set (avoids $set/$inc conflict)
+        set_updates["daily_wins"]     = 1 if is_win else 0
+        set_updates["daily_reset_at"] = midnight
+    if reset_weekly:
+        set_updates["weekly_wins"]     = 1 if is_win else 0
+        set_updates["weekly_reset_at"] = monday
+
+    if not doc:
+        # New user — initialise sport counters
+        set_updates.setdefault("cricket_wins", 0)
+        set_updates.setdefault("fifa_wins", 0)
+        if not reset_daily:
+            set_updates["daily_reset_at"]  = midnight
+        if not reset_weekly:
+            set_updates["weekly_reset_at"] = monday
+
     if is_win:
         set_updates["last_win_at"] = now
         if not (doc and doc.get("first_win_at")):
             set_updates["first_win_at"] = now
 
-    ops = {
+    # Build $inc — only fields NOT already handled by $set above
+    inc_updates: dict = {
+        "total_matches": 1,
+        "wins":    1 if is_win else 0,
+        "losses":  1 if result == "L" else 0,
+        "draws":   1 if result == "D" else 0,
+        sport_win_field: 1 if is_win else 0,
+    }
+    # Only increment daily/weekly via $inc if we did NOT reset them above
+    if not reset_daily:
+        inc_updates["daily_wins"]  = 1 if is_win else 0
+    if not reset_weekly:
+        inc_updates["weekly_wins"] = 1 if is_win else 0
+
+    ops: dict = {
         "$set": set_updates,
         "$inc": inc_updates,
         "$push": {
