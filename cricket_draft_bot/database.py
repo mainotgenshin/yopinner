@@ -231,29 +231,112 @@ async def get_all_chats() -> list:
     cursor = db.chats.find({})
     return [doc['chat_id'] async for doc in cursor]
 
-async def update_user_stats(user_id: int, name: str, result: str):
+async def update_user_stats(user_id: int, name: str, result: str,
+                             mode: str = "", chat_id: int | None = None):
+    """
+    Updates user stats after a match.
+    mode: 'FIFA', 'IPL', 'International', etc.
+    chat_id: the group where the match was played.
+    """
+    import datetime, time as _time
     db = get_db()
+
+    now = _time.time()
+    is_win = result == "W"
+
+    # --- Fetch current doc to check reset timestamps ---
+    doc = await db.users.find_one({"user_id": user_id}, {
+        "daily_wins": 1, "weekly_wins": 1,
+        "daily_reset_at": 1, "weekly_reset_at": 1,
+        "first_win_at": 1, "_id": 0
+    })
+
+    # Next UTC midnight anchor
+    import time as _t
+    dt = _t.gmtime(now)
+    midnight = _t.mktime(_t.strptime(
+        f"{dt.tm_year}-{dt.tm_mon:02d}-{dt.tm_mday:02d} 00:00:00", "%Y-%m-%d %H:%M:%S"
+    ))
+    if midnight <= now:
+        midnight += 86400
+
+    # Next Monday UTC anchor
+    days_until_monday = (7 - dt.tm_wday) % 7 or 7
+    monday = midnight + (days_until_monday - 1) * 86400
+
+    reset_set = {}
+    reset_daily = False
+    reset_weekly = False
+
+    if doc:
+        daily_reset_at = doc.get("daily_reset_at", 0)
+        weekly_reset_at = doc.get("weekly_reset_at", 0)
+        # If anchor has passed, reset
+        if now >= daily_reset_at:
+            reset_daily = True
+            reset_set["daily_wins"] = 0
+            reset_set["daily_reset_at"] = midnight
+        if now >= weekly_reset_at:
+            reset_weekly = True
+            reset_set["weekly_wins"] = 0
+            reset_set["weekly_reset_at"] = monday
+    else:
+        # New user — set anchors
+        reset_set["daily_wins"] = 0
+        reset_set["weekly_wins"] = 0
+        reset_set["daily_reset_at"] = midnight
+        reset_set["weekly_reset_at"] = monday
+        reset_set["cricket_wins"] = 0
+        reset_set["fifa_wins"] = 0
+
+    # Determine sport
+    is_fifa = "FIFA" in mode.upper() if mode else False
+    sport_win_field = "fifa_wins" if is_fifa else "cricket_wins"
+
     inc_updates = {
         "total_matches": 1,
-        "wins": 1 if result == "W" else 0,
-        "losses": 1 if result == "L" else 0,
-        "draws": 1 if result == "D" else 0
+        "wins":    1 if is_win else 0,
+        "losses":  1 if result == "L" else 0,
+        "draws":   1 if result == "D" else 0,
+        "daily_wins":  1 if is_win and not reset_daily else 0,
+        "weekly_wins": 1 if is_win and not reset_weekly else 0,
+        sport_win_field: 1 if is_win else 0,
     }
-    
-    await db.users.update_one(
-        {"user_id": user_id},
-        {
-            "$set": {"name": name, "user_id": user_id},
-            "$inc": inc_updates,
-            "$push": {
-                "recent_results": {
-                    "$each": [result],
-                    "$slice": -5
-                }
+    # Remove zeros to avoid overriding reset
+    if reset_daily and is_win:
+        inc_updates["daily_wins"] = 1
+    if reset_weekly and is_win:
+        inc_updates["weekly_wins"] = 1
+
+    set_updates = {"name": name, "user_id": user_id, **reset_set}
+    if is_win:
+        set_updates["last_win_at"] = now
+        if not (doc and doc.get("first_win_at")):
+            set_updates["first_win_at"] = now
+
+    ops = {
+        "$set": set_updates,
+        "$inc": inc_updates,
+        "$push": {
+            "recent_results": {
+                "$each": [result],
+                "$slice": -5
             }
-        },
-        upsert=True
-    )
+        }
+    }
+
+    # Per-chat wins (only for wins)
+    if is_win and chat_id:
+        ops["$inc"][f"chat_wins.{chat_id}"] = 1
+
+    await db.users.update_one({"user_id": user_id}, ops, upsert=True)
+
+    # Invalidate leaderboard cache
+    try:
+        from handlers.standings import invalidate_lb_cache
+        invalidate_lb_cache()
+    except Exception:
+        pass
 
 async def get_user_stats(user_id: int) -> Optional[Dict[str, Any]]:
     db = get_db()
