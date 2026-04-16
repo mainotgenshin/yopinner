@@ -100,6 +100,58 @@ def _next_monday_utc() -> float:
     return midnight_today + days_until_monday * 86400
 
 
+# ── Reset check (called on /standings open) ───────────────────────────────
+
+async def _check_and_apply_resets(user_id: int):
+    """
+    Checks if daily/weekly periods have expired for this user and resets
+    their counters in the DB if so. Called when /standings is opened so
+    the display is always accurate even without a recent match.
+    """
+    import time as _t
+    from database import get_db
+    db = get_db()
+
+    now = _t.time()
+    doc = await db.users.find_one(
+        {"user_id": user_id},
+        {"daily_reset_at": 1, "weekly_reset_at": 1, "_id": 0}
+    )
+    if not doc:
+        return  # no stats yet, nothing to reset
+
+    set_fields = {}
+
+    if now >= doc.get("daily_reset_at", 0):
+        # Compute next midnight UTC
+        dt = _t.gmtime(now)
+        midnight = _t.mktime(_t.strptime(
+            f"{dt.tm_year}-{dt.tm_mon:02d}-{dt.tm_mday:02d} 00:00:00",
+            "%Y-%m-%d %H:%M:%S"
+        ))
+        if midnight <= now:
+            midnight += 86400
+        set_fields["daily_wins"] = 0
+        set_fields["daily_reset_at"] = midnight
+
+    if now >= doc.get("weekly_reset_at", 0):
+        dt = _t.gmtime(now)
+        days_until_monday = (7 - dt.tm_wday) % 7 or 7
+        midnight_today = _t.mktime(_t.strptime(
+            f"{dt.tm_year}-{dt.tm_mon:02d}-{dt.tm_mday:02d} 00:00:00",
+            "%Y-%m-%d %H:%M:%S"
+        ))
+        if midnight_today <= now:
+            midnight_today += 86400
+        monday = midnight_today + (days_until_monday - 1) * 86400
+        set_fields["weekly_wins"] = 0
+        set_fields["weekly_reset_at"] = monday
+
+    if set_fields:
+        await db.users.update_one({"user_id": user_id}, {"$set": set_fields})
+        invalidate_lb_cache()  # data changed, force fresh fetch
+
+
 # ── DB Queries ─────────────────────────────────────────────────────────────
 
 async def _fetch_leaderboard(view: str, chat_id: int | None = None) -> list:
@@ -298,6 +350,13 @@ async def _render_standings(
 ):
     user_id = update.effective_user.id
     chat_id = update.effective_chat.id
+
+    # Run reset check silently in background — ensures daily/weekly
+    # counters are correct even if user hasn't played a match today.
+    try:
+        await _check_and_apply_resets(user_id)
+    except Exception as e:
+        logger.warning(f"Reset check failed: {e}")
 
     ck = _cache_key(view, chat_id if view == "chat" else None)
     cached = _get_cached(ck)
