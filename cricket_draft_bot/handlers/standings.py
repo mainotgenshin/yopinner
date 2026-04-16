@@ -181,7 +181,13 @@ async def _fetch_leaderboard(view: str, chat_id: int | None = None) -> list:
     }
 
     query = {}
-    if view == "chat" and chat_id:
+    now_ts = time.time()
+    if view == "daily":
+        # Only users whose daily period is still active (reset_at in the future)
+        query = {"daily_reset_at": {"$gt": now_ts}}
+    elif view == "weekly":
+        query = {"weekly_reset_at": {"$gt": now_ts}}
+    elif view == "chat" and chat_id:
         query = {f"chat_wins.{chat_id}": {"$gt": 0}}
 
     cursor = db.users.find(query, projection).sort(
