@@ -3,7 +3,7 @@ import json
 import logging
 from typing import Optional, Dict
 from game.models import Match, Team, Player
-from database import get_match, save_match, get_eligible_players_for_mode, get_player
+from database import get_match, save_match, get_eligible_players_for_mode, get_cached_pool_for_mode, get_player
 from utils.randomizer import get_random_player
 from config import MAX_REDRAWS
 
@@ -11,8 +11,8 @@ logger = logging.getLogger(__name__)
 
 async def create_match_state(chat_id: int, mode: str, owner_id: int, challenger_id: int, owner_name: str, challenger_name: str) -> Match:
     """Initializes a new match state async."""
-    # Use optimized DB projection instead of loading all 20k players
-    draft_pool = await get_eligible_players_for_mode(mode)
+    # Use cached pool projection (avoids re-querying DB if pool already cached)
+    draft_pool = await get_cached_pool_for_mode(mode)
     
     import random
     first_drafter = random.choice([owner_id, challenger_id])
@@ -68,11 +68,13 @@ async def save_match_state(match: Match):
         "team_a": team_to_dict(match.team_a),
         "team_b": team_to_dict(match.team_b),
         "current_turn": match.current_turn,
-        "draft_pool": match.draft_pool,
+        # Delta optimization: only save removed IDs (max 18) instead of full pool (400-600 IDs)
+        "draft_pool_removed": getattr(match, 'draft_pool_removed', []),
         "state": match.state,
         "pending_player_id": match.pending_player_id,
         "draft_message_id": match.draft_message_id,
         "card_message_id": match.card_message_id,
+        "pinned_message_id": getattr(match, 'pinned_message_id', None),
         "finished_at": match.finished_at,
         "trade_offer": getattr(match, 'trade_offer', None)
     }
@@ -108,14 +110,28 @@ async def load_match_state(match_id: str) -> Optional[Match]:
         team_a=await dict_to_team(data['team_a']),
         team_b=await dict_to_team(data['team_b']),
         current_turn=data['current_turn'],
-        draft_pool=data['draft_pool'],
+        draft_pool=[],  # Reconstructed below
         state=data['state'],
         pending_player_id=data.get('pending_player_id'),
         draft_message_id=data.get('draft_message_id'),
         card_message_id=data.get('card_message_id'),
-        finished_at=data.get('finished_at', 0.0)
+        finished_at=data.get('finished_at', 0.0),
+        pinned_message_id=data.get('pinned_message_id'),
     )
     m.trade_offer = data.get('trade_offer')
+
+    # Pool reconstruction: support both new delta format and old full-list format
+    if 'draft_pool_removed' in data:
+        # New delta format: reconstruct from cached full pool minus removed IDs
+        full_pool = await get_cached_pool_for_mode(data['mode'])
+        removed_set = set(data['draft_pool_removed'])
+        m.draft_pool = [pid for pid in full_pool if pid not in removed_set]
+        m.draft_pool_removed = list(data['draft_pool_removed'])
+    else:
+        # Backward compat: old format stored the full pool list
+        m.draft_pool = data.get('draft_pool', [])
+        m.draft_pool_removed = []
+
     return m
 
 async def draw_player_for_turn(match: Match) -> Optional[Dict]:
