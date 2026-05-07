@@ -55,35 +55,6 @@ async def challenge_handler(update: Update, context: ContextTypes.DEFAULT_TYPE, 
         parse_mode="Markdown"
     )
 
-async def join_challenge(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    await query.answer()
-    
-    data = query.data
-    mode = data.split('_')[1] # join_IPL
-    
-    challenger = query.from_user
-    owner_name = query.message.reply_to_message.from_user.first_name if query.message.reply_to_message else "Player A"
-    owner_id = query.message.reply_to_message.from_user.id if query.message.reply_to_message else 0
-    
-    if owner_id == 0:
-        # If original message lost or something? 
-        # Actually join button is on the bot's message.
-        # The bot's message "reply_to" might not be available if not specifically set.
-        # But we can't easily track the original sender unless stored in callback data or global state.
-        # Alternative: The challenge text has the name.
-        # Better: Store pending challenge in context? No, stateless preferable.
-        # Simplest: Anyone can click join, but create match assigns sender of the command as Owner?
-        # But we don't know who sent the command from the callback query on the BOT's message.
-        # Wait, the bot's message is a reply to the command? No, usually just a new message.
-        pass
-
-    # To fix this: encode owner_id in callback data? "join_IPL_12345"
-    # But data limit is small (64 bytes).
-    # Let's hope create_task is fine. 
-    # Let's update the original code to encode ID.
-    pass
-
 async def challenge_ipl(update: Update, context: ContextTypes.DEFAULT_TYPE):
     from utils.banners import get_banner_for_mode
     from telegram.error import BadRequest
@@ -256,9 +227,15 @@ async def handle_join(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # Let's use "Challenger" / "Acceptor" or fetch from TG API (get_chat_member)
     
     try:
-        challenger_chat = await context.bot.get_chat(owner_id)
-        challenger_name = challenger_chat.first_name
-    except:
+        # Extract challenger name from message caption — no extra API call needed
+        text = query.message.caption or query.message.text or ""
+        challenger_name = "Player 1"
+        for line in text.split('\n'):
+            line_clean = line.strip().strip('*')
+            if line_clean.startswith('User: ') or line_clean.startswith('From: '):
+                challenger_name = line_clean.split(': ', 1)[1].strip()
+                break
+    except Exception:
         challenger_name = "Player 1"
         
     joiner_name = query.from_user.first_name
