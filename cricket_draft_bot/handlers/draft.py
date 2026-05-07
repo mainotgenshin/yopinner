@@ -143,11 +143,17 @@ async def update_draft_message(update: Update, context: ContextTypes.DEFAULT_TYP
         else:
              msg = await context.bot.send_message(chat_id=match.chat_id, text=caption, reply_markup=reply_markup, parse_mode="Markdown")
         
-        try:
-            await context.bot.pin_chat_message(chat_id=match.chat_id, message_id=msg.message_id)
-        except:
-             pass
         match.draft_message_id = msg.message_id
+        # Auto-pin the draft board (silent — no "📌 pinned" notification spam)
+        try:
+            await context.bot.pin_chat_message(
+                chat_id=match.chat_id,
+                message_id=msg.message_id,
+                disable_notification=True
+            )
+            match.pinned_message_id = msg.message_id
+        except Exception:
+            pass  # Bot may not be admin — skip silently
         await save_match_state(match)
         return
 
@@ -220,9 +226,8 @@ async def handle_draw(update: Update, context: ContextTypes.DEFAULT_TYPE, match:
     if footer_row:
         keyboard.append(footer_row)
     
-    # Get Player Image
-    from database import get_player
-    p_data = await get_player(player['player_id'])
+    # Get Player Image — reuse already-fetched player data (no duplicate DB call)
+    p_data = player
     
     # Image Key Logic
     if match.mode == "FIFA":
@@ -264,6 +269,7 @@ async def handle_assign(update: Update, context: ContextTypes.DEFAULT_TYPE, matc
     # REMOVE FROM POOL
     if player_id in match.draft_pool:
         match.draft_pool.remove(player_id)
+        match.draft_pool_removed.append(player_id)  # Delta tracking
         logger.info(f"DEBUG: Removed {player_id} from pool on Assignment.")
     else:
         logger.warning(f"DEBUG: {player_id} was assigned but not found in pool!")
@@ -316,6 +322,7 @@ async def handle_redraw(update: Update, context: ContextTypes.DEFAULT_TYPE, matc
             # Remove from pool if present
             if match.pending_player_id in match.draft_pool:
                 match.draft_pool.remove(match.pending_player_id)
+                match.draft_pool_removed.append(match.pending_player_id)  # Delta tracking
                 logger.info(f"DEBUG: Permanently discarded {match.pending_player_id} from pool. New Size: {len(match.draft_pool)}")
             else:
                  logger.warning(f"DEBUG: Skipped Player {match.pending_player_id} NOT found in Draft Pool!")
@@ -450,6 +457,7 @@ async def handle_replace_exec(update: Update, context: ContextTypes.DEFAULT_TYPE
     # REMOVE OLD PENDING FROM POOL (The new player)
     if match.pending_player_id in match.draft_pool:
         match.draft_pool.remove(match.pending_player_id)
+        match.draft_pool_removed.append(match.pending_player_id)  # Delta tracking
         logger.info(f"DEBUG: Removed {match.pending_player_id} from pool on Replace.")
     
     match.pending_player_id = None
