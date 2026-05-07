@@ -14,6 +14,9 @@ import logging
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ContextTypes
 from telegram.error import BadRequest
+from telegram.helpers import escape_markdown
+
+def esc(t): return escape_markdown(str(t), version=1)
 
 logger = logging.getLogger(__name__)
 
@@ -282,7 +285,7 @@ def _build_text(
     else:
         for i, doc in enumerate(rows, 1):
             wins = _wins_for_view(doc, view, chat_id)
-            name = doc.get("name", "Player")
+            name = esc(doc.get("name", "Player"))
             is_you = doc.get("user_id") == user_id
 
             rank_sym = _rank_emoji(i)
