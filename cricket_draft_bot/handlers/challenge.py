@@ -272,6 +272,20 @@ async def handle_join(update: Update, context: ContextTypes.DEFAULT_TYPE):
     else:
         banner = await get_banner_for_mode("intl")
 
-    # Edit the existing message
+    # Edit the existing message into the draft board
     await update_draft_message(update, context, match, board_text, keyboard, media=banner)
+
+    # Pin the draft board — must be done here because draft_message_id was
+    # pre-set above (reusing challenge message), so update_draft_message skips
+    # its own pin block (which only fires when sending a brand new message).
+    try:
+        await context.bot.pin_chat_message(
+            chat_id=update.effective_chat.id,
+            message_id=query.message.message_id,
+            disable_notification=True
+        )
+        match.pinned_message_id = query.message.message_id
+        await save_match_state(match)
+    except Exception:
+        pass  # Bot not admin — skip silently
 
