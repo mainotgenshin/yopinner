@@ -20,7 +20,7 @@ from telegram.ext import ApplicationBuilder, ContextTypes, CommandHandler, Callb
 from config import BOT_TOKEN
 from database import init_db
 from handlers.admin import add_player, map_api, remove_player, player_list, get_player_stats, reset_matches
-from handlers.challenge import challenge_ipl, challenge_intl, challenge_fifa, join_challenge, handle_join
+from handlers.challenge import challenge_ipl, challenge_intl, challenge_fifa, handle_join
 from handlers.draft import handle_draft_callback
 from handlers.ready import handle_ready
 
