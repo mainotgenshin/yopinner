@@ -10,7 +10,6 @@ from urllib.parse import urlparse
 import datetime
 import re
 
-logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 # Global Client
@@ -19,7 +18,12 @@ _db = None
 
 # A simple custom cache for get_player
 _player_cache: Dict[str, Dict[str, Any]] = {}
-CACHE_MAX_SIZE = 2000
+CACHE_MAX_SIZE = 3500
+
+# In-memory mode pool cache (TTL 5 min) — avoids re-fetching 500 IDs on every match load
+_mode_pool_cache: Dict[str, List] = {}
+_mode_pool_cache_time: Dict[str, float] = {}
+MODE_POOL_CACHE_TTL = 300  # seconds
 
 def get_db():
     global _mongo_client, _db
@@ -170,6 +174,21 @@ async def get_eligible_players_for_mode(mode: str) -> List[str]:
             
     return draft_pool_ids
 
+async def get_cached_pool_for_mode(mode: str) -> List[str]:
+    """
+    Returns eligible player IDs for the given mode, using a 5-minute in-memory cache.
+    Avoids re-querying MongoDB on every match load — critical for pool delta optimization.
+    """
+    import time
+    now = time.time()
+    if mode in _mode_pool_cache and (now - _mode_pool_cache_time.get(mode, 0)) < MODE_POOL_CACHE_TTL:
+        return list(_mode_pool_cache[mode])  # Return a copy
+    pool = await get_eligible_players_for_mode(mode)
+    _mode_pool_cache[mode] = pool
+    _mode_pool_cache_time[mode] = now
+    logger.debug(f"Mode pool cache refreshed for {mode}: {len(pool)} players")
+    return list(pool)
+
 async def save_match(match_id: str, chat_id: int, state_data: Dict[str, Any]):
     db = get_db()
     await db.matches.update_one(
@@ -181,15 +200,14 @@ async def save_match(match_id: str, chat_id: int, state_data: Dict[str, Any]):
         }},
         upsert=True
     )
-    logger.info(f"DEBUG: Saved Match {match_id} to Mongo")
+    logger.debug(f"Saved match {match_id} to Mongo")
 
 async def get_match(match_id: str) -> Optional[Dict[str, Any]]:
     db = get_db()
     doc = await db.matches.find_one({"match_id": match_id})
     if doc:
-        logger.info(f"DEBUG: Found Match {match_id}")
         return doc.get('state_data')
-    logger.warning(f"DEBUG: NOT Found Match {match_id}")
+    logger.debug(f"Match not found: {match_id}")
     return None
     
 async def clear_all_matches():
