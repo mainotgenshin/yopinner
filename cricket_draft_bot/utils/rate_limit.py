@@ -128,8 +128,17 @@ class MessageDebouncer:
                 msg = await bot.send_message(chat_id=match.chat_id, text=caption, reply_markup=reply_markup, parse_mode=parse_mode)
                 
             match.draft_message_id = msg.message_id
+            # Re-pin the recreated message so draft board stays visible
+            try:
+                await bot.pin_chat_message(
+                    chat_id=match.chat_id,
+                    message_id=msg.message_id,
+                    disable_notification=True
+                )
+                match.pinned_message_id = msg.message_id
+            except Exception:
+                pass  # Not admin — skip silently
             await save_match_state(match)
-            # The next update will use the new message_id
         except Exception as e:
             logger.error(f"Failed to recreate draft message: {e}")
 
