@@ -60,10 +60,12 @@ class Match:
     team_a: Team
     team_b: Team
     current_turn: int # owner_id of current drafter
-    draft_pool: List[str] # List of available player_ids
+    draft_pool: List[str] # List of available player_ids (in-memory only)
     state: str = "DRAFTING"
     pending_player_id: Optional[str] = None
     draft_message_id: Optional[int] = None
     card_message_id: Optional[int] = None
     finished_at: float = 0.0 # Timestamp
     trade_offer: Optional[Dict] = None # {initiator: int, target_msg: int, picks: {}}
+    pinned_message_id: Optional[int] = None  # Tracks the pinned draft board message
+    draft_pool_removed: List[str] = field(default_factory=list)  # Delta: IDs removed from pool
