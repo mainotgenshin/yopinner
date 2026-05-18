@@ -111,16 +111,18 @@ async def handle_ready(update: Update, context: ContextTypes.DEFAULT_TYPE, match
             except Exception as send_e:
                 logger.error(f"Fallback send_message also failed: {send_e}")
 
-        # Auto-unpin the draft board now that the match is over
+        # Auto-unpin the draft board 30 minutes after result
+        # (keeps result visible; asyncio task = zero extra dependencies)
         pinned_id = getattr(match, 'pinned_message_id', None)
         if pinned_id:
-            try:
-                await context.bot.unpin_chat_message(
-                    chat_id=match.chat_id,
-                    message_id=pinned_id
-                )
-            except Exception:
-                pass  # Not admin or already unpinned — skip silently
+            import asyncio
+            async def _delayed_unpin(bot, chat_id, msg_id, delay=1800):
+                await asyncio.sleep(delay)
+                try:
+                    await bot.unpin_chat_message(chat_id=chat_id, message_id=msg_id)
+                except Exception:
+                    pass  # Already unpinned or bot lost admin — fine
+            asyncio.create_task(_delayed_unpin(context.bot, match.chat_id, pinned_id))
     else:
         # Update message to show who is ready, keeping the full board visible
         from handlers.draft import format_draft_board
