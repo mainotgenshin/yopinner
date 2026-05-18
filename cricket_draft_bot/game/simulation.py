@@ -142,10 +142,12 @@ async def run_simulation(match: Match) -> str:
     score_b = 0
     details = []
 
-    from config import POSITIONS_T20, POSITIONS_TEST, POSITIONS_FIFA
+    from config import POSITIONS_T20, POSITIONS_TEST, POSITIONS_FIFA, POSITIONS_WWE
     
     if match.mode and "FIFA" in match.mode:
         active_positions = POSITIONS_FIFA
+    elif match.mode and "WWE" in match.mode:
+        active_positions = POSITIONS_WWE
     elif match.mode and "Test" in match.mode:
         active_positions = POSITIONS_TEST
     else:
