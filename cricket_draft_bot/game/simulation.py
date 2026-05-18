@@ -1,6 +1,6 @@
 # game/simulation.py
 from game.models import Match, Team, Player
-from config import ROLE_WEIGHTS
+from config import ROLE_WEIGHTS, WWE_POSITION_STATS
 from utils.randomizer import calculate_variance
 from telegram.helpers import escape_markdown
 import logging
@@ -35,6 +35,16 @@ def get_clutch_bonus(player: Player, mode: str) -> float:
 
 def calculate_slot_score(player: Player, role: str, mode: str) -> float:
     from config import ROLE_STATS_MAP, PENALTY_MULTIPLIERS, ZERO_SKILL_THRESHOLD
+
+    # WWE: pure stat comparison, no role penalties
+    if mode == "WWE":
+        stat_key = WWE_POSITION_STATS.get(role, "power")
+        wwe_stats = player.stats.get("wwe", {})
+        val = wwe_stats.get(stat_key, 50)
+        try:
+            return float(val)
+        except (TypeError, ValueError):
+            return 50.0
     
     # 1. Stat Dependency Check
     # Get primary stat key for this slot
