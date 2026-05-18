@@ -101,6 +101,27 @@ def clear_player_cache():
     _player_cache.clear()
     logger.info("Player cache cleared manually.")
 
+async def get_player_by_name_and_sport(name_query: str, sport: str) -> Optional[Dict[str, Any]]:
+    """
+    Sport-aware name lookup — prevents name conflicts across modes.
+    sport: 'wwe', 'football', or 'cricket' (backward-compat: also matches players without sport field)
+    """
+    db = get_db()
+    regex = re.compile(re.escape(name_query), re.IGNORECASE)
+    name_filter = {"$or": [{"name": regex}, {"full_name": regex}]}
+
+    if sport == "cricket":
+        # Old cricket players may not have a sport field — include both
+        query = {"$and": [name_filter, {"$or": [{"sport": "cricket"}, {"sport": {"$exists": False}}]}]}
+    else:
+        query = {"$and": [name_filter, {"sport": sport}]}
+
+    data = await db.players.find_one(query)
+    if data:
+        data.pop('_id', None)
+        return data
+    return None
+
 async def get_player_by_name(name_query: str) -> Optional[Dict[str, Any]]:
     db = get_db()
     regex = re.compile(re.escape(name_query), re.IGNORECASE)
@@ -159,6 +180,9 @@ async def get_eligible_players_for_mode(mode: str) -> List[str]:
                 {"league": {"$in": ["Premier League", "LALIGA EA SPORTS", "Bundesliga", "Serie A Enilive", "Ligue 1 McDonald's"]}}
             ]
         }
+    elif mode == "WWE":
+        # WWE: all superstars are eligible
+        query = {"sport": "wwe"}
     else:
         # Cricket Optimization
         search_key = 'international' if mode.lower() == 'intl' else mode.lower()
@@ -288,8 +312,15 @@ async def update_user_stats(user_id: int, name: str, result: str,
     reset_weekly = now >= weekly_reset_at
 
     # Determine sport
-    is_fifa = "FIFA" in mode.upper() if mode else False
-    sport_win_field = "fifa_wins" if is_fifa else "cricket_wins"
+    mode_upper = mode.upper() if mode else ""
+    is_fifa    = "FIFA" in mode_upper
+    is_wwe     = "WWE"  in mode_upper
+    if is_wwe:
+        sport_win_field = "wwe_wins"
+    elif is_fifa:
+        sport_win_field = "fifa_wins"
+    else:
+        sport_win_field = "cricket_wins"
 
     # Build $set — never overlap with $inc fields
     set_updates: dict = {"name": name, "user_id": user_id}
