@@ -237,9 +237,12 @@ async def handle_draw(update: Update, context: ContextTypes.DEFAULT_TYPE, match:
         # Prefer file_id if available (updated manually)
         if p_data.get('image_file_id'):
             img_key = 'image_file_id'
-        
         default_banner = DRAFT_BANNER_FIFA
-        media = p_data.get(img_key, default_banner)
+    elif match.mode == "WWE":
+        img_key = 'wwe_image_url'
+        if p_data.get('image_file_id'):
+            img_key = 'image_file_id'
+        default_banner = DRAFT_BANNER_WWE
     else:
         img_key = 'ipl_image_file_id' if "IPL" in match.mode else 'image_file_id'
         # Fallback to normal image if IPL image missing
@@ -247,7 +250,7 @@ async def handle_draw(update: Update, context: ContextTypes.DEFAULT_TYPE, match:
             img_key = 'image_file_id'
         default_banner = DRAFT_BANNER_IPL if "IPL" in match.mode else DRAFT_BANNER_INTL
     
-    media = p_data.get(img_key, default_banner)
+    media = p_data.get(img_key) or default_banner
     
     # Update the single message to show the card
     await update_draft_message(update, context, match, card_caption, keyboard, media=media)
@@ -409,13 +412,17 @@ async def handle_replace_start(update: Update, context: ContextTypes.DEFAULT_TYP
         # Prefer file_id if manually updated
         if player.get('image_file_id'):
             img_key = 'image_file_id'
+    elif match.mode == "WWE":
+        img_key = 'wwe_image_url'
+        if player.get('image_file_id'):
+            img_key = 'image_file_id'
     else:
         img_key = 'image_file_id'
         
 
         
-    default_banner = DRAFT_BANNER_IPL if "IPL" in match.mode else (DRAFT_BANNER_FIFA if match.mode == "FIFA" else DRAFT_BANNER_INTL)
-    media = player.get(img_key, default_banner)
+    default_banner = DRAFT_BANNER_IPL if "IPL" in match.mode else (DRAFT_BANNER_FIFA if match.mode == "FIFA" else (DRAFT_BANNER_WWE if match.mode == "WWE" else DRAFT_BANNER_INTL))
+    media = player.get(img_key) or default_banner
     
     await update_draft_message(update, context, match, card_caption, keyboard, media=media)
 
