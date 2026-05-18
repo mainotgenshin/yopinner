@@ -122,6 +122,28 @@ async def challenge_fifa(update: Update, context: ContextTypes.DEFAULT_TYPE):
             parse_mode="Markdown"
         )
 
+async def challenge_wwe(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    from utils.banners import get_banner_for_mode
+    key = f"join_WWE_{update.effective_user.id}"
+    keyboard = [[InlineKeyboardButton("⚔️ Join Game", callback_data=key)]]
+    caption = f"🥼 **WWE Challenge!**\nUser: {update.effective_user.first_name}\nMode: WWE\nWaiting for opponent..."
+    banner = await get_banner_for_mode("wwe")
+    try:
+        await context.bot.send_photo(
+            chat_id=update.effective_chat.id,
+            photo=banner,
+            caption=caption,
+            reply_markup=InlineKeyboardMarkup(keyboard),
+            parse_mode="Markdown"
+        )
+    except Exception:
+        await context.bot.send_message(
+            chat_id=update.effective_chat.id,
+            text=caption + "\n*(Enable media permissions in this chat to see banners)*",
+            reply_markup=InlineKeyboardMarkup(keyboard),
+            parse_mode="Markdown"
+        )
+
 async def challenge_unified(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """
     /challenge intl - Start Intl Draft
@@ -153,8 +175,11 @@ async def challenge_unified(update: Update, context: ContextTypes.DEFAULT_TYPE):
     elif mode_arg in ['fifa', 'football']:
         real_mode = "FIFA"
         banner = await get_banner_for_mode("fifa")
+    elif mode_arg in ['wwe', 'wrestling']:
+        real_mode = "WWE"
+        banner = await get_banner_for_mode("wwe")
     else:
-        await update.effective_message.reply_text(f"❌ Unknown mode: {mode_arg}\nUse `intl`, `t20`, `test`, `fifa`.")
+        await update.effective_message.reply_text(f"❌ Unknown mode: {mode_arg}\nUse `intl`, `t20`, `fifa`, `wwe`.")
         return
     
     # Check for Reply (Targeted Challenge)
@@ -269,6 +294,8 @@ async def handle_join(update: Update, context: ContextTypes.DEFAULT_TYPE):
         banner = await get_banner_for_mode("ipl")
     elif mode == "FIFA":
         banner = await get_banner_for_mode("fifa")
+    elif mode == "WWE":
+        banner = await get_banner_for_mode("wwe")
     else:
         banner = await get_banner_for_mode("intl")
 
