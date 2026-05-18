@@ -551,16 +551,34 @@ async def get_player_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if sport_match:
         text = re.sub(r'\s*\bsport=\S+', '', text, flags=re.IGNORECASE).strip()
 
-    from database import get_player_by_name, get_player_by_name_and_sport
-    p = (await get_player_by_name_and_sport(text, sport_filter)
-         if sport_filter else await get_player_by_name(text))
-
-    if not p:
+    from database import search_players_by_name
+    results = await search_players_by_name(text, sport_filter)
+    
+    if not results:
         hint = f" (sport={sport_filter})" if sport_filter else ""
         await update.message.reply_text(
             f"❌ Player matching `{esc(text)}`{hint} not found.", parse_mode="Markdown"
         )
         return
+        
+    if len(results) > 1:
+        # Check if one is an exact match
+        exact_matches = [r for r in results if r['name'].lower() == text.lower()]
+        if len(exact_matches) == 1:
+            p = exact_matches[0]
+        else:
+            names = [f"`{esc(r['name'])}`" for r in results[:5]]
+            if len(results) > 5: names.append("...")
+            
+            await update.message.reply_text(
+                f"⚠️ Multiple players found matching `{esc(text)}`:\n"
+                f"{', '.join(names)}\n\n"
+                f"Please type the full name to be more specific.",
+                parse_mode="Markdown"
+            )
+            return
+    else:
+        p = results[0]
 
     stats  = p.get('stats', {})
     sport  = p.get('sport', 'cricket')
@@ -650,11 +668,16 @@ async def get_player_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
     intl_display = format_stats(stats.get('international', {}))
 
     msg = (
+        f"📊 <b>{p['name']}</b>\n"
+        f"<i>International Stats</i>\n"
+        f"{intl_display}\n\n"
+        f"Roles: {', '.join(roles)}"
+    )
+    # Also build a Markdown version for photo caption (player names in captions are safe)
+    md_msg = (
         f"📊 *{esc(p['name'])}*\n"
-        f"ID: `{p['player_id']}`\n\n"
         f"*International Stats*\n{intl_display}\n\n"
-        f"Roles: {esc(', '.join(roles))}\n"
-        f"Source: {p.get('api_reference', {}).get('provider', 'Unknown')}"
+        f"Roles: {esc(', '.join(roles))}"
     )
 
     from telegram import InlineKeyboardButton, InlineKeyboardMarkup
@@ -665,67 +688,15 @@ async def get_player_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if p.get('image_file_id'):
         try:
             await update.message.reply_photo(
-                photo=p['image_file_id'], caption=msg,
+                photo=p['image_file_id'], caption=md_msg,
                 reply_markup=kb, parse_mode="Markdown"
             )
             return
         except Exception as e:
             logger.error(f"Photo send failed for {p['name']}: {e}")
-    await update.message.reply_text(msg, reply_markup=kb, parse_mode="Markdown")
-async def handle_view_intl_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    player_id = query.data.split('_', 2)[2] # view_intl_ID
-    
-    from database import get_player
-    p = await get_player(player_id)
-    if not p: return
+    # Fallback: plain HTML — never crashes on special chars
+    await update.message.reply_text(msg, reply_markup=kb, parse_mode="HTML")
 
-    # Intl Default
-    stats = p.get('stats', {}).get('international', {})
-    
-    # Handle intl is default so stats might be messy if stored differently
-    # But new run_fix/migrate standardizes 'international' key. 
-    # Fallback to current stats if missing?
-    # Actually fallback to root level if old schema, but migration handles it.
-    
-    if not stats: stats = p.get('stats', {}) # Fallback
-    
-    intl_img = p.get('image_file_id')
-    roles = p.get('roles', [])
-    
-    def format_stats_local(data):
-        if isinstance(data, int): return str(data)
-        parts = []
-        parts.append(f"🧠 Cap: {data.get('leadership')}")
-        parts.append(f"🏏 Top: {data.get('batting_power')}")
-        parts.append(f"🛡️ Mid: {data.get('batting_control')}")
-        # Show all relevant for Intl
-        parts.append(f"💥 Fin: {data.get('finishing')}")
-        parts.append(f"🧤 WK: {data.get('wicket_keeping')}") # Added WK stat line
-        parts.append(f"⚡ Pace: {data.get('bowling_pace')}")
-        parts.append(f"🌀 Spin: {data.get('bowling_spin')}")
-        parts.append(f"✨ All: {data.get('all_round')}")
-        parts.append(f"👟 Field: {data.get('fielding')}")
-        return "\n".join(parts)
-        
-    stats_display = format_stats_local(stats)
-    
-    caption = f"📊 *Stats for {esc(p['name'])}*\n(International)\n\n{stats_display}\n\nRoles: {', '.join(roles)}"
-    
-    keyboard = [[InlineKeyboardButton("🏏 View IPL Stats", callback_data=f"view_ipl_{player_id}")]]
-    reply_markup = InlineKeyboardMarkup(keyboard)
-    
-    from telegram import InputMediaPhoto
-    try:
-        if intl_img:
-             await query.message.edit_media(
-                media=InputMediaPhoto(media=intl_img, caption=caption, parse_mode="Markdown"),
-                reply_markup=reply_markup
-            )
-        else:
-             await query.edit_message_caption(caption=caption, reply_markup=reply_markup, parse_mode="Markdown")
-    except Exception:
-        pass
 
 
 async def handle_view_ipl_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -797,59 +768,66 @@ async def handle_view_ipl_callback(update: Update, context: ContextTypes.DEFAULT
         await query.answer("Error switching view", show_alert=True)
 
 async def handle_view_intl_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    from telegram import InlineKeyboardButton, InlineKeyboardMarkup
+    """Called when user clicks 'Back to International' from IPL view."""
+    from telegram import InlineKeyboardButton, InlineKeyboardMarkup, InputMediaPhoto
     query = update.callback_query
-    player_id = query.data.split('_', 2)[2] # view_intl_ID
-    
+    player_id = query.data.split('_', 2)[2]
+
     from database import get_player
     p = await get_player(player_id)
-    if not p: return
+    if not p:
+        await query.answer("Player not found", show_alert=True)
+        return
 
-    # Intl Default
     stats = p.get('stats', {}).get('international', {})
-    # if not stats: stats = p.get('stats', {}) # Fallback REMOVED to prevent ghost stats!
-    
     intl_img = p.get('image_file_id')
     roles = p.get('roles', [])
-        
-    def format_stats_local(data):
-        if not data: return "N/A"
-        if isinstance(data, int): return str(data)
-        parts = []
-        
-        def g(k): return data.get(k) if data.get(k) is not None else "N/A"
+    roles_up = [r.upper() for r in roles]
+    has_wk  = "WK" in roles_up
+    has_def = "DEFENCE" in roles_up
 
-        parts.append(f"🧠 Cap: {g('leadership')}")
-        parts.append(f"🏏 Top: {g('batting_power')}")
-        parts.append(f"🛡️ Mid: {g('batting_control')}")
-        # Show all relevant for Intl
-        parts.append(f"💥 Fin: {g('finishing')}")
-        parts.append(f"⚡ Pace: {g('bowling_pace')}")
-        parts.append(f"🌀 Spin: {g('bowling_spin')}")
-        parts.append(f"✨ All: {g('all_round')}")
-        parts.append(f"👟 Field: {g('fielding')}")
+    # Same format_stats as /stats command
+    def format_stats(data):
+        if not data:              return "N/A"
+        if isinstance(data, int): return str(data)
+        def g(k): return data.get(k, 'N/A')
+        parts = [
+            f"🧠 Captain: {g('leadership')}",
+            f"🏏 Top:     {g('batting_power')}",
+            f"🛡 Middle: {g('batting_control')}",
+        ]
+        if has_def: parts.append(f"🧱 Defence:  {g('batting_defence')}")
+        if has_wk:  parts.append(f"🧤 WK:       {g('wicket_keeping')}")
+        parts += [
+            f"✨ All Round: {g('all_round')}",
+            f"💥 Finisher:  {g('finishing')}",
+            f"⚡ Pacer:     {g('bowling_pace')}",
+            f"🌀 Spinner:   {g('bowling_spin')}",
+            f"🤾 Fielding:  {g('fielding')}",
+        ]
         return "\n".join(parts)
-        parts.append(f"👟 Field: {data.get('fielding')}")
-        return "\n".join(parts)
-        
-    stats_display = format_stats_local(stats)
-    
-    caption = f"📊 *Stats for {esc(p['name'])}*\n(International)\n\n{stats_display}\n\nRoles: {', '.join(roles)}"
-    
-    keyboard = [[InlineKeyboardButton("🏏 View IPL Stats", callback_data=f"view_ipl_{player_id}")]]
-    reply_markup = InlineKeyboardMarkup(keyboard)
-    
-    from telegram import InputMediaPhoto
+
+    intl_display = format_stats(stats)
+    caption = (
+        f"📊 *{esc(p['name'])}*\n"
+        f"*International Stats*\n{intl_display}\n\n"
+        f"Roles: {esc(', '.join(roles))}"
+    )
+
+    kb = InlineKeyboardMarkup([[InlineKeyboardButton("🏏 IPL Stats", callback_data=f"view_ipl_{player_id}")]])
+
     try:
         if intl_img:
-             await query.message.edit_media(
+            await query.message.edit_media(
                 media=InputMediaPhoto(media=intl_img, caption=caption, parse_mode="Markdown"),
-                reply_markup=reply_markup
+                reply_markup=kb
             )
         else:
-             await query.edit_message_caption(caption=caption, reply_markup=reply_markup, parse_mode="Markdown")
-    except Exception:
-        pass
+            await query.edit_message_caption(caption=caption, reply_markup=kb, parse_mode="Markdown")
+    except Exception as e:
+        logger.warning(f"handle_view_intl_callback edit error: {e}")
+        await query.answer()
+
 
 
 
