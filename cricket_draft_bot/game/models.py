@@ -21,6 +21,7 @@ class Player:
     position: Optional[str] = None # Primary Position (e.g. ST)
     positions: List[str] = field(default_factory=list) # Football Positions
     fifa_image_url: Optional[str] = None
+    wwe_image_url: Optional[str] = None
     overall: int = 0 # FIFA Overall Rating
     broken_image: bool = False # If validated and broken
     source_db: Optional[str] = None # "eafc_26" or None
