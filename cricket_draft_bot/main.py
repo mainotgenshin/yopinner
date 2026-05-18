@@ -19,8 +19,8 @@ from telegram import Update
 from telegram.ext import ApplicationBuilder, ContextTypes, CommandHandler, CallbackQueryHandler
 from config import BOT_TOKEN
 from database import init_db
-from handlers.admin import add_player, map_api, remove_player, player_list, get_player_stats, reset_matches
-from handlers.challenge import challenge_ipl, challenge_intl, challenge_fifa, handle_join
+from handlers.admin import add_player, map_api, remove_player, get_player_stats, reset_matches
+from handlers.challenge import challenge_ipl, challenge_intl, challenge_fifa, challenge_wwe, handle_join
 from handlers.draft import handle_draft_callback
 from handlers.ready import handle_ready
 
@@ -31,30 +31,48 @@ logging.basicConfig(
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     from database import save_chat
+    chat = update.effective_chat
+
     # Save group chats for broadcast
-    if update.effective_chat.type != "private":
-        await save_chat(update.effective_chat.id)
+    if chat.type != "private":
+        await save_chat(chat.id)
 
     # Handle deep-link for Swap (DM only)
-    if update.effective_chat.type == "private" and context.args and context.args[0].startswith("swap_"):
+    if chat.type == "private" and context.args and context.args[0].startswith("swap_"):
         from handlers.swap import handle_swap_dm_start
         await handle_swap_dm_start(update, context)
         return
 
-    await update.effective_message.reply_text(
-        "🏏 **Welcome to Cricket Draft Bot!** 🏏\n\n"
-        "Commands:\n"
-        "/challengeipl - Start IPL Draft\n"
-        "/challengeintl - Start Intl Draft\n"
-        "/challengefifa - Start FIFA Draft\n"
-        "/addplayer - (Admin) Add Cricket Player\n"
-        "/addplayerfifa - (Admin) Add FIFA Player\n"
-        "/help - Show this message",
-        parse_mode="Markdown"
-    )
+    if chat.type == "private":
+        # DM — no group-specific features
+        await update.effective_message.reply_text(
+            "👋 *Hi! I'm Draft Bot.*\n\n"
+            "Add me to a group to start playing!\n\n"
+            "📖 *Available Modes:*\n"
+            "🏏 IPL · International Cricket\n"
+            "⚽ FIFA Draft\n"
+            "🤼 WWE Draft _(NEW!)_\n\n"
+            "Use `/standings` to view the global leaderboard.",
+            parse_mode="Markdown"
+        )
+    else:
+        # Group — full command list
+        await update.effective_message.reply_text(
+            "🏏 *Welcome to Draft Bot!* 🏏\n\n"
+            "*Draft Commands:*\n"
+            "/challengeipl — IPL Draft\n"
+            "/challengeintl — International Draft\n"
+            "/challengefifa — FIFA Draft\n"
+            "/challengewwe — WWE Draft _(NEW!)_\n\n"
+            "/standings — Leaderboard\n"
+            "/myprofile — Your stats\n"
+            "/help — Show this message",
+            parse_mode="Markdown"
+        )
 
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await start(update, context)
+
 
 async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Central router for callbacks."""
@@ -82,11 +100,11 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     elif data.startswith("map_"):
         from handlers.admin import handle_map_stats_callback
         await handle_map_stats_callback(update, context)
-        
+
     elif data.startswith("view_ipl_"):
         from handlers.admin import handle_view_ipl_callback
         await handle_view_ipl_callback(update, context)
-        
+
     elif data.startswith("view_intl_"):
         from handlers.admin import handle_view_intl_callback
         await handle_view_intl_callback(update, context)
@@ -99,9 +117,9 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         from handlers.admin import handle_gen_ipl_callback
         await handle_gen_ipl_callback(update, context)
 
-    elif data.startswith("plipl_"):
-        from handlers.admin import handle_playerlist_ipl_callback
-        await handle_playerlist_ipl_callback(update, context)
+    elif data.startswith("chk_"):
+        from handlers.admin import handle_check_callback
+        await handle_check_callback(update, context)
 
 async def post_init(application):
     from database import init_db
@@ -128,7 +146,6 @@ if __name__ == '__main__':
     application.add_handler(CommandHandler('add_player', add_player))
     application.add_handler(CommandHandler('map_api', map_api))
     application.add_handler(CommandHandler('removeplayer', remove_player))
-    application.add_handler(CommandHandler('playerlist', player_list))
     application.add_handler(CommandHandler('stats', get_player_stats))
     application.add_handler(CommandHandler('reset_matches', reset_matches))
     from handlers.admin import check_role_stats
@@ -146,18 +163,25 @@ if __name__ == '__main__':
     # Stat modifiers
     from handlers.admin import (
         change_cap, change_wk, change_top, change_middle,
-        change_defence, change_pacer, change_spinner, 
+        change_defence, change_pacer, change_spinner,
         change_allrounder, change_finisher, change_fielder,
         set_stats, fix_roles_command, migrate_roles_command,
         add_role_command, rem_role_command, non_role_fix,
         run_fix_now_command, revert_command,
         add_player_ipl, add_role_ipl, rem_role_ipl, update_image_command,
         enable_ipl_command, disable_ipl_command,
-        player_list_ipl, handle_remove_ipl, handle_clearcache, update_image_fifa,
-        remove_player_fifa # NEW
+        handle_remove_ipl, handle_clearcache, update_image_fifa,
+        remove_player_fifa, player_list_ipl,
     )
-
     application.add_handler(CommandHandler('removeplayerfifa', remove_player_fifa))
+
+    # WWE Admin commands
+    from handlers.admin import add_player_wwe, remove_player_wwe, update_image_wwe
+    application.add_handler(CommandHandler('add_playerwwe',    add_player_wwe))
+    application.add_handler(CommandHandler('addplayerwwe',     add_player_wwe))   # alias
+    application.add_handler(CommandHandler('remove_playerwwe', remove_player_wwe))
+    application.add_handler(CommandHandler('removeplayerwwe',  remove_player_wwe)) # alias
+    application.add_handler(CommandHandler('update_imagewwe',  update_image_wwe))
 
     application.add_handler(CommandHandler('changecap', change_cap))
     application.add_handler(CommandHandler('changewk', change_wk))
@@ -184,14 +208,13 @@ if __name__ == '__main__':
     application.add_handler(CommandHandler('update_image', update_image_command))
     application.add_handler(CommandHandler('enable_ipl', enable_ipl_command))
     application.add_handler(CommandHandler('disable_ipl', disable_ipl_command))
-    application.add_handler(CommandHandler('playerlist_ipl', player_list_ipl))
     application.add_handler(CommandHandler('clearcache', handle_clearcache))
     application.add_handler(CommandHandler('update_imagefifa', update_image_fifa))
-    # New FIFA Command
+    # FIFA commands
     from handlers.admin import add_player_fifa
     application.add_handler(CommandHandler('add_playerfifa', add_player_fifa))
-    application.add_handler(CommandHandler('addplayerfifa', add_player_fifa)) # Alias
-    application.add_handler(CommandHandler('addplayer', add_player)) # Alias for add_player
+    application.add_handler(CommandHandler('addplayerfifa',  add_player_fifa))  # alias
+    application.add_handler(CommandHandler('addplayer',      add_player))        # alias
 
     from handlers.admin import handle_broadcast, handle_banner
     application.add_handler(CommandHandler('broadcast', handle_broadcast))
@@ -210,6 +233,10 @@ if __name__ == '__main__':
     application.add_handler(CommandHandler('challengefifa', challenge_fifa))
     
     application.add_handler(CommandHandler('challenge', challenge_unified))
+
+    # WWE challenge commands
+    application.add_handler(CommandHandler('challengewwe',   challenge_wwe))
+    application.add_handler(CommandHandler('challenge_wwe',  challenge_wwe))
 
     # User Profile
     from handlers.profile import handle_profile
