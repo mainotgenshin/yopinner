@@ -137,6 +137,26 @@ async def get_player_by_name(name_query: str) -> Optional[Dict[str, Any]]:
         return data
     return None
 
+async def search_players_by_name(name_query: str, sport: Optional[str] = None) -> List[Dict[str, Any]]:
+    db = get_db()
+    regex = re.compile(re.escape(name_query), re.IGNORECASE)
+    
+    query = {
+        "$or": [
+            {"name": regex},
+            {"full_name": regex}
+        ]
+    }
+    if sport:
+        query["sport"] = sport
+        
+    cursor = db.players.find(query).limit(10)
+    results = []
+    async for doc in cursor:
+        doc.pop('_id', None)
+        results.append(doc)
+    return results
+
 async def delete_player(identifier: str) -> bool:
     """Deletes a player by ID or Name (case-insensitive)."""
     db = get_db()
