@@ -171,13 +171,14 @@ async def _fetch_leaderboard(view: str, chat_id: int | None = None) -> list:
         "weekly": "weekly_wins",
         "cricket": "cricket_wins",
         "fifa": "fifa_wins",
+        "wwe": "wwe_wins",
         "chat": f"chat_wins.{chat_id}",
     }.get(view, "wins")
 
     projection = {
         "user_id": 1, "name": 1,
         "wins": 1, "daily_wins": 1, "weekly_wins": 1,
-        "cricket_wins": 1, "fifa_wins": 1, "chat_wins": 1,
+        "cricket_wins": 1, "fifa_wins": 1, "wwe_wins": 1, "chat_wins": 1,
         "first_win_at": 1,
         f"prev_rank_{view}": 1,
         "_id": 0
@@ -211,13 +212,14 @@ async def _get_user_rank(user_id: int, view: str, chat_id: int | None = None) ->
         "weekly": "weekly_wins",
         "cricket": "cricket_wins",
         "fifa": "fifa_wins",
+        "wwe": "wwe_wins",
         "chat": f"chat_wins.{chat_id}",
     }.get(view, "wins")
 
     user_doc = await db.users.find_one(
         {"user_id": user_id},
         {"wins": 1, "daily_wins": 1, "weekly_wins": 1,
-         "cricket_wins": 1, "fifa_wins": 1, "chat_wins": 1, "_id": 0}
+         "cricket_wins": 1, "fifa_wins": 1, "wwe_wins": 1, "chat_wins": 1, "_id": 0}
     )
     if not user_doc:
         return (None, 0)
@@ -260,6 +262,7 @@ def _wins_for_view(doc: dict, view: str, chat_id: int | None) -> int:
         "weekly": "weekly_wins",
         "cricket": "cricket_wins",
         "fifa": "fifa_wins",
+        "wwe": "wwe_wins",
     }.get(view, "wins"), 0)
 
 
@@ -274,6 +277,7 @@ def _build_text(
         "weekly":  "📆 WEEKLY STANDINGS",
         "cricket": "🏏 CRICKET STANDINGS",
         "fifa":    "⚽ FIFA STANDINGS",
+        "wwe":     "🤼 WWE STANDINGS",
         "chat":    "🏠 THIS CHAT STANDINGS",
     }
     separator = "━━━━━━━━━━━━━━━"
@@ -334,7 +338,7 @@ def _build_text(
     return "\n".join(lines)
 
 
-def _build_keyboard(active: str) -> InlineKeyboardMarkup:
+def _build_keyboard(active: str, is_group: bool = True) -> InlineKeyboardMarkup:
     def btn(label, cb, is_active):
         return InlineKeyboardButton(f"{label} ✅" if is_active else label, callback_data=cb)
 
@@ -344,11 +348,15 @@ def _build_keyboard(active: str) -> InlineKeyboardMarkup:
         btn("📆 Weekly",  "lb_weekly",  active == "weekly"),
     ]
     row2 = [
-        btn("🏠 This Chat", "lb_chat",    active == "chat"),
-        btn("🏏 Cricket",   "lb_cricket", active == "cricket"),
-        btn("⚽ FIFA",      "lb_fifa",    active == "fifa"),
+        btn("🏏 Cricket", "lb_cricket", active == "cricket"),
+        btn("⚽ FIFA",    "lb_fifa",    active == "fifa"),
+        btn("🤼 WWE",     "lb_wwe",     active == "wwe"),
     ]
-    return InlineKeyboardMarkup([row1, row2])
+    rows = [row1, row2]
+    # Only show "This Chat" button in groups (not DMs)
+    if is_group:
+        rows.append([btn("🏠 This Chat", "lb_chat", active == "chat")])
+    return InlineKeyboardMarkup(rows)
 
 
 # ── Main handler ───────────────────────────────────────────────────────────
@@ -382,7 +390,8 @@ async def _render_standings(
     )
 
     text = _build_text(view, rows, user_id, user_rank, user_wins, chat_id, last_ts)
-    keyboard = _build_keyboard(view)
+    is_group = update.effective_chat.type != "private"
+    keyboard = _build_keyboard(view, is_group=is_group)
 
     if edit:
         try:
@@ -424,6 +433,7 @@ async def handle_standings_callback(update: Update, context: ContextTypes.DEFAUL
         "lb_chat":    "chat",
         "lb_cricket": "cricket",
         "lb_fifa":    "fifa",
+        "lb_wwe":     "wwe",
     }
     view = view_map.get(query.data)
     if not view:
@@ -437,6 +447,7 @@ async def handle_standings_callback(update: Update, context: ContextTypes.DEFAUL
         "weekly":  "WEEKLY STANDINGS",
         "cricket": "CRICKET STANDINGS",
         "fifa":    "FIFA STANDINGS",
+        "wwe":     "WWE STANDINGS",
         "chat":    "THIS CHAT STANDINGS",
     }
     if tab_headers.get(view, "") in current_text:
