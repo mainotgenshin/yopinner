@@ -5,7 +5,7 @@ import logging
 from game.state import load_match_state, save_match_state, draw_player_for_turn, switch_turn
 from game.models import Match
 from utils.validators import validate_draft_action
-from config import MAX_REDRAWS, POSITIONS_T20, POSITIONS_TEST, POSITIONS_FIFA, POSITIONS_WWE, DRAFT_BANNER_URL, DRAFT_BANNER_INTL, DRAFT_BANNER_IPL, DRAFT_BANNER_FIFA
+from config import MAX_REDRAWS, POSITIONS_T20, POSITIONS_TEST, POSITIONS_FIFA, POSITIONS_WWE, DRAFT_BANNER_URL, DRAFT_BANNER_INTL, DRAFT_BANNER_IPL, DRAFT_BANNER_FIFA, DRAFT_BANNER_WWE
 from utils.banners import get_banner_for_match, get_banner_for_mode
 from telegram.helpers import escape_markdown
 
