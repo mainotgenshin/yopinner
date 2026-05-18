@@ -75,6 +75,33 @@ POSITIONS_FIFA = [
     "GK"
 ]
 
+POSITIONS_WWE = [
+    "Powerhouse",
+    "Speedster",
+    "Technician",
+    "Stamina",
+    "Enforcer",
+    "Charisma",
+    "Striker",
+    "Strategist",
+    "High Flyer",
+    "Submission",
+]
+
+# Maps each WWE draft position to its raw stat key in stats.wwe
+WWE_POSITION_STATS = {
+    "Powerhouse": "power",
+    "Speedster":  "speed",
+    "Technician": "technique",
+    "Stamina":    "stamina",
+    "Enforcer":   "durability",
+    "Charisma":   "charisma",
+    "Striker":    "aggression",
+    "Strategist": "intelligence",
+    "High Flyer": "aerial",
+    "Submission": "submission",
+}
+
 # Legacy/Default for import safety (aliased to T20 for now)
 POSITIONS = POSITIONS_T20
 
@@ -83,13 +110,15 @@ MAX_REDRAWS = 2
 DRAFT_BANNER_INTL = "https://files.catbox.moe/8l3ktm.jpg"
 DRAFT_BANNER_IPL = "https://files.catbox.moe/qyrq53.jpg"
 DRAFT_BANNER_FIFA = "https://i.ibb.co/Fbd7q7Xm/x.jpg" # Official FIFA Banner
-DRAFT_BANNER_URL = DRAFT_BANNER_INTL # Fallback alias
+DRAFT_BANNER_WWE  = "https://i.ibb.co/GQV1YnVh/x.jpg" # WWE Banner
+DRAFT_BANNER_URL  = DRAFT_BANNER_INTL # Fallback alias
 
 # Simulation Constants
 ZERO_SKILL_THRESHOLD = 30
 
 PENALTY_MULTIPLIERS = {
     "NATURAL": 1.0,
+    "FLEX": 0.9,
     "PARTIAL": 0.7,
     "MISMATCH": 0.4,
     "ZERO_SKILL": 0.1
