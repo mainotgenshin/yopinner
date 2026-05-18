@@ -5,7 +5,7 @@ import logging
 from game.state import load_match_state, save_match_state, draw_player_for_turn, switch_turn
 from game.models import Match
 from utils.validators import validate_draft_action
-from config import MAX_REDRAWS, POSITIONS_T20, POSITIONS_TEST, POSITIONS_FIFA, DRAFT_BANNER_URL, DRAFT_BANNER_INTL, DRAFT_BANNER_IPL, DRAFT_BANNER_FIFA
+from config import MAX_REDRAWS, POSITIONS_T20, POSITIONS_TEST, POSITIONS_FIFA, POSITIONS_WWE, DRAFT_BANNER_URL, DRAFT_BANNER_INTL, DRAFT_BANNER_IPL, DRAFT_BANNER_FIFA
 from utils.banners import get_banner_for_match, get_banner_for_mode
 from telegram.helpers import escape_markdown
 
@@ -198,6 +198,8 @@ async def handle_draw(update: Update, context: ContextTypes.DEFAULT_TYPE, match:
     
     if match.mode == "FIFA":
         active_positions = POSITIONS_FIFA
+    elif match.mode == "WWE":
+        active_positions = POSITIONS_WWE
     elif "Test" in match.mode:
         active_positions = POSITIONS_TEST
     else:
@@ -372,6 +374,8 @@ async def handle_replace_start(update: Update, context: ContextTypes.DEFAULT_TYP
     # Show active filled positions
     if match.mode == "FIFA":
         active_positions = POSITIONS_FIFA
+    elif match.mode == "WWE":
+        active_positions = POSITIONS_WWE
     elif "Test" in match.mode:
         active_positions = POSITIONS_TEST
     else:
