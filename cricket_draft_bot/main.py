@@ -92,11 +92,7 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     elif data.startswith("ready_"):
         await handle_ready(update, context)
         
-    elif data.startswith("plist_"):
-        # Avoid circular import issues if possible, or import inside
-        from handlers.admin import handle_playerlist_callback
-        await handle_playerlist_callback(update, context)
-        
+
     elif data.startswith("map_"):
         from handlers.admin import handle_map_stats_callback
         await handle_map_stats_callback(update, context)
@@ -159,7 +155,6 @@ if __name__ == '__main__':
     from handlers.admin import list_mods_handler
     application.add_handler(CommandHandler('mods', list_mods_handler))
 
-    # Stat modifiers
     # Stat modifiers
     from handlers.admin import (
         change_cap, change_wk, change_top, change_middle,
