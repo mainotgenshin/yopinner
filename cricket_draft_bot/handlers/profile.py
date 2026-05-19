@@ -25,6 +25,7 @@ async def handle_profile(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     wins = stats.get('wins', 0)
     losses = stats.get('losses', 0)
+    draws = stats.get('draws', 0)
     total_matches = stats.get('total_matches', 0)
 
     recent = list(stats.get('recent_results', []))
@@ -52,9 +53,10 @@ async def handle_profile(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "━━━━━━━━━━━━━━━━━━\n"
         f"{rank_line}"
         "━━━━━━━━━━━━━━━━━━\n"
-        f"🏏 matches : `{total_matches}`\n"
-        f"✅ wins    : `{wins}`\n"
-        f"❌ losses : `{losses}`\n"
+        f"🔘 matches : `{total_matches}`\n"
+        f"🟢 wins    : `{wins}`\n"
+        f"🔴 losses : `{losses}`\n"
+        f"⚪ draws  : `{draws}`\n"
         f"📊 win %  : `{win_rate:.1f}%`\n\n"
         "📈 *Recent Matches*\n"
         f"{recent_str}\n"
