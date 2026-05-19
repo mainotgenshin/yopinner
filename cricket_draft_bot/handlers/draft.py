@@ -159,12 +159,13 @@ async def update_draft_message(update: Update, context: ContextTypes.DEFAULT_TYP
                 await asyncio.sleep(delay)
                 from game.state import load_match_state
                 m = await load_match_state(match_id)
-                # If still drafting after 30 mins, it's abandoned
-                if m and m.state == "DRAFTING":
+                # Unpin if stuck in any draft phase or forcefully deleted by resetmatches
+                if not m or m.state in ["DRAFTING", "READY_CHECK"]:
                     try:
                         await bot.unpin_chat_message(chat_id=chat_id, message_id=msg_id)
-                        from database import get_db
-                        await get_db().matches.delete_one({"match_id": match_id})
+                        if m:
+                            from database import get_db
+                            await get_db().matches.delete_one({"match_id": match_id})
                     except Exception:
                         pass
             asyncio.create_task(_abandon_timeout(context.bot, match.chat_id, msg.message_id, match.match_id))
