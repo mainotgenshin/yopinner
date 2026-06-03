@@ -18,7 +18,7 @@ def fixed_astimezone(timezone):
 apscheduler.util.astimezone = fixed_astimezone
 
 from telegram import Update
-from telegram.ext import ApplicationBuilder, ContextTypes, CommandHandler, CallbackQueryHandler
+from telegram.ext import ApplicationBuilder, ContextTypes, CommandHandler, CallbackQueryHandler, AIORateLimiter
 from config import BOT_TOKEN
 from database import init_db
 from handlers.admin import add_player, map_api, remove_player, get_player_stats, reset_matches
@@ -259,7 +259,7 @@ if __name__ == '__main__':
     application = (
         ApplicationBuilder()
         .token(BOT_TOKEN)
-        .rate_limiter(__import__('telegram.ext', fromlist=['AIORateLimiter']).AIORateLimiter())
+        .rate_limiter(AIORateLimiter())
         .job_queue(None)
         .read_timeout(30)
         .write_timeout(30)
