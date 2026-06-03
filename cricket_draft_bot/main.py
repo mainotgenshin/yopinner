@@ -207,7 +207,10 @@ async def _startup_recovery(bot):
 
     # ── Expire stale challenges (survived bot restart) ──────────────────
     try:
-        from database import get_stale_challenges, delete_pending_challenge
+        from database import get_stale_challenges, delete_pending_challenge, get_db as _gdb
+        EXPIRED_TEXT = "⏰ <b>Challenge Expired</b>\nNo one joined in time. Start a new one with /challenge intl or /challengeipl."
+
+        # 1. Immediately expire challenges already older than 2 min
         stale = await get_stale_challenges(expiry_secs=120)
         for ch in stale:
             cid  = ch.get("chat_id")
@@ -215,28 +218,54 @@ async def _startup_recovery(bot):
             oid  = ch.get("owner_id")
             mode = ch.get("mode", "")
             try:
-                await bot.edit_message_caption(
-                    chat_id=cid, message_id=mid,
-                    caption="⏰ <b>Challenge Expired</b>\nNo one joined in time.",
-                    parse_mode="HTML"
-                )
+                await bot.edit_message_caption(chat_id=cid, message_id=mid, caption=EXPIRED_TEXT, parse_mode="HTML")
             except Exception:
                 try:
-                    await bot.edit_message_text(
-                        chat_id=cid, message_id=mid,
-                        text="⏰ <b>Challenge Expired</b>\nNo one joined in time.",
-                        parse_mode="HTML"
-                    )
+                    await bot.edit_message_text(chat_id=cid, message_id=mid, text=EXPIRED_TEXT, parse_mode="HTML")
                 except Exception:
                     pass
             try:
-                await delete_pending_challenge(oid)
+                await delete_pending_challenge(oid, mode)
             except Exception:
                 pass
         if stale:
             logger.info(f"Startup recovery: expired {len(stale)} stale challenge(s).")
+
+        # 2. Reschedule expiry for young challenges (<120s) — bot restarted mid-timer
+        db2 = _gdb()
+        young_cursor = db2.pending_challenges.find({"created_at": {"$gte": now - 120}})
+        young = await young_cursor.to_list(length=200)
+        for ch in young:
+            cid      = ch.get("chat_id")
+            mid      = ch.get("message_id")
+            oid      = ch.get("owner_id")
+            mode     = ch.get("mode", "")
+            created  = ch.get("created_at", now)
+            remaining = max(5, 120 - (now - created))  # seconds left until expiry
+
+            async def _recover_expire(bot, cid, mid, oid, mode, delay, text=EXPIRED_TEXT):
+                await asyncio.sleep(delay)
+                try:
+                    from database import delete_pending_challenge as _del
+                    await _del(oid, mode)
+                except Exception:
+                    pass
+                try:
+                    await bot.edit_message_caption(chat_id=cid, message_id=mid, caption=text, parse_mode="HTML")
+                except Exception:
+                    try:
+                        await bot.edit_message_text(chat_id=cid, message_id=mid, text=text, parse_mode="HTML")
+                    except Exception:
+                        pass
+
+            asyncio.create_task(_recover_expire(bot, cid, mid, oid, mode, remaining))
+
+        if young:
+            logger.info(f"Startup recovery: rescheduled expiry for {len(young)} young challenge(s).")
+
     except Exception as e:
         logger.error(f"Stale challenge cleanup failed: {e}")
+
 
 async def _auto_simulate(bot, match_id: str):
     """Trigger simulation for a READY_CHECK match that timed out."""
