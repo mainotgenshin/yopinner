@@ -1,4 +1,4 @@
-python-telegram-bot>=20.0
+python-telegram-bot[rate-limiter]>=20.0
 requests
 tzlocal<5.0
 google-generativeai
@@ -9,10 +9,3 @@ dnspython
 certifi
 motor
 httpx
-pytz
-APScheduler
-
-
-
-
-
