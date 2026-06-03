@@ -9,3 +9,5 @@ dnspython
 certifi
 motor
 httpx
+pytz
+APScheduler
