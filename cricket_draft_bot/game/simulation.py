@@ -153,7 +153,7 @@ async def run_simulation(match: Match) -> str:
     else:
         active_positions = POSITIONS_T20
     
-    details.append("🏟 **MATCH SIMULATION – POSITION COMPARISON**\n")
+    details.append("🏟 *MATCH SIMULATION – POSITION COMPARISON*\n")
     
     # Icon Map
     ICONS = {
@@ -180,7 +180,7 @@ async def run_simulation(match: Match) -> str:
         s_b = calculate_slot_score(p_b, pos, match.mode)
         
         icon = ICONS.get(pos, "🔸")
-        details.append(f"{icon} **{i}. {pos} vs {pos}**")
+        details.append(f"{icon} *{i}. {pos} vs {pos}*")
         
         if s_a > s_b:
             score_a += 1
@@ -202,11 +202,11 @@ async def run_simulation(match: Match) -> str:
     match.team_a.score = score_a
     match.team_b.score = score_b
     
-    winner_text = "🤝 **MATCH DRAWN!**"
+    winner_text = "🤝 *MATCH DRAWN!*"
     if score_a > score_b:
-        winner_text = f"🏆 **WINNER:** 🔵 {esc(match.team_a.owner_name)}"
+        winner_text = f"🏆 *WINNER:* 🔵 {esc(match.team_a.owner_name)}"
     elif score_b > score_a:
-        winner_text = f"🏆 **WINNER:** 🔴 {esc(match.team_b.owner_name)}"
+        winner_text = f"🏆 *WINNER:* 🔴 {esc(match.team_b.owner_name)}"
     else:
         # User requested no Super Over, just a Draw result.
         pass
