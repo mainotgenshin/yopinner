@@ -1,9 +1,11 @@
 # handlers/draft.py
+import dataclasses
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, InputMediaPhoto
 from telegram.ext import ContextTypes
 import logging
 from game.state import load_match_state, save_match_state, draw_player_for_turn, switch_turn
-from game.models import Match
+from game.models import Match, Player
+from database import get_player
 from utils.validators import validate_draft_action
 from config import MAX_REDRAWS, POSITIONS_T20, POSITIONS_TEST, POSITIONS_FIFA, POSITIONS_WWE, DRAFT_BANNER_URL, DRAFT_BANNER_INTL, DRAFT_BANNER_IPL, DRAFT_BANNER_FIFA, DRAFT_BANNER_WWE
 from utils.banners import get_banner_for_match, get_banner_for_mode
@@ -30,17 +32,22 @@ async def handle_draft_callback(update: Update, context: ContextTypes.DEFAULT_TY
     
     logger.info(f"DEBUG: Processing Callback. Data={data} Parts={parts}")
     
-    # Parsing ID logic
+    # Parsing ID logic — use | as separator between match_id and slot
+    # to safely handle slot names with spaces (e.g. "All Rounder", "High Flyer")
     if action == "assign":
-        slot = parts[-1]
-        match_id = "_".join(parts[1:-1])
+        # format: assign_{match_id}|{slot}
+        pipe_idx = data.index('|')
+        slot = data[pipe_idx + 1:]
+        match_id = data[len('assign_'):pipe_idx]
     elif action == "replace":
         sub = parts[1]
         if sub == "exec":
-             slot = parts[-1]
-             match_id = "_".join(parts[2:-1])
+            # format: replace_exec_{match_id}|{slot}
+            pipe_idx = data.index('|')
+            slot = data[pipe_idx + 1:]
+            match_id = data[len('replace_exec_'):pipe_idx]
         else:
-             match_id = "_".join(parts[2:])
+            match_id = "_".join(parts[2:])
     else:
         # draw / redraw
         match_id = "_".join(parts[1:])
@@ -184,7 +191,6 @@ async def handle_draw(update: Update, context: ContextTypes.DEFAULT_TYPE, match:
     # Prevent double-draw if already pending
     player = None
     if match.pending_player_id:
-        from database import get_player
         p_data = await get_player(match.pending_player_id)
         if p_data:
             # logger.info(f"DEBUG: Draw Request Idempotency...")
@@ -227,7 +233,7 @@ async def handle_draw(update: Update, context: ContextTypes.DEFAULT_TYPE, match:
     for pos in active_positions:
         if not current_team.slots.get(pos):
             # Unfilled -> Enabled
-            row.append(InlineKeyboardButton(f"🟢 {pos}", callback_data=f"assign_{match.match_id}_{pos}"))
+            row.append(InlineKeyboardButton(f"🟢 {pos}", callback_data=f"assign_{match.match_id}|{pos}"))
         # else: Do not append (Hidden)
              
         if len(row) == 2:
@@ -275,14 +281,11 @@ async def handle_draw(update: Update, context: ContextTypes.DEFAULT_TYPE, match:
 
 
 async def handle_assign(update: Update, context: ContextTypes.DEFAULT_TYPE, match: Match, player_id: str, slot: str):
-    from database import get_player
-    from game.models import Player
     
     p_data = await get_player(player_id)
     current_team = match.team_a if match.team_a.owner_id == match.current_turn else match.team_b
-    
+
     # Filter p_data to only known fields
-    import dataclasses
     known_fields = {f.name for f in dataclasses.fields(Player)}
     filtered_data = {k: v for k, v in p_data.items() if k in known_fields}
     
@@ -301,7 +304,9 @@ async def handle_assign(update: Update, context: ContextTypes.DEFAULT_TYPE, matc
     
     # Check Complete
     if match.team_a.is_complete() and match.team_b.is_complete():
+        import time
         match.state = "READY_CHECK"
+        match.draft_completed_at = time.time()  # Timestamp for 5-min auto-ready
         await save_match_state(match)
         
         board_text = format_draft_board(match)
@@ -384,7 +389,6 @@ async def handle_replace_start(update: Update, context: ContextTypes.DEFAULT_TYP
         return
         
     # Get Player Data
-    from database import get_player
     player = await get_player(match.pending_player_id)
     
     # UI: Show Filled Slots to Replace
@@ -409,7 +413,7 @@ async def handle_replace_start(update: Update, context: ContextTypes.DEFAULT_TYP
              # Show who is currently there? "Pos: PlayerName"
              current_p = current_team.slots.get(pos)
              btn_text = f"🔴 {pos}: {current_p.name}"
-             row.append(InlineKeyboardButton(btn_text, callback_data=f"replace_exec_{match.match_id}_{pos}"))
+             row.append(InlineKeyboardButton(btn_text, callback_data=f"replace_exec_{match.match_id}|{pos}"))
              
         if len(row) == 1: # 1 per row for readability since names can be long
              keyboard.append(row)
@@ -461,9 +465,6 @@ async def handle_replace_exec(update: Update, context: ContextTypes.DEFAULT_TYPE
         except: pass
         return
         
-    from database import get_player
-    from game.models import Player
-    
     new_player_data = await get_player(match.pending_player_id)
     if not new_player_data:
         try:
