@@ -25,7 +25,9 @@ async def _expire_challenge(ch_key: str, owner_id: int, chat_id: int, message_id
     # Remove from tracking (in-memory + DB)
     _pending_challenges.pop(ch_key, None)
     try:
-        await delete_pending_challenge(owner_id)
+        # ch_key = "{owner_id}_{mode}" — extract mode for compound DB delete
+        _mode = ch_key.split('_', 1)[1] if '_' in ch_key else None
+        await delete_pending_challenge(owner_id, _mode)
     except Exception:
         pass
     EXPIRED_TEXT = "⏰ <b>Challenge Expired</b>\nNo one joined in time. Start a new one with /challenge intl or /challengeipl."
@@ -426,9 +428,9 @@ async def handle_join(update: Update, context: ContextTypes.DEFAULT_TYPE):
         task = pending.get('task')
         if task and not task.done():
             task.cancel()
-    # Also remove from DB so startup_recovery won't re-expire it
+    # Remove from DB — pass mode so compound (owner_id, mode) key is matched
     try:
-        await delete_pending_challenge(owner_id)
+        await delete_pending_challenge(owner_id, mode)
     except Exception:
         pass
 
