@@ -8,6 +8,7 @@ from telegram.ext import ContextTypes
 from telegram.error import ChatMigrated
 from game.state import create_match_state
 from telegram.helpers import escape_markdown
+from database import save_pending_challenge, delete_pending_challenge
 
 def esc(t):
     return escape_markdown(str(t), version=1)
@@ -21,8 +22,12 @@ _pending_challenges: dict = {}
 async def _expire_challenge(owner_id: int, chat_id: int, message_id: int, bot):
     """After 2 minutes, expire the challenge if not yet joined."""
     await asyncio.sleep(120)  # 2 minutes
-    # Remove from tracking
+    # Remove from tracking (in-memory + DB)
     _pending_challenges.pop(owner_id, None)
+    try:
+        await delete_pending_challenge(owner_id)
+    except Exception:
+        pass
     try:
         await bot.edit_message_caption(
             chat_id=chat_id,
@@ -123,6 +128,10 @@ async def challenge_ipl(update: Update, context: ContextTypes.DEFAULT_TYPE):
         _pending_challenges[owner_id]['task'].cancel()
     task = asyncio.create_task(_expire_challenge(owner_id, chat_id, msg.message_id, context.bot))
     _pending_challenges[owner_id] = {'task': task, 'chat_id': chat_id, 'message_id': msg.message_id}
+    try:
+        await save_pending_challenge(owner_id, chat_id, msg.message_id, "IPL")
+    except Exception:
+        pass
 
 
 async def challenge_intl(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -162,6 +171,10 @@ async def challenge_intl(update: Update, context: ContextTypes.DEFAULT_TYPE):
         _pending_challenges[owner_id]['task'].cancel()
     task = asyncio.create_task(_expire_challenge(owner_id, chat_id, msg.message_id, context.bot))
     _pending_challenges[owner_id] = {'task': task, 'chat_id': chat_id, 'message_id': msg.message_id}
+    try:
+        await save_pending_challenge(owner_id, chat_id, msg.message_id, "International")
+    except Exception:
+        pass
 
 
 async def challenge_fifa(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -201,6 +214,10 @@ async def challenge_fifa(update: Update, context: ContextTypes.DEFAULT_TYPE):
         _pending_challenges[owner_id]['task'].cancel()
     task = asyncio.create_task(_expire_challenge(owner_id, chat_id, msg.message_id, context.bot))
     _pending_challenges[owner_id] = {'task': task, 'chat_id': chat_id, 'message_id': msg.message_id}
+    try:
+        await save_pending_challenge(owner_id, chat_id, msg.message_id, "FIFA")
+    except Exception:
+        pass
 
 
 async def challenge_wwe(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -240,6 +257,10 @@ async def challenge_wwe(update: Update, context: ContextTypes.DEFAULT_TYPE):
         _pending_challenges[owner_id]['task'].cancel()
     task = asyncio.create_task(_expire_challenge(owner_id, chat_id, msg.message_id, context.bot))
     _pending_challenges[owner_id] = {'task': task, 'chat_id': chat_id, 'message_id': msg.message_id}
+    try:
+        await save_pending_challenge(owner_id, chat_id, msg.message_id, "WWE")
+    except Exception:
+        pass
 
 
 async def challenge_unified(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -342,6 +363,11 @@ async def handle_join(update: Update, context: ContextTypes.DEFAULT_TYPE):
         task = pending.get('task')
         if task and not task.done():
             task.cancel()
+    # Also remove from DB so startup_recovery won't re-expire it
+    try:
+        await delete_pending_challenge(owner_id)
+    except Exception:
+        pass
 
     # Check Self-Join
     if query.from_user.id == owner_id:
