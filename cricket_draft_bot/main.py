@@ -407,8 +407,20 @@ if __name__ == '__main__':
 
 
     async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
-        """Log the error and send a telegram message to notify the developer."""
-        logging.getLogger(__name__).error(msg="Exception while handling an update:", exc_info=context.error)
+        err = context.error
+        err_str = str(err)
+        # Silently ignore known benign post-restart / network noise
+        _IGNORE_ERRORS = (
+            "Query is too old",
+            "Message to be replied not found",
+            "Message is not modified",
+            "Task was destroyed but it is pending",
+            "Connection closed",
+        )
+        if any(e in err_str for e in _IGNORE_ERRORS):
+            return  # Drop silently — not a real bug
+        logging.getLogger(__name__).error(msg="Exception while handling an update:", exc_info=err)
+
 
     # Trade System
     
