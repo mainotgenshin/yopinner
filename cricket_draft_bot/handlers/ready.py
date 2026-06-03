@@ -61,9 +61,9 @@ async def handle_ready(update: Update, context: ContextTypes.DEFAULT_TYPE, match
         # Update text to "Simulating..."
         try:
             if query.message.photo:
-                await query.message.edit_caption("⏳ **All Ready! Running Simulation...**", parse_mode="Markdown")
+                await query.message.edit_caption("⏳ *All Ready! Running Simulation...*", parse_mode="Markdown")
             else:
-                await query.message.edit_text("⏳ **All Ready! Running Simulation...**", parse_mode="Markdown")
+                await query.message.edit_text("⏳ *All Ready! Running Simulation...*", parse_mode="Markdown")
         except BadRequest as e:
             if "not modified" not in str(e):
                 logger.error(f"Ready Handler Error: {e}")
