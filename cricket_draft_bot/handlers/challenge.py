@@ -5,6 +5,7 @@ import time
 import logging
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ContextTypes
+from telegram.error import ChatMigrated
 from game.state import create_match_state
 from telegram.helpers import escape_markdown
 
@@ -88,118 +89,157 @@ async def challenge_handler(update: Update, context: ContextTypes.DEFAULT_TYPE, 
 async def challenge_ipl(update: Update, context: ContextTypes.DEFAULT_TYPE):
     from utils.banners import get_banner_for_mode
     owner_id = update.effective_user.id
+    chat_id = update.effective_chat.id
     key = f"join_IPL_{owner_id}"
     keyboard = [[InlineKeyboardButton("⚔️ Join Game", callback_data=key)]]
     name = html.escape(update.effective_user.first_name)
     caption = f"🏑 <b>IPL Challenge!</b>\nUser: {name}\nMode: IPL\nWaiting for opponent... <i>(expires in 2 min)</i>"
     banner = await get_banner_for_mode("ipl")
+    msg = None
     try:
         msg = await context.bot.send_photo(
-            chat_id=update.effective_chat.id,
-            photo=banner,
-            caption=caption,
-            reply_markup=InlineKeyboardMarkup(keyboard),
-            parse_mode="HTML"
+            chat_id=chat_id, photo=banner, caption=caption,
+            reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="HTML"
         )
+    except ChatMigrated as e:
+        chat_id = e.migrate_to_chat_id
+        try:
+            msg = await context.bot.send_photo(
+                chat_id=chat_id, photo=banner, caption=caption,
+                reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="HTML"
+            )
+        except Exception:
+            pass
     except Exception:
-        msg = await context.bot.send_message(
-            chat_id=update.effective_chat.id,
-            text=caption + "\n<i>(Enable media permissions to see banners)</i>",
-            reply_markup=InlineKeyboardMarkup(keyboard),
-            parse_mode="HTML"
-        )
-    # Cancel any existing expiry task for this user and start a new one
+        try:
+            msg = await context.bot.send_message(
+                chat_id=chat_id, text=caption + "\n<i>(Enable media permissions to see banners)</i>",
+                reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="HTML"
+            )
+        except Exception:
+            return
+    if not msg: return
     if owner_id in _pending_challenges:
         _pending_challenges[owner_id]['task'].cancel()
-    task = asyncio.create_task(_expire_challenge(owner_id, update.effective_chat.id, msg.message_id, context.bot))
-    _pending_challenges[owner_id] = {'task': task, 'chat_id': update.effective_chat.id, 'message_id': msg.message_id}
+    task = asyncio.create_task(_expire_challenge(owner_id, chat_id, msg.message_id, context.bot))
+    _pending_challenges[owner_id] = {'task': task, 'chat_id': chat_id, 'message_id': msg.message_id}
 
 
 async def challenge_intl(update: Update, context: ContextTypes.DEFAULT_TYPE):
     from utils.banners import get_banner_for_mode
     owner_id = update.effective_user.id
+    chat_id = update.effective_chat.id
     key = f"join_INTL_{owner_id}"
     keyboard = [[InlineKeyboardButton("⚔️ Join Game", callback_data=key)]]
     name = html.escape(update.effective_user.first_name)
     caption = f"🏑 <b>International Challenge!</b>\nUser: {name}\nMode: International\nWaiting for opponent... <i>(expires in 2 min)</i>"
     banner = await get_banner_for_mode("intl")
+    msg = None
     try:
         msg = await context.bot.send_photo(
-            chat_id=update.effective_chat.id,
-            photo=banner,
-            caption=caption,
-            reply_markup=InlineKeyboardMarkup(keyboard),
-            parse_mode="HTML"
+            chat_id=chat_id, photo=banner, caption=caption,
+            reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="HTML"
         )
+    except ChatMigrated as e:
+        chat_id = e.migrate_to_chat_id
+        try:
+            msg = await context.bot.send_photo(
+                chat_id=chat_id, photo=banner, caption=caption,
+                reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="HTML"
+            )
+        except Exception:
+            pass
     except Exception:
-        msg = await context.bot.send_message(
-            chat_id=update.effective_chat.id,
-            text=caption + "\n<i>(Enable media permissions to see banners)</i>",
-            reply_markup=InlineKeyboardMarkup(keyboard),
-            parse_mode="HTML"
-        )
+        try:
+            msg = await context.bot.send_message(
+                chat_id=chat_id, text=caption + "\n<i>(Enable media permissions to see banners)</i>",
+                reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="HTML"
+            )
+        except Exception:
+            return
+    if not msg: return
     if owner_id in _pending_challenges:
         _pending_challenges[owner_id]['task'].cancel()
-    task = asyncio.create_task(_expire_challenge(owner_id, update.effective_chat.id, msg.message_id, context.bot))
-    _pending_challenges[owner_id] = {'task': task, 'chat_id': update.effective_chat.id, 'message_id': msg.message_id}
+    task = asyncio.create_task(_expire_challenge(owner_id, chat_id, msg.message_id, context.bot))
+    _pending_challenges[owner_id] = {'task': task, 'chat_id': chat_id, 'message_id': msg.message_id}
 
 
 async def challenge_fifa(update: Update, context: ContextTypes.DEFAULT_TYPE):
     from utils.banners import get_banner_for_mode
     owner_id = update.effective_user.id
+    chat_id = update.effective_chat.id
     key = f"join_FIFA_{owner_id}"
     keyboard = [[InlineKeyboardButton("⚔️ Join Game", callback_data=key)]]
     name = html.escape(update.effective_user.first_name)
     caption = f"⚽ <b>FIFA Challenge!</b>\nUser: {name}\nMode: FIFA\nWaiting for opponent... <i>(expires in 2 min)</i>"
     banner = await get_banner_for_mode("fifa")
+    msg = None
     try:
         msg = await context.bot.send_photo(
-            chat_id=update.effective_chat.id,
-            photo=banner,
-            caption=caption,
-            reply_markup=InlineKeyboardMarkup(keyboard),
-            parse_mode="HTML"
+            chat_id=chat_id, photo=banner, caption=caption,
+            reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="HTML"
         )
+    except ChatMigrated as e:
+        chat_id = e.migrate_to_chat_id
+        try:
+            msg = await context.bot.send_photo(
+                chat_id=chat_id, photo=banner, caption=caption,
+                reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="HTML"
+            )
+        except Exception:
+            pass
     except Exception:
-        msg = await context.bot.send_message(
-            chat_id=update.effective_chat.id,
-            text=caption + "\n<i>(Enable media permissions to see banners)</i>",
-            reply_markup=InlineKeyboardMarkup(keyboard),
-            parse_mode="HTML"
-        )
+        try:
+            msg = await context.bot.send_message(
+                chat_id=chat_id, text=caption + "\n<i>(Enable media permissions to see banners)</i>",
+                reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="HTML"
+            )
+        except Exception:
+            return
+    if not msg: return
     if owner_id in _pending_challenges:
         _pending_challenges[owner_id]['task'].cancel()
-    task = asyncio.create_task(_expire_challenge(owner_id, update.effective_chat.id, msg.message_id, context.bot))
-    _pending_challenges[owner_id] = {'task': task, 'chat_id': update.effective_chat.id, 'message_id': msg.message_id}
+    task = asyncio.create_task(_expire_challenge(owner_id, chat_id, msg.message_id, context.bot))
+    _pending_challenges[owner_id] = {'task': task, 'chat_id': chat_id, 'message_id': msg.message_id}
 
 
 async def challenge_wwe(update: Update, context: ContextTypes.DEFAULT_TYPE):
     from utils.banners import get_banner_for_mode
     owner_id = update.effective_user.id
+    chat_id = update.effective_chat.id
     key = f"join_WWE_{owner_id}"
     keyboard = [[InlineKeyboardButton("⚔️ Join Game", callback_data=key)]]
     name = html.escape(update.effective_user.first_name)
-    caption = f"🥌 <b>WWE Challenge!</b>\nUser: {name}\nMode: WWE\nWaiting for opponent... <i>(expires in 2 min)</i>"
+    caption = f"🤜 <b>WWE Challenge!</b>\nUser: {name}\nMode: WWE\nWaiting for opponent... <i>(expires in 2 min)</i>"
     banner = await get_banner_for_mode("wwe")
+    msg = None
     try:
         msg = await context.bot.send_photo(
-            chat_id=update.effective_chat.id,
-            photo=banner,
-            caption=caption,
-            reply_markup=InlineKeyboardMarkup(keyboard),
-            parse_mode="HTML"
+            chat_id=chat_id, photo=banner, caption=caption,
+            reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="HTML"
         )
+    except ChatMigrated as e:
+        chat_id = e.migrate_to_chat_id
+        try:
+            msg = await context.bot.send_photo(
+                chat_id=chat_id, photo=banner, caption=caption,
+                reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="HTML"
+            )
+        except Exception:
+            pass
     except Exception:
-        msg = await context.bot.send_message(
-            chat_id=update.effective_chat.id,
-            text=caption + "\n<i>(Enable media permissions to see banners)</i>",
-            reply_markup=InlineKeyboardMarkup(keyboard),
-            parse_mode="HTML"
-        )
+        try:
+            msg = await context.bot.send_message(
+                chat_id=chat_id, text=caption + "\n<i>(Enable media permissions to see banners)</i>",
+                reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="HTML"
+            )
+        except Exception:
+            return
+    if not msg: return
     if owner_id in _pending_challenges:
         _pending_challenges[owner_id]['task'].cancel()
-    task = asyncio.create_task(_expire_challenge(owner_id, update.effective_chat.id, msg.message_id, context.bot))
-    _pending_challenges[owner_id] = {'task': task, 'chat_id': update.effective_chat.id, 'message_id': msg.message_id}
+    task = asyncio.create_task(_expire_challenge(owner_id, chat_id, msg.message_id, context.bot))
+    _pending_challenges[owner_id] = {'task': task, 'chat_id': chat_id, 'message_id': msg.message_id}
 
 
 async def challenge_unified(update: Update, context: ContextTypes.DEFAULT_TYPE):
