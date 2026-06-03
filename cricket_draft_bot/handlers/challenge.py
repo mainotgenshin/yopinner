@@ -414,7 +414,12 @@ async def handle_join(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await query.answer("⛔ This challenge is not for you!", show_alert=True)
             return
 
-    # Cancel expiry task if this challenge had one — MUST cancel before pop
+    # Check Self-Join FIRST — before touching the timer
+    if query.from_user.id == owner_id:
+        await query.answer("⛔ You cannot play against yourself!", show_alert=True)
+        return
+
+    # Cancel expiry task — only reached if a different user is joining
     _ch_key = f"{owner_id}_{mode}"
     pending = _pending_challenges.pop(_ch_key, None)
     if pending:
@@ -427,10 +432,6 @@ async def handle_join(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except Exception:
         pass
 
-    # Check Self-Join
-    if query.from_user.id == owner_id:
-        await query.answer("⛔ You cannot play against yourself!", show_alert=True)
-        return
         
     # Start Match
     # Verify Owner Name (from DB or context? We don't have it easily here if stateless)
