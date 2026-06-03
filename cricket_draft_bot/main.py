@@ -205,6 +205,39 @@ async def _startup_recovery(bot):
 
     logger.info(f"Startup recovery done: {cleaned} cleaned, {restarted} auto-simulating.")
 
+    # ── Expire stale challenges (survived bot restart) ──────────────────
+    try:
+        from database import get_stale_challenges, delete_pending_challenge
+        stale = await get_stale_challenges(expiry_secs=120)
+        for ch in stale:
+            cid  = ch.get("chat_id")
+            mid  = ch.get("message_id")
+            oid  = ch.get("owner_id")
+            mode = ch.get("mode", "")
+            try:
+                await bot.edit_message_caption(
+                    chat_id=cid, message_id=mid,
+                    caption="⏰ <b>Challenge Expired</b>\nNo one joined in time.",
+                    parse_mode="HTML"
+                )
+            except Exception:
+                try:
+                    await bot.edit_message_text(
+                        chat_id=cid, message_id=mid,
+                        text="⏰ <b>Challenge Expired</b>\nNo one joined in time.",
+                        parse_mode="HTML"
+                    )
+                except Exception:
+                    pass
+            try:
+                await delete_pending_challenge(oid)
+            except Exception:
+                pass
+        if stale:
+            logger.info(f"Startup recovery: expired {len(stale)} stale challenge(s).")
+    except Exception as e:
+        logger.error(f"Stale challenge cleanup failed: {e}")
+
 async def _auto_simulate(bot, match_id: str):
     """Trigger simulation for a READY_CHECK match that timed out."""
     from game.state import load_match_state, save_match_state
