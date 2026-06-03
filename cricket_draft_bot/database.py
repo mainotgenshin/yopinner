@@ -310,8 +310,11 @@ async def update_user_stats(user_id: int, name: str, result: str,
     doc = await db.users.find_one({"user_id": user_id}, {
         "daily_wins": 1, "weekly_wins": 1,
         "daily_reset_at": 1, "weekly_reset_at": 1,
-        "first_win_at": 1, "_id": 0
+        "first_win_at": 1, "joined_at": 1,
+        "current_streak": 1, "best_streak": 1,
+        "_id": 0
     })
+
 
     # Next UTC midnight anchor
     dt = _t.gmtime(now)
