@@ -70,3 +70,4 @@ class Match:
     trade_offer: Optional[Dict] = None # {initiator: int, target_msg: int, picks: {}}
     pinned_message_id: Optional[int] = None  # Tracks the pinned draft board message
     draft_pool_removed: List[str] = field(default_factory=list)  # Delta: IDs removed from pool
+    draft_completed_at: float = 0.0  # Timestamp when draft finished, for auto-ready 5min timer
