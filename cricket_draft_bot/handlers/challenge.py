@@ -19,32 +19,63 @@ logger = logging.getLogger(__name__)
 # key = owner_id, value = {task, chat_id, message_id}
 _pending_challenges: dict = {}
 
-async def _expire_challenge(owner_id: int, chat_id: int, message_id: int, bot):
+async def _expire_challenge(ch_key: str, owner_id: int, chat_id: int, message_id: int, bot):
     """After 2 minutes, expire the challenge if not yet joined."""
     await asyncio.sleep(120)  # 2 minutes
     # Remove from tracking (in-memory + DB)
-    _pending_challenges.pop(owner_id, None)
+    _pending_challenges.pop(ch_key, None)
     try:
         await delete_pending_challenge(owner_id)
     except Exception:
         pass
+    EXPIRED_TEXT = "⏰ <b>Challenge Expired</b>\nNo one joined in time. Start a new one with /challenge intl or /challengeipl."
     try:
         await bot.edit_message_caption(
-            chat_id=chat_id,
-            message_id=message_id,
-            caption="⏰ <b>Challenge Expired</b>\nNo one joined in time. Use /challengeipl to start a new one.",
-            parse_mode="HTML"
+            chat_id=chat_id, message_id=message_id,
+            caption=EXPIRED_TEXT, parse_mode="HTML"
         )
     except Exception:
         try:
             await bot.edit_message_text(
-                chat_id=chat_id,
-                message_id=message_id,
-                text="⏰ <b>Challenge Expired</b>\nNo one joined in time.",
-                parse_mode="HTML"
+                chat_id=chat_id, message_id=message_id,
+                text=EXPIRED_TEXT, parse_mode="HTML"
             )
         except Exception:
             pass  # Message already gone or edited
+
+async def _replace_old_challenge(ch_key: str, bot):
+    """Cancel the previous pending challenge for this user and edit its message to 'Replaced'."""
+    old = _pending_challenges.pop(ch_key, None)
+    if not old:
+        return
+    task = old.get('task')
+    if task and not task.done():
+        task.cancel()
+    # Clean DB
+    try:
+        await delete_pending_challenge(owner_id)
+    except Exception:
+        pass
+    # Edit old message so it doesn't linger with an active join button
+    old_chat = old.get('chat_id')
+    old_msg  = old.get('message_id')
+    if not old_chat or not old_msg:
+        return
+    REPLACED_TEXT = "♻️ <b>Challenge Replaced</b>\nYou started a new challenge."
+    try:
+        await bot.edit_message_caption(
+            chat_id=old_chat, message_id=old_msg,
+            caption=REPLACED_TEXT, parse_mode="HTML"
+        )
+    except Exception:
+        try:
+            await bot.edit_message_text(
+                chat_id=old_chat, message_id=old_msg,
+                text=REPLACED_TEXT, parse_mode="HTML"
+            )
+        except Exception:
+            pass  # Already gone or edited — fine
+
 
 async def challenge_handler(update: Update, context: ContextTypes.DEFAULT_TYPE, mode: str):
     """
@@ -124,10 +155,10 @@ async def challenge_ipl(update: Update, context: ContextTypes.DEFAULT_TYPE):
         except Exception:
             return
     if not msg: return
-    if owner_id in _pending_challenges:
-        _pending_challenges[owner_id]['task'].cancel()
-    task = asyncio.create_task(_expire_challenge(owner_id, chat_id, msg.message_id, context.bot))
-    _pending_challenges[owner_id] = {'task': task, 'chat_id': chat_id, 'message_id': msg.message_id}
+    _ch_key = f"{owner_id}_IPL"
+    await _replace_old_challenge(_ch_key, context.bot)
+    task = asyncio.create_task(_expire_challenge(_ch_key, owner_id, chat_id, msg.message_id, context.bot))
+    _pending_challenges[_ch_key] = {'task': task, 'chat_id': chat_id, 'message_id': msg.message_id}
     try:
         await save_pending_challenge(owner_id, chat_id, msg.message_id, "IPL")
     except Exception:
@@ -167,10 +198,10 @@ async def challenge_intl(update: Update, context: ContextTypes.DEFAULT_TYPE):
         except Exception:
             return
     if not msg: return
-    if owner_id in _pending_challenges:
-        _pending_challenges[owner_id]['task'].cancel()
-    task = asyncio.create_task(_expire_challenge(owner_id, chat_id, msg.message_id, context.bot))
-    _pending_challenges[owner_id] = {'task': task, 'chat_id': chat_id, 'message_id': msg.message_id}
+    _ch_key = f"{owner_id}_International"
+    await _replace_old_challenge(_ch_key, context.bot)
+    task = asyncio.create_task(_expire_challenge(_ch_key, owner_id, chat_id, msg.message_id, context.bot))
+    _pending_challenges[_ch_key] = {'task': task, 'chat_id': chat_id, 'message_id': msg.message_id}
     try:
         await save_pending_challenge(owner_id, chat_id, msg.message_id, "International")
     except Exception:
@@ -210,10 +241,10 @@ async def challenge_fifa(update: Update, context: ContextTypes.DEFAULT_TYPE):
         except Exception:
             return
     if not msg: return
-    if owner_id in _pending_challenges:
-        _pending_challenges[owner_id]['task'].cancel()
-    task = asyncio.create_task(_expire_challenge(owner_id, chat_id, msg.message_id, context.bot))
-    _pending_challenges[owner_id] = {'task': task, 'chat_id': chat_id, 'message_id': msg.message_id}
+    _ch_key = f"{owner_id}_FIFA"
+    await _replace_old_challenge(_ch_key, context.bot)
+    task = asyncio.create_task(_expire_challenge(_ch_key, owner_id, chat_id, msg.message_id, context.bot))
+    _pending_challenges[_ch_key] = {'task': task, 'chat_id': chat_id, 'message_id': msg.message_id}
     try:
         await save_pending_challenge(owner_id, chat_id, msg.message_id, "FIFA")
     except Exception:
@@ -253,10 +284,10 @@ async def challenge_wwe(update: Update, context: ContextTypes.DEFAULT_TYPE):
         except Exception:
             return
     if not msg: return
-    if owner_id in _pending_challenges:
-        _pending_challenges[owner_id]['task'].cancel()
-    task = asyncio.create_task(_expire_challenge(owner_id, chat_id, msg.message_id, context.bot))
-    _pending_challenges[owner_id] = {'task': task, 'chat_id': chat_id, 'message_id': msg.message_id}
+    _ch_key = f"{owner_id}_WWE"
+    await _replace_old_challenge(_ch_key, context.bot)
+    task = asyncio.create_task(_expire_challenge(_ch_key, owner_id, chat_id, msg.message_id, context.bot))
+    _pending_challenges[_ch_key] = {'task': task, 'chat_id': chat_id, 'message_id': msg.message_id}
     try:
         await save_pending_challenge(owner_id, chat_id, msg.message_id, "WWE")
     except Exception:
@@ -333,10 +364,40 @@ async def challenge_unified(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"Waiting for opponent..."
         )
         
+    owner_id = update.effective_user.id
+    chat_id  = update.effective_chat.id
+    sent_msg = None
     try:
-        await update.effective_message.reply_photo(photo=banner, caption=msg, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="Markdown")
-    except Exception as e:
-        await update.effective_message.reply_text(f"{msg}\n*(Enable media permissions in this chat to see banners)*", reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="Markdown")
+        sent_msg = await update.effective_message.reply_photo(
+            photo=banner, caption=msg,
+            reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="Markdown"
+        )
+    except Exception:
+        try:
+            sent_msg = await update.effective_message.reply_text(
+                f"{msg}\n*(Enable media permissions in this chat to see banners)*",
+                reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="Markdown"
+            )
+        except Exception:
+            return
+
+    if not sent_msg:
+        return
+
+    # Cancel + edit old challenge message (if any) before starting new one
+    _ch_key = f"{owner_id}_{real_mode}"
+    await _replace_old_challenge(_ch_key, context.bot)
+
+    # Start 2-min expiry task
+    _ch_key = f"{owner_id}_{real_mode}"
+    task = asyncio.create_task(
+        _expire_challenge(_ch_key, owner_id, chat_id, sent_msg.message_id, context.bot)
+    )
+    _pending_challenges[_ch_key] = {'task': task, 'chat_id': chat_id, 'message_id': sent_msg.message_id}
+    try:
+        await save_pending_challenge(owner_id, chat_id, sent_msg.message_id, real_mode)
+    except Exception:
+        pass
 
 async def handle_join(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -358,7 +419,8 @@ async def handle_join(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return
 
     # Cancel expiry task if this challenge had one — MUST cancel before pop
-    pending = _pending_challenges.pop(owner_id, None)
+    _ch_key = f"{owner_id}_{mode}"
+    pending = _pending_challenges.pop(_ch_key, None)
     if pending:
         task = pending.get('task')
         if task and not task.done():
