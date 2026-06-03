@@ -410,14 +410,38 @@ async def handle_join(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # Pin the draft board — must be done here because draft_message_id was
     # pre-set above (reusing challenge message), so update_draft_message skips
     # its own pin block (which only fires when sending a brand new message).
+    pinned_msg_id = query.message.message_id
     try:
         await context.bot.pin_chat_message(
             chat_id=update.effective_chat.id,
-            message_id=query.message.message_id,
+            message_id=pinned_msg_id,
             disable_notification=True
         )
-        match.pinned_message_id = query.message.message_id
+        match.pinned_message_id = pinned_msg_id
         await save_match_state(match)
     except Exception:
         pass  # Bot not admin — skip silently
+
+    # Start 30-min abandon timeout (always, regardless of pin success)
+    _chat_id = update.effective_chat.id
+    _match_id = match.match_id
+    _bot = context.bot
+
+    async def _abandon_timeout_live(bot, chat_id, msg_id, match_id, delay=1800):
+        await asyncio.sleep(delay)
+        from game.state import load_match_state as _load
+        m = await _load(match_id)
+        if not m or m.state in ("DRAFTING", "READY_CHECK"):
+            try:
+                await bot.unpin_chat_message(chat_id=chat_id, message_id=msg_id)
+            except Exception:
+                pass
+            if m:
+                try:
+                    from database import get_db
+                    await get_db().matches.delete_one({"match_id": match_id})
+                except Exception:
+                    pass
+
+    asyncio.create_task(_abandon_timeout_live(_bot, _chat_id, pinned_msg_id, _match_id))
 
