@@ -86,5 +86,17 @@ async def handle_profile(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "━━━━━━━━━━━━━━━━━━"
     )
 
-    await update.effective_message.reply_text(text, parse_mode="Markdown")
+    try:
+        await update.effective_message.reply_text(text, parse_mode="Markdown")
+    except Exception:
+        # Original message deleted (e.g. bot restarted) — send without reply
+        try:
+            await context.bot.send_message(
+                chat_id=update.effective_chat.id,
+                text=text,
+                parse_mode="Markdown"
+            )
+        except Exception:
+            pass
+
 
