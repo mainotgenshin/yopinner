@@ -81,7 +81,7 @@ async def challenge_handler(update: Update, context: ContextTypes.DEFAULT_TYPE, 
     reply_markup = InlineKeyboardMarkup(keyboard)
     
     await update.effective_message.reply_text(
-        f"🏑 *{esc(mode)} Challenge Sent!*\n\nWho wants to play against {html.escape(update.effective_user.first_name)}?",
+        f"🏏 *{esc(mode)} Challenge Sent!*\n\nWho wants to play against {html.escape(update.effective_user.first_name)}?",
         reply_markup=reply_markup,
         parse_mode="Markdown"
     )
@@ -93,7 +93,7 @@ async def challenge_ipl(update: Update, context: ContextTypes.DEFAULT_TYPE):
     key = f"join_IPL_{owner_id}"
     keyboard = [[InlineKeyboardButton("⚔️ Join Game", callback_data=key)]]
     name = html.escape(update.effective_user.first_name)
-    caption = f"🏑 <b>IPL Challenge!</b>\nUser: {name}\nMode: IPL\nWaiting for opponent... <i>(expires in 2 min)</i>"
+    caption = f"🏏 <b>IPL Challenge!</b>\nUser: {name}\nMode: IPL\nWaiting for opponent... <i>(expires in 2 min)</i>"
     banner = await get_banner_for_mode("ipl")
     msg = None
     try:
@@ -132,7 +132,7 @@ async def challenge_intl(update: Update, context: ContextTypes.DEFAULT_TYPE):
     key = f"join_INTL_{owner_id}"
     keyboard = [[InlineKeyboardButton("⚔️ Join Game", callback_data=key)]]
     name = html.escape(update.effective_user.first_name)
-    caption = f"🏑 <b>International Challenge!</b>\nUser: {name}\nMode: International\nWaiting for opponent... <i>(expires in 2 min)</i>"
+    caption = f"🏏 <b>International Challenge!</b>\nUser: {name}\nMode: International\nWaiting for opponent... <i>(expires in 2 min)</i>"
     banner = await get_banner_for_mode("intl")
     msg = None
     try:
@@ -210,7 +210,7 @@ async def challenge_wwe(update: Update, context: ContextTypes.DEFAULT_TYPE):
     key = f"join_WWE_{owner_id}"
     keyboard = [[InlineKeyboardButton("⚔️ Join Game", callback_data=key)]]
     name = html.escape(update.effective_user.first_name)
-    caption = f"🤜 <b>WWE Challenge!</b>\nUser: {name}\nMode: WWE\nWaiting for opponent... <i>(expires in 2 min)</i>"
+    caption = f"🤼 <b>WWE Challenge!</b>\nUser: {name}\nMode: WWE\nWaiting for opponent... <i>(expires in 2 min)</i>"
     banner = await get_banner_for_mode("wwe")
     msg = None
     try:
@@ -336,8 +336,12 @@ async def handle_join(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await query.answer("⛔ This challenge is not for you!", show_alert=True)
             return
 
-    # Cancel expiry task if this challenge had one
-    _pending_challenges.pop(owner_id, None)
+    # Cancel expiry task if this challenge had one — MUST cancel before pop
+    pending = _pending_challenges.pop(owner_id, None)
+    if pending:
+        task = pending.get('task')
+        if task and not task.done():
+            task.cancel()
 
     # Check Self-Join
     if query.from_user.id == owner_id:
