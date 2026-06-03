@@ -27,6 +27,9 @@ async def handle_profile(update: Update, context: ContextTypes.DEFAULT_TYPE):
     losses = stats.get('losses', 0)
     draws = stats.get('draws', 0)
     total_matches = stats.get('total_matches', 0)
+    current_streak = stats.get('current_streak', 0)
+    best_streak = stats.get('best_streak', 0)
+    joined_at = stats.get('joined_at')
 
     recent = list(stats.get('recent_results', []))
     recent.reverse()
@@ -38,6 +41,23 @@ async def handle_profile(update: Update, context: ContextTypes.DEFAULT_TYPE):
     win_rate = 0.0
     if total_matches > 0:
         win_rate = (wins / total_matches) * 100
+
+    # Format join date
+    if joined_at:
+        try:
+            import datetime
+            if isinstance(joined_at, (int, float)):
+                dt = datetime.datetime.utcfromtimestamp(joined_at)
+            else:
+                dt = joined_at
+            joined_str = dt.strftime("%d %b %Y")
+        except Exception:
+            joined_str = "—"
+    else:
+        joined_str = "—"
+
+    # Streak emoji
+    streak_emoji = "🔥" if current_streak >= 3 else "⚡" if current_streak >= 1 else "💤"
 
     # Get global rank (lightweight count query, reuses standings cache)
     try:
@@ -52,12 +72,15 @@ async def handle_profile(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"    👤 *{esc(name)}*\n"
         "━━━━━━━━━━━━━━━━━━\n"
         f"{rank_line}"
+        f"📅 Joined: `{joined_str}`\n"
         "━━━━━━━━━━━━━━━━━━\n"
         f"🔘 matches : `{total_matches}`\n"
         f"🟢 wins    : `{wins}`\n"
         f"🔴 losses : `{losses}`\n"
         f"⚪ draws  : `{draws}`\n"
         f"📊 win %  : `{win_rate:.1f}%`\n\n"
+        f"{streak_emoji} *Win Streak*\n"
+        f"Current: `{current_streak}` | Best: `{best_streak}`\n\n"
         "📈 *Recent Matches*\n"
         f"{recent_str}\n"
         "━━━━━━━━━━━━━━━━━━"
