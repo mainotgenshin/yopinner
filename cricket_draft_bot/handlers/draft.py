@@ -321,7 +321,39 @@ async def handle_assign(update: Update, context: ContextTypes.DEFAULT_TYPE, matc
         match.state = "READY_CHECK"
         match.draft_completed_at = time.time()  # Timestamp for 5-min auto-ready
         await save_match_state(match)
-        
+
+        # Start 5-min auto-simulate timer (live — not just on startup recovery)
+        async def _auto_ready_live(bot, match_id, chat_id):
+            await asyncio.sleep(300)  # 5 minutes
+            from game.state import load_match_state, save_match_state as _save
+            from game.simulation import run_simulation
+            m = await load_match_state(match_id)
+            if not m or m.state != "READY_CHECK":
+                return  # Already simulated or cancelled
+            try:
+                run_simulation(m)
+                await _save(m)
+                result_text = "\n".join(m.simulation_log or ["Match simulated."])
+                try:
+                    await bot.send_message(chat_id=chat_id, text=result_text, parse_mode="Markdown")
+                except Exception:
+                    try:
+                        await bot.send_message(chat_id=chat_id, text=result_text)
+                    except Exception:
+                        pass
+                try:
+                    from database import get_db
+                    pinned = m.pinned_message_id
+                    if pinned:
+                        await bot.unpin_chat_message(chat_id=chat_id, message_id=pinned)
+                    await get_db().matches.delete_one({"match_id": match_id})
+                except Exception:
+                    pass
+            except Exception as e:
+                logger.error(f"Auto-ready live failed for {match_id}: {e}")
+
+        asyncio.create_task(_auto_ready_live(context.bot, match.match_id, match.chat_id))
+
         board_text = format_draft_board(match)
         # Final Board Update
         keyboard = [[InlineKeyboardButton("🚀 READY", callback_data=f"ready_{match.match_id}")]]
