@@ -994,14 +994,32 @@ async def set_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
         sport_filter = sport_filter.lower()
         if sport_filter == 'fifa': sport_filter = 'football'
 
-    from database import get_player_by_name, get_player_by_name_and_sport, save_player
-    p = (await get_player_by_name_and_sport(player_name, sport_filter)
-         if sport_filter else await get_player_by_name(player_name))
+    from database import search_players_by_name, save_player
+    results = await search_players_by_name(player_name, sport_filter)
 
-    if not p:
+    if not results:
         hint = f" (sport={sport_filter})" if sport_filter else ""
         await update.message.reply_text(f"❌ Player '{player_name}'{hint} not found.")
         return
+
+    if len(results) > 1:
+        # Check for exact match first
+        exact = [r for r in results if r['name'].lower() == player_name.lower()]
+        if len(exact) == 1:
+            p = exact[0]
+        else:
+            names = [f"`{r['name']}` (sport={r.get('sport','?')})" for r in results[:5]]
+            if len(results) > 5:
+                names.append("...")
+            await update.message.reply_text(
+                f"⚠️ Multiple players found matching `{player_name}`:\n"
+                + "\n".join(names)
+                + "\n\nPlease be more specific or add `sport=cricket/football/wwe` to target the right player.",
+                parse_mode="Markdown"
+            )
+            return
+    else:
+        p = results[0]
 
     sport = p.get('sport', 'cricket')
     stats = p.get('stats', {})
@@ -1169,10 +1187,12 @@ async def _render_check(update, cb_query, role_query: str, mode: str, page: int)
             "hitting": "Top", "batting": "Top", "pace": "Pacer",
             "spin": "Spinner", "all": "All Rounder", "allrounder": "All Rounder",
             "field": "Fielder", "fielding": "Fielder", "def": "Defence",
-            "defence": "Defence", "middle": "Middle", "top": "Top",
-            "wk": "WK", "cap": "Captain", "captain": "Captain",
-            "fin": "Finisher", "finisher": "Finisher",
+            "defence": "Defence", "middle": "Middle", "mid": "Middle",
+            "top": "Top", "wk": "WK", "cap": "Captain", "captain": "Captain",
+            "fin": "Finisher", "finisher": "Finisher", "pacer": "Pacer",
+            "spinner": "Spinner", "ar": "All Rounder",
         }
+
         canonical_role = alias_map.get(role_query) or next(
             (r for r in ROLE_STATS_MAP if r.lower() == role_query), None
         )
