@@ -452,7 +452,7 @@ async def save_pending_challenge(owner_id: int, chat_id: int, message_id: int, m
     """Upsert a pending challenge so startup_recovery can expire it on restart."""
     db = get_db()
     await db.pending_challenges.update_one(
-        {"owner_id": owner_id},
+        {"owner_id": owner_id, "mode": mode},
         {"$set": {
             "owner_id": owner_id,
             "chat_id": chat_id,
@@ -463,10 +463,13 @@ async def save_pending_challenge(owner_id: int, chat_id: int, message_id: int, m
         upsert=True
     )
 
-async def delete_pending_challenge(owner_id: int) -> None:
+async def delete_pending_challenge(owner_id: int, mode: str = None) -> None:
     """Remove a pending challenge (joined or naturally expired)."""
     db = get_db()
-    await db.pending_challenges.delete_one({"owner_id": owner_id})
+    query = {"owner_id": owner_id}
+    if mode:
+        query["mode"] = mode
+    await db.pending_challenges.delete_one(query)
 
 async def get_stale_challenges(expiry_secs: int = 120) -> list:
     """Return all challenges older than expiry_secs seconds."""
