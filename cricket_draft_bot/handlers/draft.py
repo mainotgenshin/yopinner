@@ -34,18 +34,31 @@ async def handle_draft_callback(update: Update, context: ContextTypes.DEFAULT_TY
     
     # Parsing ID logic — use | as separator between match_id and slot
     # to safely handle slot names with spaces (e.g. "All Rounder", "High Flyer")
+    # Backward-compat: old matches before the | fix still send _ separator
     if action == "assign":
-        # format: assign_{match_id}|{slot}
-        pipe_idx = data.index('|')
-        slot = data[pipe_idx + 1:]
-        match_id = data[len('assign_'):pipe_idx]
+        # format: assign_{match_id}|{slot}  (new)
+        # format: assign_{match_id}_{slot}  (old, slot has no spaces in this path)
+        if '|' in data:
+            pipe_idx = data.index('|')
+            slot = data[pipe_idx + 1:]
+            match_id = data[len('assign_'):pipe_idx]
+        else:
+            # Old format fallback: last underscore-separated token is the slot
+            # match_id = ownerid_timestamp (2 parts), slot is the rest
+            match_id = f"{parts[1]}_{parts[2]}"
+            slot = "_".join(parts[3:])
     elif action == "replace":
         sub = parts[1]
         if sub == "exec":
-            # format: replace_exec_{match_id}|{slot}
-            pipe_idx = data.index('|')
-            slot = data[pipe_idx + 1:]
-            match_id = data[len('replace_exec_'):pipe_idx]
+            # format: replace_exec_{match_id}|{slot}  (new)
+            # format: replace_exec_{match_id}_{slot}  (old)
+            if '|' in data:
+                pipe_idx = data.index('|')
+                slot = data[pipe_idx + 1:]
+                match_id = data[len('replace_exec_'):pipe_idx]
+            else:
+                match_id = f"{parts[2]}_{parts[3]}"
+                slot = "_".join(parts[4:])
         else:
             match_id = "_".join(parts[2:])
     else:
