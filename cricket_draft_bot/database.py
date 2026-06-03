@@ -444,3 +444,33 @@ async def set_banner(mode: str, url: str) -> None:
         {"$set": {"key": f"banner_{mode}", "value": url}},
         upsert=True
     )
+
+# ── Pending Challenge persistence (survives restarts) ───────────────────────
+import time as _time_mod
+
+async def save_pending_challenge(owner_id: int, chat_id: int, message_id: int, mode: str) -> None:
+    """Upsert a pending challenge so startup_recovery can expire it on restart."""
+    db = get_db()
+    await db.pending_challenges.update_one(
+        {"owner_id": owner_id},
+        {"$set": {
+            "owner_id": owner_id,
+            "chat_id": chat_id,
+            "message_id": message_id,
+            "mode": mode,
+            "created_at": _time_mod.time()
+        }},
+        upsert=True
+    )
+
+async def delete_pending_challenge(owner_id: int) -> None:
+    """Remove a pending challenge (joined or naturally expired)."""
+    db = get_db()
+    await db.pending_challenges.delete_one({"owner_id": owner_id})
+
+async def get_stale_challenges(expiry_secs: int = 120) -> list:
+    """Return all challenges older than expiry_secs seconds."""
+    db = get_db()
+    cutoff = _time_mod.time() - expiry_secs
+    cursor = db.pending_challenges.find({"created_at": {"$lt": cutoff}})
+    return await cursor.to_list(length=200)
