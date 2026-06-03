@@ -331,26 +331,37 @@ async def handle_assign(update: Update, context: ContextTypes.DEFAULT_TYPE, matc
             if not m or m.state != "READY_CHECK":
                 return  # Already simulated or cancelled
             try:
-                run_simulation(m)
+                import time as _t
+                m.state = "SIMULATING"
+                m.team_a.is_ready = True
+                m.team_b.is_ready = True
                 await _save(m)
-                result_text = "\n".join(m.simulation_log or ["Match simulated."])
+                result_text = await run_simulation(m)  # async, returns str
+                m.state = "FINISHED"
+                m.finished_at = _t.time()
+                await _save(m)
+                msg = f"⏰ *Auto-Ready triggered (5min timeout)*\n\n{result_text}"
                 try:
-                    await bot.send_message(chat_id=chat_id, text=result_text, parse_mode="Markdown")
+                    await bot.send_message(chat_id=chat_id, text=msg, parse_mode="Markdown")
                 except Exception:
                     try:
-                        await bot.send_message(chat_id=chat_id, text=result_text)
+                        await bot.send_message(chat_id=chat_id, text=msg)
+                    except Exception:
+                        pass
+                pinned = getattr(m, 'pinned_message_id', None)
+                if pinned:
+                    try:
+                        await bot.unpin_chat_message(chat_id=chat_id, message_id=pinned)
                     except Exception:
                         pass
                 try:
                     from database import get_db
-                    pinned = m.pinned_message_id
-                    if pinned:
-                        await bot.unpin_chat_message(chat_id=chat_id, message_id=pinned)
                     await get_db().matches.delete_one({"match_id": match_id})
                 except Exception:
                     pass
             except Exception as e:
                 logger.error(f"Auto-ready live failed for {match_id}: {e}")
+
 
         asyncio.create_task(_auto_ready_live(context.bot, match.match_id, match.chat_id))
 
