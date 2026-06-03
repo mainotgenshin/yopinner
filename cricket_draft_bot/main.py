@@ -1,5 +1,7 @@
 # main.py
 import logging
+import time
+import asyncio
 
 # MONKEYPATCH: Fix for Windows Timezone issues with APScheduler
 import pytz
@@ -28,6 +30,8 @@ logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
     level=logging.INFO
 )
+# Suppress noisy httpx request logs (fires on every API call — hundreds/hour)
+logging.getLogger("httpx").setLevel(logging.WARNING)
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     from database import save_chat
@@ -118,14 +122,144 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await handle_check_callback(update, context)
 
 async def post_init(application):
-    from database import init_db
+    from database import init_db, get_db
     await init_db()
+    # Startup recovery: clean up stuck matches and restart timers
+    await _startup_recovery(application.bot)
+
+async def _startup_recovery(bot):
+    """On every bot start, scan for stuck matches and:
+    - If older than 30min in DRAFTING/READY_CHECK: unpin + delete
+    - If in READY_CHECK and draft_completed_at > 5min ago: auto-simulate
+    - If < 30min in DRAFTING: restart the 30min abandon timeout
+    """
+    from database import get_db
+    from game.state import load_match_state, save_match_state
+
+    db = get_db()
+    now = time.time()
+    ABANDON_LIMIT   = 1800  # 30 min
+    AUTOREADY_LIMIT = 300   # 5 min
+
+    logger = logging.getLogger(__name__)
+    logger.info("Startup recovery: scanning for stuck matches...")
+
+    try:
+        stuck = await db.matches.find(
+            {"state": {"$in": ["DRAFTING", "READY_CHECK"]}}
+        ).to_list(length=200)
+    except Exception as e:
+        logger.error(f"Startup recovery query failed: {e}")
+        return
+
+    cleaned = 0
+    restarted = 0
+
+    for doc in stuck:
+        match_id  = doc.get("match_id")
+        chat_id   = doc.get("chat_id")
+        pinned_id = doc.get("pinned_message_id")
+        state     = doc.get("state", "DRAFTING")
+        # Use match creation time from match_id (format: ownerid_timestamp)
+        try:
+            created_at = float(match_id.split("_")[1])
+        except Exception:
+            created_at = now - ABANDON_LIMIT - 1  # Force cleanup if unparseable
+
+        age = now - created_at
+        draft_completed_at = doc.get("draft_completed_at", 0.0)
+
+        if age >= ABANDON_LIMIT:
+            # Match is stale — clean it up
+            try:
+                if pinned_id:
+                    await bot.unpin_chat_message(chat_id=chat_id, message_id=pinned_id)
+            except Exception:
+                pass
+            try:
+                await db.matches.delete_one({"match_id": match_id})
+            except Exception:
+                pass
+            cleaned += 1
+
+        elif state == "READY_CHECK" and draft_completed_at > 0 and (now - draft_completed_at) >= AUTOREADY_LIMIT:
+            # Draft complete but players didn't click ready for 5+ min — auto-simulate
+            asyncio.create_task(_auto_simulate(bot, match_id))
+            restarted += 1
+
+        else:
+            # Still young — restart the abandon timeout with remaining time
+            remaining = max(30, ABANDON_LIMIT - age)
+            async def _delayed_unpin(b, c_id, p_id, m_id, delay):
+                await asyncio.sleep(delay)
+                from game.state import load_match_state
+                m = await load_match_state(m_id)
+                if not m or m.state in ["DRAFTING", "READY_CHECK"]:
+                    try: await b.unpin_chat_message(chat_id=c_id, message_id=p_id)
+                    except: pass
+                    try:
+                        from database import get_db as _gdb
+                        await _gdb().matches.delete_one({"match_id": m_id})
+                    except: pass
+            asyncio.create_task(_delayed_unpin(bot, chat_id, pinned_id, match_id, remaining))
+
+    logger.info(f"Startup recovery done: {cleaned} cleaned, {restarted} auto-simulating.")
+
+async def _auto_simulate(bot, match_id: str):
+    """Trigger simulation for a READY_CHECK match that timed out."""
+    from game.state import load_match_state, save_match_state
+    from game.simulation import run_simulation
+
+    logger = logging.getLogger(__name__)
+    try:
+        match = await load_match_state(match_id)
+        if not match or match.state != "READY_CHECK":
+            return
+
+        match.state = "SIMULATING"
+        match.team_a.is_ready = True
+        match.team_b.is_ready = True
+        await save_match_state(match)
+
+        result_text = await run_simulation(match)
+        match.state = "FINISHED"
+        match.finished_at = time.time()
+        await save_match_state(match)
+
+        await bot.send_message(
+            chat_id=match.chat_id,
+            text=f"⏰ *Auto-Ready triggered (5min timeout)*\n\n{result_text}",
+            parse_mode="Markdown"
+        )
+
+        # Unpin draft board
+        pinned_id = getattr(match, 'pinned_message_id', None)
+        if pinned_id:
+            try:
+                await bot.unpin_chat_message(chat_id=match.chat_id, message_id=pinned_id)
+            except Exception:
+                pass
+
+        # Update user stats
+        from database import update_user_stats
+        winner_id = match.team_a.owner_id if match.team_a.score > match.team_b.score else (
+            match.team_b.owner_id if match.team_b.score > match.team_a.score else None
+        )
+        result_a = "W" if match.team_a.score > match.team_b.score else ("D" if match.team_a.score == match.team_b.score else "L")
+        result_b = "W" if match.team_b.score > match.team_a.score else ("D" if match.team_a.score == match.team_b.score else "L")
+        mode = match.mode
+        await update_user_stats(match.team_a.owner_id, result_a, mode=mode, chat_id=match.chat_id)
+        await update_user_stats(match.team_b.owner_id, result_b, mode=mode, chat_id=match.chat_id)
+
+    except Exception as e:
+        logger.error(f"Auto-simulate failed for {match_id}: {e}")
 
 if __name__ == '__main__':
     # Build application
     application = (
         ApplicationBuilder()
         .token(BOT_TOKEN)
+        .rate_limiter(__import__('telegram.ext', fromlist=['AIORateLimiter']).AIORateLimiter())
         .job_queue(None)
         .read_timeout(30)
         .write_timeout(30)
