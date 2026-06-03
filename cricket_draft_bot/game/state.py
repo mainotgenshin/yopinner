@@ -78,6 +78,7 @@ async def save_match_state(match: Match):
         "card_message_id": match.card_message_id,
         "pinned_message_id": getattr(match, 'pinned_message_id', None),
         "finished_at": match.finished_at,
+        "draft_completed_at": getattr(match, 'draft_completed_at', 0.0),
         "trade_offer": getattr(match, 'trade_offer', None)
     }
     await save_match(match.match_id, match.chat_id, state_data)
@@ -119,6 +120,7 @@ async def load_match_state(match_id: str) -> Optional[Match]:
         card_message_id=data.get('card_message_id'),
         finished_at=data.get('finished_at', 0.0),
         pinned_message_id=data.get('pinned_message_id'),
+        draft_completed_at=data.get('draft_completed_at', 0.0),
     )
     m.trade_offer = data.get('trade_offer')
 
