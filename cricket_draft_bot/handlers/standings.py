@@ -420,11 +420,17 @@ async def handle_standings_callback(update: Update, context: ContextTypes.DEFAUL
 
     # Anti-spam cooldown
     if now - _user_cooldown.get(user_id, 0) < COOLDOWN_SECS:
-        await query.answer("⏳ Please wait a moment.", show_alert=False)
+        try:
+            await query.answer("⏳ Please wait a moment.", show_alert=False)
+        except Exception:
+            pass
         return
     _user_cooldown[user_id] = now
 
-    await query.answer()
+    try:
+        await query.answer()
+    except Exception:
+        pass  # Stale query after restart — ignore silently
 
     view_map = {
         "lb_overall": "overall",
