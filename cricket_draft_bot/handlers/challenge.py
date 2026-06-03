@@ -44,7 +44,7 @@ async def _expire_challenge(ch_key: str, owner_id: int, chat_id: int, message_id
             pass  # Message already gone or edited
 
 async def _replace_old_challenge(ch_key: str, bot):
-    """Cancel the previous pending challenge for this user and edit its message to 'Replaced'."""
+    """Cancel the previous pending challenge for this user+mode and clean up its message."""
     old = _pending_challenges.pop(ch_key, None)
     if not old:
         return
@@ -53,28 +53,29 @@ async def _replace_old_challenge(ch_key: str, bot):
         task.cancel()
     # Clean DB
     try:
-        await delete_pending_challenge(owner_id)
+        parts = ch_key.split('_', 1)
+        await delete_pending_challenge(int(parts[0]), parts[1] if len(parts) > 1 else None)
     except Exception:
         pass
-    # Edit old message so it doesn't linger with an active join button
+    # Silently mark old message as expired (no one joined)
     old_chat = old.get('chat_id')
     old_msg  = old.get('message_id')
     if not old_chat or not old_msg:
         return
-    REPLACED_TEXT = "♻️ <b>Challenge Replaced</b>\nYou started a new challenge."
+    EXPIRED_TEXT = "⏰ <b>Challenge Expired</b>\nNo one joined in time. Start a new one with /challenge intl or /challengeipl."
     try:
         await bot.edit_message_caption(
             chat_id=old_chat, message_id=old_msg,
-            caption=REPLACED_TEXT, parse_mode="HTML"
+            caption=EXPIRED_TEXT, parse_mode="HTML"
         )
     except Exception:
         try:
             await bot.edit_message_text(
                 chat_id=old_chat, message_id=old_msg,
-                text=REPLACED_TEXT, parse_mode="HTML"
+                text=EXPIRED_TEXT, parse_mode="HTML"
             )
         except Exception:
-            pass  # Already gone or edited — fine
+            pass
 
 
 async def challenge_handler(update: Update, context: ContextTypes.DEFAULT_TYPE, mode: str):
@@ -156,7 +157,6 @@ async def challenge_ipl(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return
     if not msg: return
     _ch_key = f"{owner_id}_IPL"
-    await _replace_old_challenge(_ch_key, context.bot)
     task = asyncio.create_task(_expire_challenge(_ch_key, owner_id, chat_id, msg.message_id, context.bot))
     _pending_challenges[_ch_key] = {'task': task, 'chat_id': chat_id, 'message_id': msg.message_id}
     try:
@@ -199,7 +199,6 @@ async def challenge_intl(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return
     if not msg: return
     _ch_key = f"{owner_id}_International"
-    await _replace_old_challenge(_ch_key, context.bot)
     task = asyncio.create_task(_expire_challenge(_ch_key, owner_id, chat_id, msg.message_id, context.bot))
     _pending_challenges[_ch_key] = {'task': task, 'chat_id': chat_id, 'message_id': msg.message_id}
     try:
@@ -242,7 +241,6 @@ async def challenge_fifa(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return
     if not msg: return
     _ch_key = f"{owner_id}_FIFA"
-    await _replace_old_challenge(_ch_key, context.bot)
     task = asyncio.create_task(_expire_challenge(_ch_key, owner_id, chat_id, msg.message_id, context.bot))
     _pending_challenges[_ch_key] = {'task': task, 'chat_id': chat_id, 'message_id': msg.message_id}
     try:
@@ -285,7 +283,6 @@ async def challenge_wwe(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return
     if not msg: return
     _ch_key = f"{owner_id}_WWE"
-    await _replace_old_challenge(_ch_key, context.bot)
     task = asyncio.create_task(_expire_challenge(_ch_key, owner_id, chat_id, msg.message_id, context.bot))
     _pending_challenges[_ch_key] = {'task': task, 'chat_id': chat_id, 'message_id': msg.message_id}
     try:
@@ -386,7 +383,6 @@ async def challenge_unified(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     # Cancel + edit old challenge message (if any) before starting new one
     _ch_key = f"{owner_id}_{real_mode}"
-    await _replace_old_challenge(_ch_key, context.bot)
 
     # Start 2-min expiry task
     _ch_key = f"{owner_id}_{real_mode}"
