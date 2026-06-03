@@ -29,8 +29,7 @@ async def handle_profile(update: Update, context: ContextTypes.DEFAULT_TYPE):
     total_matches = stats.get('total_matches', 0)
     current_streak = stats.get('current_streak', 0)
     best_streak = stats.get('best_streak', 0)
-    joined_at = stats.get('joined_at') or stats.get('first_win_at')  # fallback for old users
-    joined_approx = not stats.get('joined_at') and stats.get('first_win_at')
+    joined_at = stats.get('joined_at')
 
     recent = list(stats.get('recent_results', []))
     recent.reverse()
@@ -52,8 +51,6 @@ async def handle_profile(update: Update, context: ContextTypes.DEFAULT_TYPE):
             else:
                 dt = joined_at
             joined_str = dt.strftime("%d %b %Y")
-            if joined_approx:
-                joined_str += " (~)"
         except Exception:
             joined_str = "—"
     else:
