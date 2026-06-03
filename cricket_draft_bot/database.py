@@ -23,7 +23,7 @@ CACHE_MAX_SIZE = 3500
 # In-memory mode pool cache (TTL 5 min) — avoids re-fetching 500 IDs on every match load
 _mode_pool_cache: Dict[str, List] = {}
 _mode_pool_cache_time: Dict[str, float] = {}
-MODE_POOL_CACHE_TTL = 300  # seconds
+MODE_POOL_CACHE_TTL = 1800  # 30 minutes (was 5min — player pool rarely changes)
 
 def get_db():
     global _mongo_client, _db
@@ -397,6 +397,21 @@ async def update_user_stats(user_id: int, name: str, result: str,
     # Per-chat wins (only for wins)
     if is_win and chat_id:
         ops["$inc"][f"chat_wins.{chat_id}"] = 1
+
+    # Streak tracking
+    current_streak = (doc.get("current_streak", 0) if doc else 0)
+    if is_win:
+        current_streak += 1
+    else:
+        current_streak = 0
+    set_updates["current_streak"] = current_streak
+    best_streak = doc.get("best_streak", 0) if doc else 0
+    if current_streak > best_streak:
+        set_updates["best_streak"] = current_streak
+
+    # Join date — set only once on first match
+    if not doc or not doc.get("joined_at"):
+        set_updates["joined_at"] = now
 
     await db.users.update_one({"user_id": user_id}, ops, upsert=True)
 
