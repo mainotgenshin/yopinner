@@ -171,7 +171,7 @@ async def challenge_intl(update: Update, context: ContextTypes.DEFAULT_TYPE):
     from utils.banners import get_banner_for_mode
     owner_id = update.effective_user.id
     chat_id = update.effective_chat.id
-    key = f"join_INTL_{owner_id}"
+    key = f"join_International_{owner_id}"
     keyboard = [[InlineKeyboardButton("⚔️ Join Game", callback_data=key)]]
     name = html.escape(update.effective_user.first_name)
     caption = f"🏏 <b>International Challenge!</b>\nUser: {name}\nMode: International\nWaiting for opponent... <i>(expires in 2 min)</i>"
