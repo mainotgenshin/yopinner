@@ -158,7 +158,7 @@ async def challenge_ipl(update: Update, context: ContextTypes.DEFAULT_TYPE):
         except Exception:
             return
     if not msg: return
-    _ch_key = f"{owner_id}_IPL"
+    _ch_key = f"{owner_id}_IPL_{msg.message_id}"
     task = asyncio.create_task(_expire_challenge(_ch_key, owner_id, chat_id, msg.message_id, context.bot))
     _pending_challenges[_ch_key] = {'task': task, 'chat_id': chat_id, 'message_id': msg.message_id}
     try:
@@ -200,7 +200,7 @@ async def challenge_intl(update: Update, context: ContextTypes.DEFAULT_TYPE):
         except Exception:
             return
     if not msg: return
-    _ch_key = f"{owner_id}_International"
+    _ch_key = f"{owner_id}_International_{msg.message_id}"
     task = asyncio.create_task(_expire_challenge(_ch_key, owner_id, chat_id, msg.message_id, context.bot))
     _pending_challenges[_ch_key] = {'task': task, 'chat_id': chat_id, 'message_id': msg.message_id}
     try:
@@ -242,7 +242,7 @@ async def challenge_fifa(update: Update, context: ContextTypes.DEFAULT_TYPE):
         except Exception:
             return
     if not msg: return
-    _ch_key = f"{owner_id}_FIFA"
+    _ch_key = f"{owner_id}_FIFA_{msg.message_id}"
     task = asyncio.create_task(_expire_challenge(_ch_key, owner_id, chat_id, msg.message_id, context.bot))
     _pending_challenges[_ch_key] = {'task': task, 'chat_id': chat_id, 'message_id': msg.message_id}
     try:
@@ -284,7 +284,7 @@ async def challenge_wwe(update: Update, context: ContextTypes.DEFAULT_TYPE):
         except Exception:
             return
     if not msg: return
-    _ch_key = f"{owner_id}_WWE"
+    _ch_key = f"{owner_id}_WWE_{msg.message_id}"
     task = asyncio.create_task(_expire_challenge(_ch_key, owner_id, chat_id, msg.message_id, context.bot))
     _pending_challenges[_ch_key] = {'task': task, 'chat_id': chat_id, 'message_id': msg.message_id}
     try:
@@ -384,10 +384,9 @@ async def challenge_unified(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     # Cancel + edit old challenge message (if any) before starting new one
-    _ch_key = f"{owner_id}_{real_mode}"
+    _ch_key = f"{owner_id}_{real_mode}_{sent_msg.message_id}"
 
     # Start 2-min expiry task
-    _ch_key = f"{owner_id}_{real_mode}"
     task = asyncio.create_task(
         _expire_challenge(_ch_key, owner_id, chat_id, sent_msg.message_id, context.bot)
     )
@@ -421,8 +420,9 @@ async def handle_join(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.answer("⛔ You cannot play against yourself!", show_alert=True)
         return
 
-    # Cancel expiry task — only reached if a different user is joining
-    _ch_key = f"{owner_id}_{mode}"
+    # Cancel expiry task for THIS specific message — only reached if a different user is joining
+    _joined_msg_id = query.message.message_id if query.message else None
+    _ch_key = f"{owner_id}_{mode}_{_joined_msg_id}"
     pending = _pending_challenges.pop(_ch_key, None)
     if pending:
         task = pending.get('task')
