@@ -286,6 +286,8 @@ async def _startup_recovery(bot):
                 await delete_pending_challenge(oid, mode)
             except Exception:
                 pass
+            # Throttle: 50ms gap between edits to stay under Telegram's 30 msg/sec limit
+            await asyncio.sleep(0.05)
         if stale:
             logger.info(f"Startup recovery: expired {len(stale)} stale challenge(s).")
 
@@ -379,7 +381,7 @@ if __name__ == '__main__':
     application = (
         ApplicationBuilder()
         .token(BOT_TOKEN)
-        .rate_limiter(AIORateLimiter())
+        .rate_limiter(AIORateLimiter(max_retries=5))
         .job_queue(None)
         .read_timeout(30)
         .write_timeout(30)
