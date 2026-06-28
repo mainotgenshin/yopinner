@@ -30,7 +30,7 @@ async def handle_draft_callback(update: Update, context: ContextTypes.DEFAULT_TY
     parts = data.split('_')
     action = parts[0]
     
-    logger.info(f"DEBUG: Processing Callback. Data={data} Parts={parts}")
+
     
     # Parsing ID logic — use | as separator between match_id and slot
     # to safely handle slot names with spaces (e.g. "All Rounder", "High Flyer")
@@ -65,7 +65,7 @@ async def handle_draft_callback(update: Update, context: ContextTypes.DEFAULT_TY
         # draw / redraw
         match_id = "_".join(parts[1:])
         
-    logger.info(f"DEBUG: Parsed MatchID={match_id} Action={action}")
+
     
     # Locking
     if match_id in PROCESSING_LOCKS:
@@ -88,8 +88,8 @@ async def handle_draft_callback(update: Update, context: ContextTypes.DEFAULT_TY
             await safe_answer(f"Match ended or expired. ({match_id})", alert=True)
             return
             
-        # Check turn
-        if query.from_user.id != match.current_turn:
+        # Check turn — cast both to int to guard against str/int type mismatch from MongoDB
+        if int(query.from_user.id) != int(match.current_turn):
             await safe_answer("Turn passed! Board updating...", alert=True)
             return
 
@@ -229,7 +229,10 @@ async def handle_draw(update: Update, context: ContextTypes.DEFAULT_TYPE, match:
         return
         
     match.pending_player_id = player['player_id']
-    await save_match_state(match)
+    # Background the DB save — user doesn't need to wait for it.
+    # The pending_player_id is set in-memory first so idempotency still works.
+    import asyncio as _aio
+    _aio.create_task(save_match_state(match))
     
     current_team = match.team_a if match.team_a.owner_id == match.current_turn else match.team_b
     
