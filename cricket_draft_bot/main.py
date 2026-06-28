@@ -22,7 +22,7 @@ from telegram.ext import ApplicationBuilder, ContextTypes, CommandHandler, Callb
 from config import BOT_TOKEN
 from database import init_db
 from handlers.admin import add_player, map_api, remove_player, get_player_stats, reset_matches
-from handlers.challenge import challenge_ipl, challenge_intl, challenge_fifa, challenge_wwe, handle_join
+from handlers.challenge import challenge_ipl, challenge_odi, challenge_test, challenge_fifa, challenge_wwe, handle_join, handle_mode_pick_callback
 from handlers.draft import handle_draft_callback
 from handlers.ready import handle_ready
 
@@ -32,6 +32,55 @@ logging.basicConfig(
 )
 # Suppress noisy httpx request logs (fires on every API call — hundreds/hour)
 logging.getLogger("httpx").setLevel(logging.WARNING)
+
+def wrap_admin_logging(handler_func, action_name):
+    """Wraps admin handlers to log their actions to the admin log channel/group."""
+    from config import ADMIN_LOG_GROUP_ID
+    import asyncio
+    import logging
+    
+    logger = logging.getLogger(__name__)
+
+    async def logged_handler(update, context):
+        res = await handler_func(update, context)
+        
+        # Only log if log group is configured and sender is authenticated admin
+        if ADMIN_LOG_GROUP_ID and update.effective_user and update.message and update.message.text:
+            async def _send_log():
+                try:
+                    from utils.permissions import check_admin
+                    if not await check_admin(update):
+                        return
+                    
+                    user = update.effective_user
+                    chat = update.effective_chat
+                    user_info = f"{user.first_name} (ID: <code>{user.id}</code>)"
+                    if user.username:
+                        user_info += f" @{user.username}"
+                    
+                    chat_info = "Private DM"
+                    if chat and chat.type != "private":
+                        chat_info = f"Group: <b>{chat.title}</b> (ID: <code>{chat.id}</code>)"
+                        
+                    msg = (
+                        f"🛠️ <b>Admin Action Log</b>\n\n"
+                        f"👤 <b>Admin</b>: {user_info}\n"
+                        f"📍 <b>Location</b>: {chat_info}\n"
+                        f"📝 <b>Action</b>: {action_name}\n"
+                        f"💬 <b>Command</b>: <code>{update.message.text}</code>"
+                    )
+                    await context.bot.send_message(
+                        chat_id=ADMIN_LOG_GROUP_ID,
+                        text=msg,
+                        parse_mode="HTML"
+                    )
+                except Exception as e:
+                    logger.error(f"Failed to send admin log: {e}")
+
+            asyncio.create_task(_send_log())
+        return res
+        
+    return logged_handler
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     from database import save_chat
@@ -64,8 +113,10 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.effective_message.reply_text(
             "🏏 *Welcome to Draft Bot!* 🏏\n\n"
             "*Draft Commands:*\n"
+            "/challenge — Select and start any challenge\n"
             "/challengeipl — IPL Draft\n"
-            "/challengeintl — International Draft\n"
+            "/challengeodi — ODI Draft\n"
+            "/challengetest — Test Draft\n"
             "/challengefifa — FIFA Draft\n"
             "/challengewwe — WWE Draft _(NEW!)_\n\n"
             "/standings — Leaderboard\n"
@@ -105,13 +156,20 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         from handlers.admin import handle_view_ipl_callback
         await handle_view_ipl_callback(update, context)
 
-    elif data.startswith("view_intl_"):
-        from handlers.admin import handle_view_intl_callback
-        await handle_view_intl_callback(update, context)
+    elif data.startswith("view_odi_"):
+        from handlers.admin import handle_view_odi_callback
+        await handle_view_odi_callback(update, context)
 
-    elif data.startswith("gen_intl_"):
-        from handlers.admin import handle_gen_intl_callback
-        await handle_gen_intl_callback(update, context)
+    elif data.startswith("view_test_"):
+        from handlers.admin import handle_view_test_callback
+        await handle_view_test_callback(update, context)
+
+    elif data.startswith("gen_odi_"):
+        from handlers.admin import handle_gen_odi_callback
+        await handle_gen_odi_callback(update, context)
+
+    elif data.startswith("challenge_pick_"):
+        await handle_mode_pick_callback(update, context)
 
     elif data.startswith("gen_ipl_"):
         from handlers.admin import handle_gen_ipl_callback
@@ -208,7 +266,7 @@ async def _startup_recovery(bot):
     # ── Expire stale challenges (survived bot restart) ──────────────────
     try:
         from database import get_stale_challenges, delete_pending_challenge, get_db as _gdb
-        EXPIRED_TEXT = "⏰ <b>Challenge Expired</b>\nNo one joined in time. Start a new one with /challenge intl or /challengeipl."
+        EXPIRED_TEXT = "⏰ <b>Challenge Expired</b>\nNo one joined in time. Start a new one with /challengeodi, /challengetest or /challengeipl."
 
         # 1. Immediately expire challenges already older than 2 min
         stale = await get_stale_challenges(expiry_secs=120)
@@ -335,19 +393,19 @@ if __name__ == '__main__':
     application.add_handler(CommandHandler('help', help_command))
 
     # Admin
-    application.add_handler(CommandHandler('add_player', add_player))
+    application.add_handler(CommandHandler('add_player', wrap_admin_logging(add_player, "Add/Update Player (Cricket)")))
     application.add_handler(CommandHandler('map_api', map_api))
-    application.add_handler(CommandHandler('removeplayer', remove_player))
+    application.add_handler(CommandHandler('removeplayer', wrap_admin_logging(remove_player, "Remove Player")))
     application.add_handler(CommandHandler('stats', get_player_stats))
-    application.add_handler(CommandHandler('reset_matches', reset_matches))
+    application.add_handler(CommandHandler('reset_matches', wrap_admin_logging(reset_matches, "Force Reset Match State")))
     from handlers.admin import check_role_stats
     application.add_handler(CommandHandler('check', check_role_stats))
 
     # Mod management
     from handlers.admin import add_mod_handler, remove_mod_handler
-    application.add_handler(CommandHandler('mod', add_mod_handler))
-    application.add_handler(CommandHandler('unmod', remove_mod_handler))
-    application.add_handler(CommandHandler('modrm', remove_mod_handler))
+    application.add_handler(CommandHandler('mod', wrap_admin_logging(add_mod_handler, "Add Moderator")))
+    application.add_handler(CommandHandler('unmod', wrap_admin_logging(remove_mod_handler, "Remove Moderator")))
+    application.add_handler(CommandHandler('modrm', wrap_admin_logging(remove_mod_handler, "Remove Moderator")))
     from handlers.admin import list_mods_handler
     application.add_handler(CommandHandler('mods', list_mods_handler))
 
@@ -363,64 +421,73 @@ if __name__ == '__main__':
         enable_ipl_command, disable_ipl_command,
         handle_remove_ipl, handle_clearcache, update_image_fifa,
         remove_player_fifa, player_list_ipl,
+        add_role_test, rem_role_test, rem_player_odi, rem_player_test, add_player_test,
     )
-    application.add_handler(CommandHandler('removeplayerfifa', remove_player_fifa))
+    application.add_handler(CommandHandler('removeplayerfifa', wrap_admin_logging(remove_player_fifa, "Remove Player (FIFA)")))
 
     # WWE Admin commands
     from handlers.admin import add_player_wwe, remove_player_wwe, update_image_wwe
-    application.add_handler(CommandHandler('add_playerwwe',    add_player_wwe))
-    application.add_handler(CommandHandler('addplayerwwe',     add_player_wwe))   # alias
-    application.add_handler(CommandHandler('remove_playerwwe', remove_player_wwe))
-    application.add_handler(CommandHandler('removeplayerwwe',  remove_player_wwe)) # alias
-    application.add_handler(CommandHandler('update_imagewwe',  update_image_wwe))
+    application.add_handler(CommandHandler('add_playerwwe',    wrap_admin_logging(add_player_wwe, "Add Superstar (WWE)")))
+    application.add_handler(CommandHandler('addplayerwwe',     wrap_admin_logging(add_player_wwe, "Add Superstar (WWE)")))
+    application.add_handler(CommandHandler('remove_playerwwe', wrap_admin_logging(remove_player_wwe, "Remove Superstar (WWE)")))
+    application.add_handler(CommandHandler('removeplayerwwe',  wrap_admin_logging(remove_player_wwe, "Remove Superstar (WWE)")))
+    application.add_handler(CommandHandler('update_imagewwe',  wrap_admin_logging(update_image_wwe, "Update Superstar Image (WWE)")))
 
-    application.add_handler(CommandHandler('changecap', change_cap))
-    application.add_handler(CommandHandler('changewk', change_wk))
-    application.add_handler(CommandHandler('changetop', change_top))
-    application.add_handler(CommandHandler('changemiddle', change_middle))
-    application.add_handler(CommandHandler('changedefence', change_defence))
-    application.add_handler(CommandHandler('changepacer', change_pacer))
-    application.add_handler(CommandHandler('changespinner', change_spinner))
-    application.add_handler(CommandHandler('changeallrounder', change_allrounder))
-    application.add_handler(CommandHandler('changefinisher', change_finisher))
-    application.add_handler(CommandHandler('changefielder', change_fielder))
-    application.add_handler(CommandHandler('setstats', set_stats))
-    application.add_handler(CommandHandler('fix_roles', fix_roles_command))
-    application.add_handler(CommandHandler('migrate_roles', migrate_roles_command))
-    application.add_handler(CommandHandler('add_role', add_role_command))
-    application.add_handler(CommandHandler('rem_role', rem_role_command))
-    application.add_handler(CommandHandler('nonrolefix', non_role_fix))
-    application.add_handler(CommandHandler('run_fix_now', run_fix_now_command))
-    application.add_handler(CommandHandler('revert', revert_command))
-    application.add_handler(CommandHandler('add_playeripl', add_player_ipl))
-    application.add_handler(CommandHandler('add_roleipl', add_role_ipl))
-    application.add_handler(CommandHandler('rem_roleipl', rem_role_ipl))
-    application.add_handler(CommandHandler('removeipl', handle_remove_ipl))
-    application.add_handler(CommandHandler('update_image', update_image_command))
-    application.add_handler(CommandHandler('enable_ipl', enable_ipl_command))
-    application.add_handler(CommandHandler('disable_ipl', disable_ipl_command))
-    application.add_handler(CommandHandler('clearcache', handle_clearcache))
-    application.add_handler(CommandHandler('update_imagefifa', update_image_fifa))
+    application.add_handler(CommandHandler('changecap', wrap_admin_logging(change_cap, "Modify Captain Stat")))
+    application.add_handler(CommandHandler('changewk', wrap_admin_logging(change_wk, "Modify WK Stat")))
+    application.add_handler(CommandHandler('changetop', wrap_admin_logging(change_top, "Modify Top Order Stat")))
+    application.add_handler(CommandHandler('changemiddle', wrap_admin_logging(change_middle, "Modify Middle Order Stat")))
+    application.add_handler(CommandHandler('changedefence', wrap_admin_logging(change_defence, "Modify Defence Stat")))
+    application.add_handler(CommandHandler('changepacer', wrap_admin_logging(change_pacer, "Modify Pacer Stat")))
+    application.add_handler(CommandHandler('changespinner', wrap_admin_logging(change_spinner, "Modify Spinner Stat")))
+    application.add_handler(CommandHandler('changeallrounder', wrap_admin_logging(change_allrounder, "Modify All Rounder Stat")))
+    application.add_handler(CommandHandler('changefinisher', wrap_admin_logging(change_finisher, "Modify Finisher Stat")))
+    application.add_handler(CommandHandler('changefielder', wrap_admin_logging(change_fielder, "Modify Fielder Stat")))
+    application.add_handler(CommandHandler('setstats', wrap_admin_logging(set_stats, "Set Player Stats")))
+    application.add_handler(CommandHandler('fix_roles', wrap_admin_logging(fix_roles_command, "Run Fix Roles")))
+    application.add_handler(CommandHandler('migrate_roles', wrap_admin_logging(migrate_roles_command, "Run Migrate Roles")))
+    application.add_handler(CommandHandler('add_role', wrap_admin_logging(add_role_command, "Add Player Role (Global)")))
+    application.add_handler(CommandHandler('rem_role', wrap_admin_logging(rem_role_command, "Remove Player Role (Global)")))
+    application.add_handler(CommandHandler('nonrolefix', wrap_admin_logging(non_role_fix, "Run Non-Role Fix")))
+    application.add_handler(CommandHandler('run_fix_now', wrap_admin_logging(run_fix_now_command, "Force Database Alignment Fixes")))
+    application.add_handler(CommandHandler('revert', wrap_admin_logging(revert_command, "Revert Database Operations")))
+    application.add_handler(CommandHandler('add_playeripl', wrap_admin_logging(add_player_ipl, "Add Player (IPL)")))
+    application.add_handler(CommandHandler('add_roleipl', wrap_admin_logging(add_role_ipl, "Add Player Role (IPL)")))
+    application.add_handler(CommandHandler('rem_roleipl', wrap_admin_logging(rem_role_ipl, "Remove Player Role (IPL)")))
+    application.add_handler(CommandHandler('removeipl', wrap_admin_logging(handle_remove_ipl, "Remove Player from IPL")))
+    application.add_handler(CommandHandler('add_playertest', wrap_admin_logging(add_player_test, "Add Player (Test)")))
+    application.add_handler(CommandHandler('add_roletest', wrap_admin_logging(add_role_test, "Add Player Role (Test)")))
+    application.add_handler(CommandHandler('rem_roletest', wrap_admin_logging(rem_role_test, "Remove Player Role (Test)")))
+    application.add_handler(CommandHandler('rem_playerodi', wrap_admin_logging(rem_player_odi, "Remove Player from ODI")))
+    application.add_handler(CommandHandler('rem_playertest', wrap_admin_logging(rem_player_test, "Remove Player from Test")))
+    application.add_handler(CommandHandler('update_image', wrap_admin_logging(update_image_command, "Update Player Image (Cricket)")))
+    application.add_handler(CommandHandler('enable_ipl', wrap_admin_logging(enable_ipl_command, "Enable IPL Mode")))
+    application.add_handler(CommandHandler('disable_ipl', wrap_admin_logging(disable_ipl_command, "Disable IPL Mode")))
+    application.add_handler(CommandHandler('clearcache', wrap_admin_logging(handle_clearcache, "Flush Cache Databases")))
+    application.add_handler(CommandHandler('update_imagefifa', wrap_admin_logging(update_image_fifa, "Update Player Image (FIFA)")))
     # FIFA commands
     from handlers.admin import add_player_fifa
-    application.add_handler(CommandHandler('add_playerfifa', add_player_fifa))
-    application.add_handler(CommandHandler('addplayerfifa',  add_player_fifa))  # alias
-    application.add_handler(CommandHandler('addplayer',      add_player))        # alias
+    application.add_handler(CommandHandler('add_playerfifa', wrap_admin_logging(add_player_fifa, "Add Player (FIFA)")))
+    application.add_handler(CommandHandler('addplayerfifa',  wrap_admin_logging(add_player_fifa, "Add Player (FIFA)")))
+    application.add_handler(CommandHandler('addplayer',      wrap_admin_logging(add_player, "Add/Update Player (Cricket)")))
 
     from handlers.admin import handle_broadcast, handle_banner
-    application.add_handler(CommandHandler('broadcast', handle_broadcast))
-    application.add_handler(CommandHandler('banner', handle_banner))
+    application.add_handler(CommandHandler('broadcast', wrap_admin_logging(handle_broadcast, "Send Broadcast Message")))
+    application.add_handler(CommandHandler('banner', wrap_admin_logging(handle_banner, "Modify Banner overrides")))
 
     # Game
-    # Game
-    from handlers.challenge import challenge_unified, challenge_ipl, challenge_intl, challenge_fifa
+    from handlers.challenge import challenge_unified, challenge_ipl, challenge_odi, challenge_test, challenge_fifa
     application.add_handler(CommandHandler('challenge_ipl', challenge_ipl))
-    application.add_handler(CommandHandler('challenge_intl', challenge_intl))
+    application.add_handler(CommandHandler('challenge_odi', challenge_odi))
+    application.add_handler(CommandHandler('challenge_intl', challenge_odi)) # alias
+    application.add_handler(CommandHandler('challenge_test', challenge_test))
     application.add_handler(CommandHandler('challenge_fifa', challenge_fifa))
     
     # Aliases for easier typing
     application.add_handler(CommandHandler('challengeipl', challenge_ipl))
-    application.add_handler(CommandHandler('challengeintl', challenge_intl))
+    application.add_handler(CommandHandler('challengeodi', challenge_odi))
+    application.add_handler(CommandHandler('challengeintl', challenge_odi)) # alias
+    application.add_handler(CommandHandler('challengetest', challenge_test))
     application.add_handler(CommandHandler('challengefifa', challenge_fifa))
     
     application.add_handler(CommandHandler('challenge', challenge_unified))
