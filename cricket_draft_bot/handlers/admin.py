@@ -121,7 +121,7 @@ async def add_player(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await save_player(player)
         
         from telegram import InlineKeyboardButton, InlineKeyboardMarkup
-        keyboard = [[InlineKeyboardButton("🎲 Generate Stats (Intl)", callback_data=f"gen_intl_{player_id}")]]
+        keyboard = [[InlineKeyboardButton("🎲 Generate Stats (ODI)", callback_data=f"gen_odi_{player_id}")]]
         reply_markup = InlineKeyboardMarkup(keyboard)
         
         await update.message.reply_text(
@@ -323,10 +323,10 @@ async def add_player_fifa(update: Update, context: ContextTypes.DEFAULT_TYPE):
         logger.error(f"Add FIFA Error: {e}")
         await update.message.reply_text(f"❌ Error: {e}")
 
-async def generate_player_stats(player_id: str, update: Update, context: ContextTypes.DEFAULT_TYPE, is_callback=False, mode='intl'):
+async def generate_player_stats(player_id: str, update: Update, context: ContextTypes.DEFAULT_TYPE, is_callback=False, mode='odi'):
     """
     Shared logic to generate stats.
-    mode: 'intl' or 'ipl'
+    mode: 'odi' or 'ipl' or 'test'
     """
     from database import get_player, save_player
     p = await get_player(player_id)
@@ -341,7 +341,7 @@ async def generate_player_stats(player_id: str, update: Update, context: Context
         return
 
     # Notify user
-    mode_label = "IPL" if mode == 'ipl' else "International"
+    mode_label = "IPL" if mode == 'ipl' else ("Test" if mode == 'test' else "ODI")
     if is_callback:
         await update.callback_query.answer(f"🔄 Generating {mode_label} stats...", show_alert=False)
         await update.callback_query.message.reply_text(f"🔄 Fetching {mode_label} stats for {p['name']}... Please wait.")
@@ -366,7 +366,7 @@ async def generate_player_stats(player_id: str, update: Update, context: Context
         if 'api_reference' not in p: p['api_reference'] = {}
         p['api_reference']['ipl_provider'] = ai_stats.get('source_label', 'Seeded')
     else:
-        current_stats['international'] = ai_stats['international']
+        current_stats['odi'] = ai_stats.get('odi', ai_stats.get('international', {}))
         if 'api_reference' not in p: p['api_reference'] = {}
         p['api_reference']['provider'] = ai_stats.get('source_label', 'Seeded')
         
@@ -402,15 +402,15 @@ async def map_api(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     player_id = text.split('=')[1].strip() if '=' in text else text.strip()
 
-    await generate_player_stats(player_id, update, context, is_callback=False, mode='intl')
+    await generate_player_stats(player_id, update, context, is_callback=False, mode='odi')
 
-async def handle_gen_intl_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def handle_gen_odi_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
-    player_id = query.data.split('_', 2)[2] # gen_intl_ID
+    player_id = query.data.split('_', 2)[2] # gen_odi_ID
     if not await can_manage_bot(update.effective_user.id):
         await query.answer("⛔ Admin Only", show_alert=True)
         return
-    await generate_player_stats(player_id, update, context, is_callback=True, mode='intl')
+    await generate_player_stats(player_id, update, context, is_callback=True, mode='odi')
 
 async def handle_gen_ipl_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -429,7 +429,7 @@ async def handle_map_stats_callback(update: Update, context: ContextTypes.DEFAUL
     except:
         player_id = "UNKNOWN"
         
-    await generate_player_stats(player_id, update, context, is_callback=True, mode='intl')
+    await generate_player_stats(player_id, update, context, is_callback=True, mode='odi')
 
 # Update add_player to include button
 # This requires editing the add_player success block, which is lines 79-80.
@@ -665,25 +665,26 @@ async def get_player_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
         ]
         return "\n".join(parts)
 
-    intl_display = format_stats(stats.get('international', {}))
+    intl_display = format_stats(stats.get('odi', {}))
 
     msg = (
         f"📊 <b>{p['name']}</b>\n"
-        f"<i>International Stats</i>\n"
+        f"<i>ODI Stats</i>\n"
         f"{intl_display}\n\n"
         f"Roles: {', '.join(roles)}"
     )
     # Also build a Markdown version for photo caption (player names in captions are safe)
     md_msg = (
         f"📊 *{esc(p['name'])}*\n"
-        f"*International Stats*\n{intl_display}\n\n"
+        f"*ODI Stats*\n{intl_display}\n\n"
         f"Roles: {esc(', '.join(roles))}"
     )
 
     from telegram import InlineKeyboardButton, InlineKeyboardMarkup
-    kb = InlineKeyboardMarkup([[
-        InlineKeyboardButton("🏏 IPL Stats", callback_data=f"view_ipl_{p['player_id']}")
-    ]])
+    btn_row = [InlineKeyboardButton("🏏 IPL Stats", callback_data=f"view_ipl_{p['player_id']}")]
+    if p.get('stats', {}).get('test'):
+        btn_row.append(InlineKeyboardButton("🧪 Test Stats", callback_data=f"view_test_{p['player_id']}"))
+    kb = InlineKeyboardMarkup([btn_row])
 
     if p.get('image_file_id'):
         try:
@@ -750,7 +751,7 @@ async def handle_view_ipl_callback(update: Update, context: ContextTypes.DEFAULT
     )
     
     # Back button
-    keyboard = [[InlineKeyboardButton("🔙 Back to International", callback_data=f"view_intl_{player_id}")]]
+    keyboard = [[InlineKeyboardButton("🔙 Back to ODI", callback_data=f"view_odi_{player_id}")]]
     reply_markup = InlineKeyboardMarkup(keyboard)
     
     from telegram import InputMediaPhoto
@@ -767,8 +768,8 @@ async def handle_view_ipl_callback(update: Update, context: ContextTypes.DEFAULT
         logger.error(f"IPL View Edit Error: {e}")
         await query.answer("Error switching view", show_alert=True)
 
-async def handle_view_intl_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Called when user clicks 'Back to International' from IPL view."""
+async def handle_view_odi_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Called when user clicks 'Back to ODI' from IPL/Test view."""
     from telegram import InlineKeyboardButton, InlineKeyboardMarkup, InputMediaPhoto
     query = update.callback_query
     player_id = query.data.split('_', 2)[2]
@@ -779,7 +780,7 @@ async def handle_view_intl_callback(update: Update, context: ContextTypes.DEFAUL
         await query.answer("Player not found", show_alert=True)
         return
 
-    stats = p.get('stats', {}).get('international', {})
+    stats = p.get('stats', {}).get('odi', {})
     intl_img = p.get('image_file_id')
     roles = p.get('roles', [])
     roles_up = [r.upper() for r in roles]
@@ -810,11 +811,14 @@ async def handle_view_intl_callback(update: Update, context: ContextTypes.DEFAUL
     intl_display = format_stats(stats)
     caption = (
         f"📊 *{esc(p['name'])}*\n"
-        f"*International Stats*\n{intl_display}\n\n"
+        f"*ODI Stats*\n{intl_display}\n\n"
         f"Roles: {esc(', '.join(roles))}"
     )
 
-    kb = InlineKeyboardMarkup([[InlineKeyboardButton("🏏 IPL Stats", callback_data=f"view_ipl_{player_id}")]])
+    btn_row = [InlineKeyboardButton("🏏 IPL Stats", callback_data=f"view_ipl_{player_id}")]
+    if p.get('stats', {}).get('test'):
+        btn_row.append(InlineKeyboardButton("🧪 Test Stats", callback_data=f"view_test_{player_id}"))
+    kb = InlineKeyboardMarkup([btn_row])
 
     try:
         if intl_img:
@@ -825,8 +829,50 @@ async def handle_view_intl_callback(update: Update, context: ContextTypes.DEFAUL
         else:
             await query.edit_message_caption(caption=caption, reply_markup=kb, parse_mode="Markdown")
     except Exception as e:
-        logger.warning(f"handle_view_intl_callback edit error: {e}")
+        logger.warning(f"handle_view_odi_callback edit error: {e}")
         await query.answer()
+
+
+async def handle_view_test_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Called when user clicks 'Test Stats' button."""
+    query = update.callback_query
+    player_id = query.data.split('_', 2)[2]  # view_test_ID
+    from database import get_player
+    p = await get_player(player_id)
+    if not p:
+        await query.answer("Player not found", show_alert=True)
+        return
+    stats = p.get('stats', {}).get('test', {})
+    if not stats:
+        await query.answer("No Test Stats available", show_alert=True)
+        return
+    test_img = p.get('test_image_url') or p.get('image_file_id')
+    test_roles = p.get('test_roles', p.get('roles', []))
+    def fmt(data):
+        if isinstance(data, int): return str(data)
+        parts = []
+        parts.append(f"🧠 Cap: {data.get('leadership')}")
+        parts.append(f"🏏 Top: {data.get('batting_power')}")
+        parts.append(f"🛡️ Mid: {data.get('batting_control')}")
+        parts.append(f"🧱 Def: {data.get('batting_defence')}")
+        if "WK" in [r.upper() for r in test_roles]: parts.append(f"🧤 WK: {data.get('wicket_keeping')}")
+        parts.append(f"✨ All: {data.get('all_round')}")
+        parts.append(f"⚡ Pace: {data.get('bowling_pace')}")
+        parts.append(f"🌀 Spin: {data.get('bowling_spin')}")
+        parts.append(f"👟 Field: {data.get('fielding')}")
+        return '\n'.join(parts)
+    from telegram import InlineKeyboardButton, InlineKeyboardMarkup, InputMediaPhoto
+    keyboard = [[InlineKeyboardButton("🔙 Back to ODI", callback_data=f"view_odi_{player_id}")]]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    caption = f"🏏 *Test Stats for {esc(p['name'])}*\n\n{fmt(stats)}\n\nRoles: {', '.join(test_roles)}"
+    try:
+        if test_img:
+            await query.message.edit_media(media=InputMediaPhoto(media=test_img, caption=caption, parse_mode='Markdown'), reply_markup=reply_markup)
+        else:
+            await query.message.edit_caption(caption=caption, parse_mode='Markdown', reply_markup=reply_markup)
+    except Exception as e:
+        logger.warning(f"handle_view_test_callback error: {e}")
+    await query.answer()
 
 
 
@@ -874,7 +920,7 @@ async def modify_stat_generic(update: Update, context: ContextTypes.DEFAULT_TYPE
         
     # Update Stats
     stats = p.get('stats', {})
-    modes = ['ipl', 'international']
+    modes = ['ipl', 'odi', 'test']
     
     changes = []
     
@@ -959,7 +1005,7 @@ async def remove_mod_handler(update: Update, context: ContextTypes.DEFAULT_TYPE)
         await update.message.reply_text("Usage: `/unmod <user_id>`", parse_mode="Markdown")
 
 async def set_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """/setstats Name [sport=wwe|cricket] [format=all|ipl|intl] stat=value ..."""
+    """/setstats Name [sport=wwe|cricket] [format=all|ipl|odi|test] stat=value ..."""
     if not await check_admin(update): return
 
     text = update.message.text.replace('/setstats', '').strip()
@@ -967,6 +1013,8 @@ async def set_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(
             "**Usage:**\n"
             "`/setstats Name format=ipl cap=90 top=85`\n"
+            "`/setstats Name format=odi cap=90 top=85`\n"
+            "`/setstats Name format=test cap=90 top=85`\n"
             "`/setstats Name sport=wwe power=95 speed=80`\n"
             "Cricket keys: cap, wk, top, mid, def, all, pacer, spin, fin, field\n"
             "WWE keys: power, speed, tech, stamina, dur, char, agg, intel, aerial, sub",
@@ -1074,12 +1122,17 @@ async def set_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
             'fin': 'finishing', 'field': 'fielding',
         }
         target_format = kwargs.get('format', 'all').lower()
-        if target_format not in ['ipl', 'intl', 'all']:
-            await update.message.reply_text("❌ format must be `ipl`, `intl`, or `all`.", parse_mode="Markdown")
+        if target_format not in ['ipl', 'odi', 'test', 'all']:
+            await update.message.reply_text("❌ format must be `ipl`, `odi`, `test`, or `all`.", parse_mode="Markdown")
             return
-        modes = ['ipl', 'international'] if target_format == 'all' else [
-            'ipl' if target_format == 'ipl' else 'international'
-        ]
+        if target_format == 'all':
+            modes = ['ipl', 'odi', 'test']
+        elif target_format == 'ipl':
+            modes = ['ipl']
+        elif target_format == 'odi':
+            modes = ['odi']
+        else:
+            modes = ['test']
         has_updates = False
         for k, v in kwargs.items():
             if k in ('format', 'sport'): continue
@@ -1122,7 +1175,7 @@ async def check_role_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not args or len(args) < 2:
         await update.message.reply_text(
             "Usage: `/check [role] [mode]`\n"
-            "Cricket: `/check middle intl` · `/check wk ipl`\n"
+            "Cricket: `/check middle odi` · `/check wk ipl`\n"
             "WWE: `/check power wwe` · `/check sub wwe`",
             parse_mode="Markdown"
         )
@@ -1174,10 +1227,11 @@ async def _render_check(update, cb_query, role_query: str, mode: str, page: int)
 
     # ── Cricket/IPL ───────────────────────────────────────────────────────────
     else:
-        if mode == 'intl': db_mode = 'international'
+        if mode in ('odi', 'intl'): db_mode = 'odi'
         elif mode == 'ipl': db_mode = 'ipl'
+        elif mode == 'test': db_mode = 'test'
         else:
-            err = "Mode must be `ipl`, `intl`, or `wwe`."
+            err = "Mode must be `ipl`, `odi`, `test`, or `wwe`."
             if cb_query: await cb_query.edit_message_text(err, parse_mode="Markdown")
             else:        await update.message.reply_text(err, parse_mode="Markdown")
             return
@@ -1541,11 +1595,18 @@ async def rem_role_command(update, context):
     """/rem_role Name Role"""
     if not await check_admin(update): return
     text = update.message.text.replace("/rem_role", "").strip()
-    parts = text.rsplit(" ", 1)
-    if len(parts) < 2:
-        await update.message.reply_text("Usage: `/rem_role Name Role`", parse_mode="Markdown")
+    # Known roles — match from end of input to support multi-word roles like "All Rounder"
+    KNOWN_ROLES = ["All Rounder", "Captain", "WK", "Top", "Middle", "Finisher", "Pacer", "Spinner", "Fielder"]
+    role_input, name = None, None
+    text_lower = text.lower()
+    for role in sorted(KNOWN_ROLES, key=len, reverse=True):  # longest first
+        if text_lower.endswith(role.lower()):
+            role_input = role
+            name = text[:len(text) - len(role)].strip()
+            break
+    if not role_input or not name:
+        await update.message.reply_text("Usage: `/rem_role Name Role`\nRoles: Captain, WK, Top, Middle, All Rounder, Finisher, Pacer, Spinner, Fielder", parse_mode="Markdown")
         return
-    name, role_input = parts[0].strip(), parts[1].strip()
     from database import get_player_by_name, save_player
     p = await get_player_by_name(name)
     if not p:
@@ -1578,7 +1639,7 @@ async def non_role_fix(update, context):
             if role_name.lower() in roles_lower:
                 continue
             val = random.randint(40, 60)
-            for mode in ["ipl", "international"]:
+            for mode in ["ipl", "odi", "test"]:
                 if mode not in stats: stats[mode] = {}
                 stats[mode][stat_key] = val
                 changed = True
@@ -1692,11 +1753,18 @@ async def add_role_ipl(update, context):
 async def rem_role_ipl(update, context):
     if not await check_admin(update): return
     text = update.message.text.replace("/rem_roleipl", "").strip()
-    parts = text.rsplit(" ", 1)
-    if len(parts) < 2:
-        await update.message.reply_text("Usage: /rem_roleipl Name Role")
+    # Known roles — match from end of input to support multi-word roles like "All Rounder"
+    KNOWN_ROLES = ["All Rounder", "Captain", "WK", "Top", "Middle", "Finisher", "Pacer", "Spinner", "Fielder"]
+    role_input, name = None, None
+    text_lower = text.lower()
+    for role in sorted(KNOWN_ROLES, key=len, reverse=True):  # longest first
+        if text_lower.endswith(role.lower()):
+            role_input = role
+            name = text[:len(text) - len(role)].strip()
+            break
+    if not role_input or not name:
+        await update.message.reply_text("Usage: /rem_roleipl Name Role\nRoles: Captain, WK, Top, Middle, All Rounder, Finisher, Pacer, Spinner, Fielder")
         return
-    name, role_input = parts[0].strip(), parts[1].strip()
     from database import get_player_by_name, save_player
     p = await get_player_by_name(name)
     if not p:
@@ -1710,20 +1778,167 @@ async def rem_role_ipl(update, context):
         await save_player(p)
         await update.message.reply_text(f"✅ Removed {found} from {p['name']} (IPL).")
     else:
-        await update.message.reply_text(f"⚠️ Role {role_input} not found.")
+        await update.message.reply_text(f"⚠️ Role {role_input} not found for {name} (IPL).")
+
+
+async def add_role_test(update, context):
+    if not await check_admin(update): return
+    text = update.message.text.replace("/add_roletest", "").strip()
+    KNOWN_ROLES = ["All Rounder", "Captain", "WK", "Top", "Middle", "Defence", "Pacer", "Spinner", "Fielder"]
+    role_input, name = None, None
+    text_lower = text.lower()
+    for role in sorted(KNOWN_ROLES, key=len, reverse=True):
+        if text_lower.endswith(role.lower()):
+            role_input = role
+            name = text[:len(text) - len(role)].strip()
+            break
+    if not role_input or not name:
+        await update.message.reply_text("Usage: /add_roletest Name Role\nRoles: Captain, WK, Top, Middle, Defence, All Rounder, Pacer, Spinner, Fielder")
+        return
+    from database import get_player_by_name, save_player
+    p = await get_player_by_name(name)
+    if not p:
+        await update.message.reply_text("Player not found.")
+        return
+    current = p.get("test_roles", [])
+    if role_input in current:
+        await update.message.reply_text(f"Already has {role_input}.")
+        return
+    current.append(role_input)
+    p["test_roles"] = current
+    await save_player(p)
+    await update.message.reply_text(f"✅ Added {role_input} to {p['name']} (Test).")
+
+
+async def rem_role_test(update, context):
+    if not await check_admin(update): return
+    text = update.message.text.replace("/rem_roletest", "").strip()
+    KNOWN_ROLES = ["All Rounder", "Captain", "WK", "Top", "Middle", "Defence", "Pacer", "Spinner", "Fielder"]
+    role_input, name = None, None
+    text_lower = text.lower()
+    for role in sorted(KNOWN_ROLES, key=len, reverse=True):
+        if text_lower.endswith(role.lower()):
+            role_input = role
+            name = text[:len(text) - len(role)].strip()
+            break
+    if not role_input or not name:
+        await update.message.reply_text("Usage: /rem_roletest Name Role\nRoles: Captain, WK, Top, Middle, Defence, All Rounder, Pacer, Spinner, Fielder")
+        return
+    from database import get_player_by_name, save_player
+    p = await get_player_by_name(name)
+    if not p:
+        await update.message.reply_text("Player not found.")
+        return
+    current = p.get("test_roles", [])
+    found = next((r for r in current if r.lower() == role_input.lower()), None)
+    if found:
+        current.remove(found)
+        p["test_roles"] = current
+        await save_player(p)
+        await update.message.reply_text(f"✅ Removed {found} from {p['name']} (Test).")
+    else:
+        await update.message.reply_text(f"⚠️ Role {role_input} not found for {name} (Test).")
+
+
+async def rem_player_odi(update, context):
+    """/rem_playerodi Name — removes ODI stats from a player"""
+    if not await check_admin(update): return
+    name = update.message.text.replace("/rem_playerodi", "").strip()
+    if not name:
+        await update.message.reply_text("Usage: /rem_playerodi Player Name")
+        return
+    from database import get_player_by_name, save_player
+    p = await get_player_by_name(name)
+    if not p:
+        await update.message.reply_text("Player not found.")
+        return
+    stats = p.get("stats", {})
+    if "odi" not in stats:
+        await update.message.reply_text(f"{p['name']} has no ODI stats.")
+        return
+    del stats["odi"]
+    p["stats"] = stats
+    await save_player(p)
+    await update.message.reply_text(f"✅ ODI stats removed from {p['name']}. They are no longer in ODI pool.")
+
+
+async def rem_player_test(update, context):
+    """/rem_playertest Name — removes Test stats from a player"""
+    if not await check_admin(update): return
+    name = update.message.text.replace("/rem_playertest", "").strip()
+    if not name:
+        await update.message.reply_text("Usage: /rem_playertest Player Name")
+        return
+    from database import get_player_by_name, save_player
+    p = await get_player_by_name(name)
+    if not p:
+        await update.message.reply_text("Player not found.")
+        return
+    stats = p.get("stats", {})
+    if "test" not in stats:
+        await update.message.reply_text(f"{p['name']} has no Test stats.")
+        return
+    del stats["test"]
+    p["stats"] = stats
+    p["test_roles"] = []
+    await save_player(p)
+    await update.message.reply_text(f"✅ Test stats removed from {p['name']}. They are no longer in Test pool.")
+
+
+async def add_player_test(update, context):
+    """/add_playertest Name | Cap | Wk | Top | Middle | Defence | AllRounder | Pacer | Spinner | Fielder | ImageURL"""
+    if not await check_admin(update): return
+    text = update.message.text.replace("/add_playertest", "").strip()
+    parts = [p.strip() for p in text.split("|")]
+    if len(parts) < 10:
+        await update.message.reply_text("Usage: /add_playertest Name|Cap|Wk|Top|Middle|Defence|AllRounder|Pacer|Spinner|Fielder|ImageURL")
+        return
+    name = parts[0]
+    try:
+        cap, wk, top, mid, defence, ar, pacer, spin, field = [int(parts[i]) for i in range(1, 10)]
+    except ValueError:
+        await update.message.reply_text("All stats must be integers.")
+        return
+    img_url = parts[10].strip() if len(parts) > 10 else ""
+    stat_map = {
+        "leadership": cap, "wicket_keeping": wk, "batting_power": top,
+        "batting_control": mid, "batting_defence": defence, "all_round": ar,
+        "bowling_pace": pacer, "bowling_spin": spin, "fielding": field
+    }
+    ROLE_THRESHOLD = 70
+    STAT_ROLE_MAP = {
+        "leadership": "Captain", "wicket_keeping": "WK", "batting_power": "Top",
+        "batting_control": "Middle", "batting_defence": "Defence", "all_round": "All Rounder",
+        "bowling_pace": "Pacer", "bowling_spin": "Spinner", "fielding": "Fielder"
+    }
+    test_roles = [STAT_ROLE_MAP[k] for k, v in stat_map.items() if v >= ROLE_THRESHOLD]
+    from database import get_player_by_name, save_player
+    import re as _re
+    p = await get_player_by_name(name)
+    if not p:
+        slug = _re.sub(r'[^a-z0-9]', '_', name.lower()).strip('_')
+        p = {"player_id": f"TEST_{slug.upper()}", "name": name, "sport": "cricket",
+             "roles": [], "ipl_roles": [], "test_roles": [], "stats": {}}
+    p.setdefault("stats", {})
+    p["stats"]["test"] = stat_map
+    p["test_roles"] = test_roles
+    if img_url:
+        p["test_image_url"] = img_url
+    await save_player(p)
+    await update.message.reply_text(f"✅ Test player {name} added/updated.\nRoles: {', '.join(test_roles) or 'None'}")
 
 
 async def update_image_command(update, context):
-    """/update_image Name [format=ipl] URL"""
+    """/update_image Name [format=ipl|odi|test] URL"""
     if not await check_admin(update): return
     import re
     text = update.message.text.replace("/update_image", "").strip()
-    fmt_m = re.search(r"format=(ipl|intl)", text, re.IGNORECASE)
-    target_format = fmt_m.group(1).lower() if fmt_m else "intl"
-    clean = re.sub(r"format=(ipl|intl)", "", text, flags=re.IGNORECASE).strip()
+    fmt_m = re.search(r"format=(ipl|odi|test)", text, re.IGNORECASE)
+    target_format = fmt_m.group(1).lower() if fmt_m else "odi"
+    clean = re.sub(r"format=(ipl|odi|test)", "", text, flags=re.IGNORECASE).strip()
     parts = clean.rsplit(" ", 1)
     if len(parts) < 2:
-        await update.message.reply_text("Usage: /update_image Name format=[ipl|intl] URL")
+        await update.message.reply_text("Usage: /update_image Name format=[ipl|odi|test] URL")
         return
     name, url = parts[0].strip(), parts[1].strip()
     from database import get_player_by_name, save_player
@@ -1736,6 +1951,8 @@ async def update_image_command(update, context):
         fid = msg.photo[-1].file_id
         if target_format == "ipl":
             p["ipl_image_file_id"] = fid
+        elif target_format == "test":
+            p["test_image_url"] = url
         else:
             p["image_file_id"] = fid
         await save_player(p)
@@ -1778,23 +1995,23 @@ async def player_list_ipl(update, context):
 # ═══════════════════════════════════════════════════════════════════
 
 async def handle_banner(update, context):
-    """/banner <mode> <url>  (mode: ipl|intl|fifa|wwe|all)"""
+    """/banner <mode> <url>  (mode: ipl|odi|test|fifa|wwe|all)"""
     if not await check_admin(update): return
     args = context.args
     if len(args) < 2:
         await update.message.reply_text(
-            "Usage: `/banner <mode> <url>`\nModes: ipl · intl · fifa · wwe · all",
+            "Usage: `/banner <mode> <url>`\nModes: ipl · odi · test · fifa · wwe · all",
             parse_mode="Markdown"
         )
         return
     mode, url = args[0].lower(), args[1].strip()
-    valid_modes = {"ipl", "intl", "fifa", "wwe", "all"}
+    valid_modes = {"ipl", "odi", "test", "fifa", "wwe", "all"}
     if mode not in valid_modes:
         await update.message.reply_text(f"❌ Invalid mode `{mode}`.", parse_mode="Markdown")
         return
     from database import set_banner
     if mode == "all":
-        for m in ("ipl", "intl", "fifa", "wwe"):
+        for m in ("ipl", "odi", "test", "fifa", "wwe"):
             await set_banner(m, url)
         await update.message.reply_text(f"✅ All banners updated!", parse_mode="Markdown")
     else:
@@ -1804,10 +2021,10 @@ async def handle_banner(update, context):
 
 async def get_current_banner(mode: str) -> str:
     from database import get_banner
-    from config import DRAFT_BANNER_IPL, DRAFT_BANNER_INTL, DRAFT_BANNER_FIFA, DRAFT_BANNER_WWE
-    defaults = {"ipl": DRAFT_BANNER_IPL, "intl": DRAFT_BANNER_INTL, "fifa": DRAFT_BANNER_FIFA, "wwe": DRAFT_BANNER_WWE}
+    from config import DRAFT_BANNER_IPL, DRAFT_BANNER_ODI, DRAFT_BANNER_TEST, DRAFT_BANNER_FIFA, DRAFT_BANNER_WWE
+    defaults = {"ipl": DRAFT_BANNER_IPL, "odi": DRAFT_BANNER_ODI, "test": DRAFT_BANNER_TEST, "intl": DRAFT_BANNER_ODI, "fifa": DRAFT_BANNER_FIFA, "wwe": DRAFT_BANNER_WWE}
     override = await get_banner(mode)
-    return override if override else defaults.get(mode, DRAFT_BANNER_INTL)
+    return override if override else defaults.get(mode, DRAFT_BANNER_ODI)
 
 
 async def handle_broadcast(update, context):
