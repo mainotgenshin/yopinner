@@ -12,8 +12,9 @@ class Player:
     image_file_id: Optional[str] = None
     ipl_image_file_id: Optional[str] = None
     api_reference: Dict = field(default_factory=dict)
-    stats: Dict = field(default_factory=dict) # {"ipl": 45, "international": 50}
+    stats: Dict = field(default_factory=dict) # {"ipl": {...}, "odi": {...}, "test": {...}}
     ipl_roles: List[str] = field(default_factory=list)
+    test_roles: List[str] = field(default_factory=list)
     
     # FIFA / Generic Fields
     sport: str = "cricket"
@@ -57,7 +58,7 @@ class Team:
 class Match:
     match_id: str
     chat_id: int
-    mode: str  # "IPL" or "International"
+    mode: str  # "IPL", "ODI", "Test", "FIFA", "WWE"
     team_a: Team
     team_b: Team
     current_turn: int # owner_id of current drafter
