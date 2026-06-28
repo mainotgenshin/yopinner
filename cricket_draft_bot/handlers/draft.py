@@ -290,6 +290,11 @@ async def handle_draw(update: Update, context: ContextTypes.DEFAULT_TYPE, match:
         if p_data.get('image_file_id'):
             img_key = 'image_file_id'
         default_banner = DRAFT_BANNER_WWE
+    elif match.mode == "Test":
+        img_key = 'test_image_url'
+        if not p_data.get(img_key):
+            img_key = 'image_file_id'
+        default_banner = DRAFT_BANNER_TEST
     else:
         img_key = 'ipl_image_file_id' if "IPL" in match.mode else 'image_file_id'
         # Fallback to normal image if IPL image missing
@@ -297,8 +302,6 @@ async def handle_draw(update: Update, context: ContextTypes.DEFAULT_TYPE, match:
             img_key = 'image_file_id'
         if "IPL" in match.mode:
             default_banner = DRAFT_BANNER_IPL
-        elif match.mode == "Test":
-            default_banner = DRAFT_BANNER_TEST
         else:
             default_banner = DRAFT_BANNER_ODI
     
@@ -508,6 +511,10 @@ async def handle_replace_start(update: Update, context: ContextTypes.DEFAULT_TYP
     elif match.mode == "WWE":
         img_key = 'wwe_image_url'
         if player.get('image_file_id'):
+            img_key = 'image_file_id'
+    elif match.mode == "Test":
+        img_key = 'test_image_url'
+        if not player.get(img_key):
             img_key = 'image_file_id'
     else:
         img_key = 'image_file_id'
