@@ -1951,10 +1951,10 @@ async def add_player_test(update, context):
     from telegram import InlineKeyboardButton, InlineKeyboardMarkup
     pid = p["player_id"]
     kb = InlineKeyboardMarkup([[InlineKeyboardButton("🎲 Generate Stats (Test)", callback_data=f"gen_test_{pid}")]])
-    roles_txt = ", ".join(final_roles) if final_roles else "None (use /add_roletest to add)"
+    roles_txt = esc(", ".join(final_roles) if final_roles else "None (use /add_roletest to add)")
     await update.message.reply_text(
         f"✅ Test player *{esc(name)}* added/updated.\nRoles: {roles_txt}\n"
-        f"Use `/setstats name={name} format=test cap=80 ...` to set stats.",
+        f"Use `/setstats name={esc(name)} format=test cap=80 ...` to set stats.",
         reply_markup=kb, parse_mode="Markdown"
     )
 
