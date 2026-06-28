@@ -14,8 +14,9 @@ logger = logging.getLogger(__name__)
 def get_stat_value(player: Player, mode: str, stat_key: str) -> int:
     try:
         search_key = mode.lower()
-        if search_key == 'intl': 
-             search_key = 'international'
+        # Normalize legacy/alias mode keys to DB stat key
+        if search_key in ('intl', 'international'):
+            search_key = 'odi'
              
         stats = player.stats.get(search_key, {})
         # Handle fallback for old int-style stats
@@ -94,9 +95,11 @@ def calculate_slot_score(player: Player, role: str, mode: str) -> float:
              
     else:
         # Cricket Logic
-        if mode and "IPL" in mode:
+        if "IPL" in mode:
             effective_roles = player.ipl_roles if player.ipl_roles else player.roles
-        else:
+        elif "Test" in mode:
+            effective_roles = getattr(player, 'test_roles', None) or player.roles
+        else:  # ODI and others
             effective_roles = player.roles
 
         player_roles_lower = [r.lower() for r in effective_roles]
