@@ -23,6 +23,10 @@ WEBHOOK_URL = os.getenv("WEBHOOK_URL")
 PORT = int(os.getenv("PORT", 8000))
 MONGO_URI = os.getenv("MONGO_URI")
 
+# Admin Logging Channel/Group ID
+_log_group_env = os.getenv("ADMIN_LOG_GROUP_ID")
+ADMIN_LOG_GROUP_ID = int(_log_group_env) if _log_group_env else None
+
 # Role Weights
 ROLE_WEIGHTS = {
     "Captain": 1.5,
@@ -55,8 +59,8 @@ POSITIONS_TEST = [
     "WK",
     "Top",
     "Middle",
-    "All Rounder",
     "Defence",
+    "All Rounder",
     "Pacer",
     "Spinner",
     "Fielder"
@@ -107,11 +111,13 @@ POSITIONS = POSITIONS_T20
 
 # Draft Settings
 MAX_REDRAWS = 2
-DRAFT_BANNER_INTL = "https://files.catbox.moe/8l3ktm.jpg"
-DRAFT_BANNER_IPL = "https://files.catbox.moe/qyrq53.jpg"
-DRAFT_BANNER_FIFA = "https://i.ibb.co/Fbd7q7Xm/x.jpg" # Official FIFA Banner
-DRAFT_BANNER_WWE  = "https://i.ibb.co/GQV1YnVh/x.jpg" # WWE Banner
-DRAFT_BANNER_URL  = DRAFT_BANNER_INTL # Fallback alias
+DRAFT_BANNER_ODI   = "https://files.catbox.moe/8l3ktm.jpg"
+DRAFT_BANNER_INTL  = DRAFT_BANNER_ODI  # backward-compat alias
+DRAFT_BANNER_IPL   = "https://files.catbox.moe/qyrq53.jpg"
+DRAFT_BANNER_TEST  = "https://i.ibb.co/4R4rq3DQ/x.jpg"       # Test mode banner
+DRAFT_BANNER_FIFA  = "https://i.ibb.co/Fbd7q7Xm/x.jpg"       # FIFA banner
+DRAFT_BANNER_WWE   = "https://i.ibb.co/GQV1YnVh/x.jpg"       # WWE banner
+DRAFT_BANNER_URL   = DRAFT_BANNER_ODI  # fallback alias
 
 # Simulation Constants
 ZERO_SKILL_THRESHOLD = 30
