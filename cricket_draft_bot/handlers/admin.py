@@ -1886,46 +1886,79 @@ async def rem_player_test(update, context):
 
 
 async def add_player_test(update, context):
-    """/add_playertest Name | Cap | Wk | Top | Middle | Defence | AllRounder | Pacer | Spinner | Fielder | ImageURL"""
+    """/add_playertest name=X roles=A,B image=URL
+    
+    Adds or updates a player's Test mode entry.
+    Roles: Captain, WK, Top, Middle, Defence, All Rounder, Pacer, Spinner, Fielder
+    Use /setstats name=X format=test ... to set stats separately.
+    """
     if not await check_admin(update): return
+    import re
     text = update.message.text.replace("/add_playertest", "").strip()
-    parts = [p.strip() for p in text.split("|")]
-    if len(parts) < 10:
-        await update.message.reply_text("Usage: /add_playertest Name|Cap|Wk|Top|Middle|Defence|AllRounder|Pacer|Spinner|Fielder|ImageURL")
+    # Allow bare name if no key= prefix given
+    if not re.match(r"^(name|roles|image)\s*=", text, re.IGNORECASE):
+        text = "name=" + text
+    text += " "
+    pattern = r"(name|roles|image)\s*=\s*(.*?)(?=\s+(?:name|roles|image)\s*=|$) "[:-1]
+    parsed = {m.group(1).lower(): m.group(2).strip()
+              for m in re.finditer(pattern, text, re.IGNORECASE | re.DOTALL)}
+    if "name" not in parsed:
+        await update.message.reply_text(
+            "Usage: /add_playertest name=X roles=A,B image=URL\n"
+            "Roles: Captain, WK, Top, Middle, Defence, All Rounder, Pacer, Spinner, Fielder"
+        )
         return
-    name = parts[0]
-    try:
-        cap, wk, top, mid, defence, ar, pacer, spin, field = [int(parts[i]) for i in range(1, 10)]
-    except ValueError:
-        await update.message.reply_text("All stats must be integers.")
-        return
-    img_url = parts[10].strip() if len(parts) > 10 else ""
-    stat_map = {
-        "leadership": cap, "wicket_keeping": wk, "batting_power": top,
-        "batting_control": mid, "batting_defence": defence, "all_round": ar,
-        "bowling_pace": pacer, "bowling_spin": spin, "fielding": field
+    name = parsed["name"]
+    image_url = parsed.get("image", "")
+
+    # Parse roles — same valid set as Test positions
+    VALID_TEST_ROLES = {"Captain", "WK", "Top", "Middle", "Defence", "All Rounder", "Pacer", "Spinner", "Fielder"}
+    role_aliases = {
+        "cap": "Captain", "keeper": "WK", "wk": "WK", "ar": "All Rounder",
+        "allrounder": "All Rounder", "pace": "Pacer", "spin": "Spinner",
+        "def": "Defence", "defence": "Defence", "field": "Fielder"
     }
-    ROLE_THRESHOLD = 70
-    STAT_ROLE_MAP = {
-        "leadership": "Captain", "wicket_keeping": "WK", "batting_power": "Top",
-        "batting_control": "Middle", "batting_defence": "Defence", "all_round": "All Rounder",
-        "bowling_pace": "Pacer", "bowling_spin": "Spinner", "fielding": "Fielder"
-    }
-    test_roles = [STAT_ROLE_MAP[k] for k, v in stat_map.items() if v >= ROLE_THRESHOLD]
+    valid_map = {r.lower(): r for r in VALID_TEST_ROLES}
+    raw_roles = [r.strip() for r in parsed.get("roles", "").split(",") if r.strip()]
+    final_roles = [valid_map.get(r.lower(), role_aliases.get(r.lower(), r)) for r in raw_roles]
+    final_roles = [r for r in final_roles if r in VALID_TEST_ROLES]
+
     from database import get_player_by_name, save_player
     import re as _re
     p = await get_player_by_name(name)
     if not p:
         slug = _re.sub(r'[^a-z0-9]', '_', name.lower()).strip('_')
-        p = {"player_id": f"TEST_{slug.upper()}", "name": name, "sport": "cricket",
-             "roles": [], "ipl_roles": [], "test_roles": [], "stats": {}}
+        p = {
+            "player_id": f"TEST_{slug.upper()[:12]}",
+            "name": name, "sport": "cricket",
+            "roles": [], "ipl_roles": [], "test_roles": [],
+            "stats": {}
+        }
     p.setdefault("stats", {})
-    p["stats"]["test"] = stat_map
-    p["test_roles"] = test_roles
-    if img_url:
-        p["test_image_url"] = img_url
+    p.setdefault("test_roles", [])
+    if final_roles:
+        p["test_roles"] = final_roles
+    if image_url:
+        p["test_image_url"] = image_url
+    if "test" not in p["stats"]:
+        # Placeholder stats — admin must run /setstats to fill in values
+        p["stats"]["test"] = {
+            "leadership": 0, "wicket_keeping": 0, "batting_power": 0,
+            "batting_control": 0, "batting_defence": 0, "all_round": 0,
+            "bowling_pace": 0, "bowling_spin": 0, "fielding": 0
+        }
     await save_player(p)
-    await update.message.reply_text(f"✅ Test player {name} added/updated.\nRoles: {', '.join(test_roles) or 'None'}")
+    from telegram import InlineKeyboardButton, InlineKeyboardMarkup
+    pid = p["player_id"]
+    kb = InlineKeyboardMarkup([[InlineKeyboardButton("🎲 Generate Stats (Test)", callback_data=f"gen_test_{pid}")]])
+    roles_txt = ", ".join(final_roles) if final_roles else "None (use /add_roletest to add)"
+    await update.message.reply_text(
+        f"✅ Test player *{esc(name)}* added/updated.\nRoles: {roles_txt}\n"
+        f"Use `/setstats name={name} format=test cap=80 ...` to set stats.",
+        reply_markup=kb, parse_mode="Markdown"
+    )
+
+
 
 
 async def update_image_command(update, context):
