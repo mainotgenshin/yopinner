@@ -344,15 +344,16 @@ async def challenge_unified(update: Update, context: ContextTypes.DEFAULT_TYPE):
     With no args: shows mode picker buttons (IPL, ODI, Test, FIFA, WWE).
     """
     if not context.args:
+        owner_id = update.effective_user.id
         keyboard = [
             [
-                InlineKeyboardButton("\U0001f3cf IPL",  callback_data="challenge_pick_IPL"),
-                InlineKeyboardButton("\U0001f30d ODI",  callback_data="challenge_pick_ODI"),
-                InlineKeyboardButton("\U0001f3df Test", callback_data="challenge_pick_Test"),
+                InlineKeyboardButton("\U0001f3cf IPL",  callback_data=f"challenge_pick_IPL_{owner_id}"),
+                InlineKeyboardButton("\U0001f30d ODI",  callback_data=f"challenge_pick_ODI_{owner_id}"),
+                InlineKeyboardButton("\U0001f3df Test", callback_data=f"challenge_pick_Test_{owner_id}"),
             ],
             [
-                InlineKeyboardButton("\u26bd FIFA", callback_data="challenge_pick_FIFA"),
-                InlineKeyboardButton("\U0001f93c WWE",  callback_data="challenge_pick_WWE"),
+                InlineKeyboardButton("\u26bd FIFA", callback_data=f"challenge_pick_FIFA_{owner_id}"),
+                InlineKeyboardButton("\U0001f93c WWE",  callback_data=f"challenge_pick_WWE_{owner_id}"),
             ]
         ]
         await update.effective_message.reply_text(
@@ -450,10 +451,29 @@ async def challenge_unified(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def handle_mode_pick_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Handles challenge_pick_MODE inline button from /challenge mode picker."""
+    """Handles challenge_pick_MODE_OWNERID inline button from /challenge mode picker.
+    Only the user who sent /challenge can interact with the mode buttons.
+    """
     query = update.callback_query
+    # Format: challenge_pick_{MODE}_{owner_id}
+    parts = query.data.split('_')  # ["challenge", "pick", MODE, owner_id]
+    if len(parts) >= 4:
+        mode = parts[2]
+        try:
+            owner_id = int(parts[3])
+        except (ValueError, IndexError):
+            owner_id = None
+    else:
+        # Backward-compat: old format without owner_id
+        mode = query.data.split('_', 2)[2]
+        owner_id = None
+
+    # Owner check — only the challenger can pick a mode
+    if owner_id and query.from_user.id != owner_id:
+        await query.answer("\u274c Not for you! Only the person who sent /challenge can pick a mode.", show_alert=True)
+        return
+
     await query.answer()
-    mode = query.data.split('_', 2)[2]  # "challenge_pick_ODI" \u2192 "ODI"
     try:
         await query.message.delete()
     except Exception:
