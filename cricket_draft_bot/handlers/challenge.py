@@ -25,8 +25,9 @@ async def _expire_challenge(ch_key: str, owner_id: int, chat_id: int, message_id
     # Remove from tracking (in-memory + DB)
     _pending_challenges.pop(ch_key, None)
     try:
-        # ch_key = "{owner_id}_{mode}" — extract mode for compound DB delete
-        _mode = ch_key.split('_', 1)[1] if '_' in ch_key else None
+        # ch_key = "{owner_id}_{mode}_{message_id}" — extract only mode (middle segment)
+        _parts = ch_key.split('_')
+        _mode = _parts[1] if len(_parts) >= 3 else (_parts[1] if len(_parts) == 2 else None)
         await delete_pending_challenge(owner_id, _mode)
     except Exception:
         pass
@@ -167,15 +168,15 @@ async def challenge_ipl(update: Update, context: ContextTypes.DEFAULT_TYPE):
         pass
 
 
-async def challenge_intl(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def challenge_odi(update: Update, context: ContextTypes.DEFAULT_TYPE):
     from utils.banners import get_banner_for_mode
     owner_id = update.effective_user.id
     chat_id = update.effective_chat.id
-    key = f"join_International_{owner_id}"
-    keyboard = [[InlineKeyboardButton("⚔️ Join Game", callback_data=key)]]
+    key = f"join_ODI_{owner_id}"
+    keyboard = [[InlineKeyboardButton("\u2694\ufe0f Join Game", callback_data=key)]]
     name = html.escape(update.effective_user.first_name)
-    caption = f"🏏 <b>International Challenge!</b>\nUser: {name}\nMode: International\nWaiting for opponent... <i>(expires in 2 min)</i>"
-    banner = await get_banner_for_mode("intl")
+    caption = f"\U0001f3cf <b>ODI Challenge!</b>\nUser: {name}\nMode: ODI\nWaiting for opponent... <i>(expires in 2 min)</i>"
+    banner = await get_banner_for_mode("odi")
     msg = None
     try:
         msg = await context.bot.send_photo(
@@ -200,13 +201,16 @@ async def challenge_intl(update: Update, context: ContextTypes.DEFAULT_TYPE):
         except Exception:
             return
     if not msg: return
-    _ch_key = f"{owner_id}_International_{msg.message_id}"
+    _ch_key = f"{owner_id}_ODI_{msg.message_id}"
     task = asyncio.create_task(_expire_challenge(_ch_key, owner_id, chat_id, msg.message_id, context.bot))
     _pending_challenges[_ch_key] = {'task': task, 'chat_id': chat_id, 'message_id': msg.message_id}
     try:
-        await save_pending_challenge(owner_id, chat_id, msg.message_id, "International")
+        await save_pending_challenge(owner_id, chat_id, msg.message_id, "ODI")
     except Exception:
         pass
+
+# Backward-compat alias — /challengeintl still works
+challenge_intl = challenge_odi
 
 
 async def challenge_fifa(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -292,89 +296,140 @@ async def challenge_wwe(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except Exception:
         pass
 
+async def challenge_test(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    from utils.banners import get_banner_for_mode
+    owner_id = update.effective_user.id
+    chat_id = update.effective_chat.id
+    key = f"join_Test_{owner_id}"
+    keyboard = [[InlineKeyboardButton("\u2694\ufe0f Join Game", callback_data=key)]]
+    name = html.escape(update.effective_user.first_name)
+    caption = f"\U0001f3cf <b>Test Challenge!</b>\nUser: {name}\nMode: Test\nWaiting for opponent... <i>(expires in 2 min)</i>"
+    banner = await get_banner_for_mode("test")
+    msg = None
+    try:
+        msg = await context.bot.send_photo(
+            chat_id=chat_id, photo=banner, caption=caption,
+            reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="HTML"
+        )
+    except ChatMigrated as e:
+        chat_id = e.migrate_to_chat_id
+        try:
+            msg = await context.bot.send_photo(
+                chat_id=chat_id, photo=banner, caption=caption,
+                reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="HTML"
+            )
+        except Exception:
+            pass
+    except Exception:
+        try:
+            msg = await context.bot.send_message(
+                chat_id=chat_id, text=caption + "\n<i>(Enable media permissions to see banners)</i>",
+                reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="HTML"
+            )
+        except Exception:
+            return
+    if not msg: return
+    _ch_key = f"{owner_id}_Test_{msg.message_id}"
+    task = asyncio.create_task(_expire_challenge(_ch_key, owner_id, chat_id, msg.message_id, context.bot))
+    _pending_challenges[_ch_key] = {'task': task, 'chat_id': chat_id, 'message_id': msg.message_id}
+    try:
+        await save_pending_challenge(owner_id, chat_id, msg.message_id, "Test")
+    except Exception:
+        pass
+
 
 async def challenge_unified(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """
-    /challenge intl - Start Intl Draft
+    /challenge [mode] — Start a draft challenge.
+    With no args: shows mode picker buttons (IPL, ODI, Test, FIFA, WWE).
     """
     if not context.args:
-        await update.effective_message.reply_text("Usage: `/challenge intl`", parse_mode="Markdown")
+        keyboard = [
+            [
+                InlineKeyboardButton("\U0001f3cf IPL",  callback_data="challenge_pick_IPL"),
+                InlineKeyboardButton("\U0001f30d ODI",  callback_data="challenge_pick_ODI"),
+                InlineKeyboardButton("\U0001f3df Test", callback_data="challenge_pick_Test"),
+            ],
+            [
+                InlineKeyboardButton("\u26bd FIFA", callback_data="challenge_pick_FIFA"),
+                InlineKeyboardButton("\U0001f93c WWE",  callback_data="challenge_pick_WWE"),
+            ]
+        ]
+        await update.effective_message.reply_text(
+            "\U0001f3ae <b>Choose a game mode to challenge:</b>",
+            reply_markup=InlineKeyboardMarkup(keyboard),
+            parse_mode="HTML"
+        )
         return
 
     mode_arg = context.args[0].lower()
-    
     from utils.banners import get_banner_for_mode
-    banner = await get_banner_for_mode("intl")  # default
 
-    if mode_arg == 'test':
-        await update.effective_message.reply_text("🚧 Test Mode is temporarily disabled. Please use `intl`.")
-        return
-    elif mode_arg in ['t20', 'ipl']:
-        from database import get_db
-        db = get_db()
-        config = await db.system_config.find_one({"key": "ipl_mode"})
-        if config and config.get("enabled"):
-             real_mode = "IPL"
-             banner = await get_banner_for_mode("ipl")
-        else:
-             await update.effective_message.reply_text("🚧 IPL Mode is currently disabled/under development.")
-             return
-    elif mode_arg in ['intl', 'international']:
-        real_mode = "International"
-    elif mode_arg in ['fifa', 'football']:
+    if mode_arg in ('odi', 'intl', 'international'):
+        real_mode = "ODI"
+        banner = await get_banner_for_mode("odi")
+    elif mode_arg == 'test':
+        real_mode = "Test"
+        banner = await get_banner_for_mode("test")
+    elif mode_arg in ('t20', 'ipl'):
+        real_mode = "IPL"
+        banner = await get_banner_for_mode("ipl")
+    elif mode_arg in ('fifa', 'football'):
         real_mode = "FIFA"
         banner = await get_banner_for_mode("fifa")
-    elif mode_arg in ['wwe', 'wrestling']:
+    elif mode_arg in ('wwe', 'wrestling'):
         real_mode = "WWE"
         banner = await get_banner_for_mode("wwe")
     else:
-        await update.effective_message.reply_text(f"❌ Unknown mode: {mode_arg}\nUse `intl`, `t20`, `fifa`, `wwe`.")
+        await update.effective_message.reply_text(
+            f"\u274c Unknown mode: {mode_arg}\nUse: `odi`, `test`, `ipl`, `fifa`, `wwe`.",
+            parse_mode="Markdown"
+        )
         return
-    
-    # Check for Reply (Targeted Challenge)
+
+    # Check for targeted challenge (reply)
     target_user = None
     if update.effective_message.reply_to_message:
         target_user = update.effective_message.reply_to_message.from_user
         if target_user.id == update.effective_user.id:
             await update.effective_message.reply_text("You can't challenge yourself!")
             return
-            
-    # Callback Data
+
     key = f"join_{real_mode}_{update.effective_user.id}"
     if target_user:
         key += f"_{target_user.id}"
-        
-    keyboard = [[InlineKeyboardButton("⚔️ Accept Challenge", callback_data=key)]]
-    
+
+    keyboard = [[InlineKeyboardButton("\u2694\ufe0f Accept Challenge", callback_data=key)]]
+
     from telegram.helpers import escape_markdown
-    def esc(t): return escape_markdown(t, version=1)
+    def _esc(t): return escape_markdown(t, version=1)
 
     if target_user:
-        msg = (
-            f"🏏 *{real_mode} Challenge!*\n"
-            f"From: {esc(update.effective_user.first_name)}\n"
-            f"To: {esc(target_user.first_name)}\n\n"
-            f"Waiting for {esc(target_user.first_name)} to accept..."
+        msg_text = (
+            f"\U0001f3cf *{real_mode} Challenge!*\n"
+            f"From: {_esc(update.effective_user.first_name)}\n"
+            f"To: {_esc(target_user.first_name)}\n\n"
+            f"Waiting for {_esc(target_user.first_name)} to accept..."
         )
     else:
-        msg = (
-            f"🏏 *{real_mode} Challenge!*\n"
-            f"User: {esc(update.effective_user.first_name)}\n"
+        msg_text = (
+            f"\U0001f3cf *{real_mode} Challenge!*\n"
+            f"User: {_esc(update.effective_user.first_name)}\n"
             f"Waiting for opponent..."
         )
-        
+
     owner_id = update.effective_user.id
     chat_id  = update.effective_chat.id
     sent_msg = None
     try:
         sent_msg = await update.effective_message.reply_photo(
-            photo=banner, caption=msg,
+            photo=banner, caption=msg_text,
             reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="Markdown"
         )
     except Exception:
         try:
             sent_msg = await update.effective_message.reply_text(
-                f"{msg}\n*(Enable media permissions in this chat to see banners)*",
+                f"{msg_text}\n*(Enable media permissions in this chat to see banners)*",
                 reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="Markdown"
             )
         except Exception:
@@ -383,10 +438,7 @@ async def challenge_unified(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not sent_msg:
         return
 
-    # Cancel + edit old challenge message (if any) before starting new one
     _ch_key = f"{owner_id}_{real_mode}_{sent_msg.message_id}"
-
-    # Start 2-min expiry task
     task = asyncio.create_task(
         _expire_challenge(_ch_key, owner_id, chat_id, sent_msg.message_id, context.bot)
     )
@@ -395,6 +447,27 @@ async def challenge_unified(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await save_pending_challenge(owner_id, chat_id, sent_msg.message_id, real_mode)
     except Exception:
         pass
+
+
+async def handle_mode_pick_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handles challenge_pick_MODE inline button from /challenge mode picker."""
+    query = update.callback_query
+    await query.answer()
+    mode = query.data.split('_', 2)[2]  # "challenge_pick_ODI" \u2192 "ODI"
+    try:
+        await query.message.delete()
+    except Exception:
+        pass
+    dispatch = {
+        "IPL": challenge_ipl,
+        "ODI": challenge_odi,
+        "Test": challenge_test,
+        "FIFA": challenge_fifa,
+        "WWE": challenge_wwe,
+    }
+    fn = dispatch.get(mode)
+    if fn:
+        await fn(update, context)
 
 async def handle_join(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -488,26 +561,31 @@ async def handle_join(update: Update, context: ContextTypes.DEFAULT_TYPE):
         banner = await get_banner_for_mode("fifa")
     elif mode == "WWE":
         banner = await get_banner_for_mode("wwe")
-    else:
-        banner = await get_banner_for_mode("intl")
+    elif mode == "Test":
+        banner = await get_banner_for_mode("test")
+    else:  # ODI (and legacy International)
+        banner = await get_banner_for_mode("odi")
 
     # Edit the existing message into the draft board
     await update_draft_message(update, context, match, board_text, keyboard, media=banner)
 
-    # Pin the draft board — must be done here because draft_message_id was
-    # pre-set above (reusing challenge message), so update_draft_message skips
-    # its own pin block (which only fires when sending a brand new message).
+    # Pin the draft board — run in background task to avoid blocking the user
     pinned_msg_id = query.message.message_id
-    try:
-        await context.bot.pin_chat_message(
-            chat_id=update.effective_chat.id,
-            message_id=pinned_msg_id,
-            disable_notification=True
-        )
-        match.pinned_message_id = pinned_msg_id
-        await save_match_state(match)
-    except Exception:
-        pass  # Bot not admin — skip silently
+    async def _bg_pin():
+        try:
+            await context.bot.pin_chat_message(
+                chat_id=update.effective_chat.id,
+                message_id=pinned_msg_id,
+                disable_notification=True
+            )
+            from game.state import load_match_state as _bg_load, save_match_state as _bg_save
+            m = await _bg_load(match.match_id)
+            if m:
+                m.pinned_message_id = pinned_msg_id
+                await _bg_save(m)
+        except Exception:
+            pass
+    asyncio.create_task(_bg_pin())
 
     # Start 30-min abandon timeout (always, regardless of pin success)
     _chat_id = update.effective_chat.id
