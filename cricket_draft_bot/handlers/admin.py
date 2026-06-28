@@ -1902,7 +1902,7 @@ async def add_player_test(update, context):
     pattern = r"(name|roles|image)\s*=\s*(.*?)(?=\s+(?:name|roles|image)\s*=|$) "[:-1]
     parsed = {m.group(1).lower(): m.group(2).strip()
               for m in re.finditer(pattern, text, re.IGNORECASE | re.DOTALL)}
-    if "name" not in parsed:
+    if "name" not in parsed or not parsed["name"]:
         await update.message.reply_text(
             "Usage: /add_playertest name=X roles=A,B image=URL\n"
             "Roles: Captain, WK, Top, Middle, Defence, All Rounder, Pacer, Spinner, Fielder"
