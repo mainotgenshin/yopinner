@@ -6,21 +6,25 @@ instead of importing DRAFT_BANNER_* from config directly.
 This ensures /banner overrides stored in MongoDB are always respected.
 """
 
-from config import DRAFT_BANNER_IPL, DRAFT_BANNER_INTL, DRAFT_BANNER_FIFA, DRAFT_BANNER_WWE
+from config import DRAFT_BANNER_IPL, DRAFT_BANNER_ODI, DRAFT_BANNER_TEST, DRAFT_BANNER_FIFA, DRAFT_BANNER_WWE
 
 _DEFAULTS = {
     "ipl":  DRAFT_BANNER_IPL,
-    "intl": DRAFT_BANNER_INTL,
+    "odi":  DRAFT_BANNER_ODI,
+    "intl": DRAFT_BANNER_ODI,   # backward-compat alias
+    "test": DRAFT_BANNER_TEST,
     "fifa": DRAFT_BANNER_FIFA,
     "wwe":  DRAFT_BANNER_WWE,
 }
 
 
 async def get_banner_for_mode(mode: str) -> str:
-    """Return the active banner URL for mode = 'ipl' | 'intl' | 'fifa' | 'wwe'."""
+    """Return the active banner URL for mode = 'ipl' | 'odi' | 'test' | 'fifa' | 'wwe'."""
     from database import get_banner
-    override = await get_banner(mode)
-    return override if override else _DEFAULTS.get(mode, DRAFT_BANNER_INTL)
+    # Normalise legacy key
+    _mode = "odi" if mode == "intl" else mode
+    override = await get_banner(_mode)
+    return override if override else _DEFAULTS.get(mode, DRAFT_BANNER_ODI)
 
 
 async def get_banner_for_match(match) -> str:
@@ -31,5 +35,7 @@ async def get_banner_for_match(match) -> str:
         return await get_banner_for_mode("fifa")
     elif match.mode == "WWE":
         return await get_banner_for_mode("wwe")
-    else:
-        return await get_banner_for_mode("intl")
+    elif match.mode == "Test":
+        return await get_banner_for_mode("test")
+    else:  # ODI (and legacy International)
+        return await get_banner_for_mode("odi")
