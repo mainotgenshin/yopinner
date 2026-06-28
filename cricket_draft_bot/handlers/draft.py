@@ -7,7 +7,7 @@ from game.state import load_match_state, save_match_state, draw_player_for_turn,
 from game.models import Match, Player
 from database import get_player
 from utils.validators import validate_draft_action
-from config import MAX_REDRAWS, POSITIONS_T20, POSITIONS_TEST, POSITIONS_FIFA, POSITIONS_WWE, DRAFT_BANNER_URL, DRAFT_BANNER_INTL, DRAFT_BANNER_IPL, DRAFT_BANNER_FIFA, DRAFT_BANNER_WWE
+from config import MAX_REDRAWS, POSITIONS_T20, POSITIONS_TEST, POSITIONS_FIFA, POSITIONS_WWE, DRAFT_BANNER_URL, DRAFT_BANNER_ODI, DRAFT_BANNER_INTL, DRAFT_BANNER_IPL, DRAFT_BANNER_TEST, DRAFT_BANNER_FIFA, DRAFT_BANNER_WWE
 from utils.banners import get_banner_for_match, get_banner_for_mode
 from telegram.helpers import escape_markdown
 
@@ -92,6 +92,12 @@ async def handle_draft_callback(update: Update, context: ContextTypes.DEFAULT_TY
         if query.from_user.id != match.current_turn:
             await safe_answer("Turn passed! Board updating...", alert=True)
             return
+
+        # Turn is correct — answer immediately to stop spinner
+        try:
+            await query.answer()
+        except Exception:
+            pass
     
         if action == "draw":
             await handle_draw(update, context, match)
@@ -164,34 +170,38 @@ async def update_draft_message(update: Update, context: ContextTypes.DEFAULT_TYP
              msg = await context.bot.send_message(chat_id=match.chat_id, text=caption, reply_markup=reply_markup, parse_mode="Markdown")
         
         match.draft_message_id = msg.message_id
-        # Auto-pin the draft board (silent — no "📌 pinned" notification spam)
-        try:
-            await context.bot.pin_chat_message(
-                chat_id=match.chat_id,
-                message_id=msg.message_id,
-                disable_notification=True
-            )
-            match.pinned_message_id = msg.message_id
-            
-            # Start abandon timeout
-            import asyncio
-            async def _abandon_timeout(bot, chat_id, msg_id, match_id, delay=1800):
-                await asyncio.sleep(delay)
-                from game.state import load_match_state
-                m = await load_match_state(match_id)
-                # Unpin if stuck in any draft phase or forcefully deleted by resetmatches
-                if not m or m.state in ["DRAFTING", "READY_CHECK"]:
-                    try:
-                        await bot.unpin_chat_message(chat_id=chat_id, message_id=msg_id)
-                        if m:
-                            from database import get_db
-                            await get_db().matches.delete_one({"match_id": match_id})
-                    except Exception:
-                        pass
-            asyncio.create_task(_abandon_timeout(context.bot, match.chat_id, msg.message_id, match.match_id))
-            
-        except Exception:
-            pass  # Bot may not be admin — skip silently
+        # Auto-pin the draft board in background
+        async def _bg_pin():
+            try:
+                await context.bot.pin_chat_message(
+                    chat_id=match.chat_id,
+                    message_id=msg.message_id,
+                    disable_notification=True
+                )
+                from game.state import load_match_state as _bg_load, save_match_state as _bg_save
+                m = await _bg_load(match.match_id)
+                if m:
+                    m.pinned_message_id = msg.message_id
+                    await _bg_save(m)
+            except Exception:
+                pass
+        import asyncio
+        asyncio.create_task(_bg_pin())
+        
+        # Start abandon timeout
+        async def _abandon_timeout(bot, chat_id, msg_id, match_id, delay=1800):
+            await asyncio.sleep(delay)
+            from game.state import load_match_state
+            m = await load_match_state(match_id)
+            if not m or m.state in ["DRAFTING", "READY_CHECK"]:
+                try:
+                    await bot.unpin_chat_message(chat_id=chat_id, message_id=msg_id)
+                    if m:
+                        from database import get_db
+                        await get_db().matches.delete_one({"match_id": match_id})
+                except Exception:
+                    pass
+        asyncio.create_task(_abandon_timeout(context.bot, match.chat_id, msg.message_id, match.match_id))
         await save_match_state(match)
         return
 
@@ -285,7 +295,12 @@ async def handle_draw(update: Update, context: ContextTypes.DEFAULT_TYPE, match:
         # Fallback to normal image if IPL image missing
         if "IPL" in match.mode and not p_data.get(img_key):
             img_key = 'image_file_id'
-        default_banner = DRAFT_BANNER_IPL if "IPL" in match.mode else DRAFT_BANNER_INTL
+        if "IPL" in match.mode:
+            default_banner = DRAFT_BANNER_IPL
+        elif match.mode == "Test":
+            default_banner = DRAFT_BANNER_TEST
+        else:
+            default_banner = DRAFT_BANNER_ODI
     
     media = p_data.get(img_key) or default_banner
     
@@ -499,7 +514,16 @@ async def handle_replace_start(update: Update, context: ContextTypes.DEFAULT_TYP
         
 
         
-    default_banner = DRAFT_BANNER_IPL if "IPL" in match.mode else (DRAFT_BANNER_FIFA if match.mode == "FIFA" else (DRAFT_BANNER_WWE if match.mode == "WWE" else DRAFT_BANNER_INTL))
+    if "IPL" in match.mode:
+        default_banner = DRAFT_BANNER_IPL
+    elif match.mode == "FIFA":
+        default_banner = DRAFT_BANNER_FIFA
+    elif match.mode == "WWE":
+        default_banner = DRAFT_BANNER_WWE
+    elif match.mode == "Test":
+        default_banner = DRAFT_BANNER_TEST
+    else:  # ODI
+        default_banner = DRAFT_BANNER_ODI
     media = player.get(img_key) or default_banner
     
     await update_draft_message(update, context, match, card_caption, keyboard, media=media)
