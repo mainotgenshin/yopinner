@@ -108,7 +108,7 @@ async def get_player_by_name_and_sport(name_query: str, sport: str) -> Optional[
     """
     db = get_db()
     regex = re.compile(re.escape(name_query), re.IGNORECASE)
-    name_filter = {"$or": [{"name": regex}, {"full_name": regex}]}
+    name_filter = {"$or": [{"name": regex}, {"full_name": regex}, {"aliases": regex}]}
 
     if sport == "cricket":
         # Old cricket players may not have a sport field — include both
@@ -129,7 +129,8 @@ async def get_player_by_name(name_query: str) -> Optional[Dict[str, Any]]:
     data = await db.players.find_one({
         "$or": [
             {"name": regex},
-            {"full_name": regex}
+            {"full_name": regex},
+            {"aliases": regex}
         ]
     })
     if data:
@@ -144,7 +145,8 @@ async def search_players_by_name(name_query: str, sport: Optional[str] = None) -
     query = {
         "$or": [
             {"name": regex},
-            {"full_name": regex}
+            {"full_name": regex},
+            {"aliases": regex}
         ]
     }
     if sport:
@@ -204,11 +206,15 @@ async def get_eligible_players_for_mode(mode: str) -> List[str]:
         # WWE: all superstars are eligible
         query = {"sport": "wwe"}
     else:
-        # Cricket Optimization
-        search_key = 'international' if mode.lower() == 'intl' else mode.lower()
-        query = {
-            f"stats.{search_key}": {"$ne": None}
-        }
+        # Cricket — map mode string to DB stats key
+        _m = mode.lower()
+        if _m in ('odi', 'intl', 'international'):
+            search_key = 'odi'
+        elif _m == 'test':
+            search_key = 'test'
+        else:
+            search_key = _m
+        query = {f"stats.{search_key}": {"$ne": None}}
 
     # Projection to return ONLY the player_id string
     cursor = db.players.find(query, {"player_id": 1, "_id": 0})
