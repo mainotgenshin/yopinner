@@ -6,7 +6,7 @@ from game.state import load_match_state, save_match_state
 from game.models import Match, Player
 from database import get_player
 from telegram.helpers import escape_markdown
-from config import DRAFT_BANNER_IPL, DRAFT_BANNER_INTL, DRAFT_BANNER_FIFA
+from config import DRAFT_BANNER_IPL, DRAFT_BANNER_ODI, DRAFT_BANNER_INTL, DRAFT_BANNER_TEST, DRAFT_BANNER_FIFA
 # Import the unified update helper
 from handlers.draft import update_draft_message
 
@@ -20,8 +20,10 @@ def get_match_banner(match: Match):
         return DRAFT_BANNER_IPL
     elif match.mode == "FIFA":
         return DRAFT_BANNER_FIFA
-    else:
-        return DRAFT_BANNER_INTL
+    elif match.mode == "Test":
+        return DRAFT_BANNER_TEST
+    else:  # ODI
+        return DRAFT_BANNER_ODI
 
 # Helper to get squad buttons
 def get_squad_buttons(team, callback_prefix, exclude_id=None):
