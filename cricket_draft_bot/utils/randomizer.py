@@ -3,16 +3,21 @@ import random
 from typing import List, Any
 
 def get_random_player(player_ids: List[str], exclude_ids: List[str] = None) -> str:
-    """Selects a random player ID from the list, excluding specified ones."""
-    if exclude_ids:
-        choices = [pid for pid in player_ids if pid not in exclude_ids]
-    else:
-        choices = player_ids
+    """Selects a random player ID from the list, excluding specified ones.
+    
+    Pool is shuffled before picking to prevent systematic correlations
+    when multiple matches run concurrently (same mode, similar draw state).
+    """
+    exclude_set = set(exclude_ids) if exclude_ids else set()
+    choices = [pid for pid in player_ids if pid not in exclude_set]
     
     if not choices:
         return None
     
-    return random.choice(choices)
+    # Shuffle a copy so each draw is independently randomized,
+    # regardless of MongoDB's fixed insertion-order sort.
+    random.shuffle(choices)
+    return choices[0]
 
 def calculate_variance() -> float:
     """Returns a random variance multiplier (e.g., 0.9 to 1.1)."""
