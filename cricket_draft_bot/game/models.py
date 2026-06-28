@@ -15,6 +15,8 @@ class Player:
     stats: Dict = field(default_factory=dict) # {"ipl": {...}, "odi": {...}, "test": {...}}
     ipl_roles: List[str] = field(default_factory=list)
     test_roles: List[str] = field(default_factory=list)
+    test_image_url: Optional[str] = None
+    aliases: List[str] = field(default_factory=list)
     
     # FIFA / Generic Fields
     sport: str = "cricket"
