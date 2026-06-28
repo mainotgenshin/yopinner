@@ -97,11 +97,14 @@ async def load_match_state(match_id: str) -> Optional[Match]:
         t.trades_used = d.get('trades_used', 0)
         t.swaps_used = d.get('swaps_used', 0)
         # Reconstruct slots
+        import inspect
+        _player_fields = set(inspect.signature(Player).parameters.keys())
         for slot, pid in d['slots'].items():
             if pid:
                 p_data = await get_player(pid)
                 if p_data:
-                    t.slots[slot] = Player(**p_data)
+                    filtered_p_data = {k: v for k, v in p_data.items() if k in _player_fields}
+                    t.slots[slot] = Player(**filtered_p_data)
             else:
                  t.slots[slot] = None
         return t
