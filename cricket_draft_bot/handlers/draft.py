@@ -1,9 +1,11 @@
 # handlers/draft.py
 import dataclasses
+import time
+import asyncio
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, InputMediaPhoto
 from telegram.ext import ContextTypes
 import logging
-from game.state import load_match_state, save_match_state, draw_player_for_turn, switch_turn
+from game.state import load_match_state, save_match_state, draw_player_for_turn, switch_turn, evict_match_cache
 from game.models import Match, Player
 from database import get_player
 from utils.validators import validate_draft_action
@@ -22,6 +24,105 @@ CACHED_BANNERS = {}
 
 # Concurrency Control
 PROCESSING_LOCKS = set()
+
+# ── AFK Forfeit System ──────────────────────────────────────────────────
+AFK_TASKS: dict = {}  # match_id -> asyncio.Task
+AFK_TIMEOUT = 600    # 10 minutes
+
+async def _afk_forfeit(match_id: str, expected_turn: int, bot, chat_id: int):
+    """Fires after AFK_TIMEOUT seconds if the same player still hasn't moved."""
+    await asyncio.sleep(AFK_TIMEOUT)
+    try:
+        match = await load_match_state(match_id)
+        if not match or match.state != "DRAFTING":
+            return
+        if int(match.current_turn) != int(expected_turn):
+            return  # Player moved before timeout
+
+        afk_team = match.team_a if int(match.team_a.owner_id) == int(expected_turn) else match.team_b
+        opp_team  = match.team_b if afk_team is match.team_a else match.team_a
+
+        # Record loss for AFK player only; opponent gets no win/loss
+        from database import update_user_stats, get_db
+        try:
+            await update_user_stats(afk_team.owner_id, afk_team.owner_name, "L", mode=match.mode)
+        except Exception as e:
+            logger.error(f"AFK forfeit stats update failed: {e}")
+
+        match.state = "FINISHED"
+        import time as _t
+        match.finished_at = _t.time()
+        await save_match_state(match)
+        evict_match_cache(match_id)
+
+        msg = (
+            f"\u23f0 *Match Forfeited!*\n"
+            f"{esc(afk_team.owner_name)} went AFK for 10 minutes.\n"
+            f"\U0001f534 *+1 Loss* recorded for {esc(afk_team.owner_name)}.\n"
+            f"{esc(opp_team.owner_name)}'s match is *not counted* \u2014 no win, no loss."
+        )
+        try:
+            await bot.send_message(chat_id=chat_id, text=msg, parse_mode="Markdown")
+        except Exception:
+            pass
+        # Cleanup pinned board and DB record
+        try:
+            if getattr(match, 'pinned_message_id', None):
+                await bot.unpin_chat_message(chat_id=chat_id, message_id=match.pinned_message_id)
+        except Exception:
+            pass
+        try:
+            db = get_db()
+            await db.matches.delete_one({"match_id": match_id})
+        except Exception:
+            pass
+    except Exception as e:
+        logger.error(f"_afk_forfeit error for {match_id}: {e}")
+    finally:
+        AFK_TASKS.pop(match_id, None)
+
+def _reset_afk_timer(match: Match, bot, chat_id: int):
+    """Cancel any existing AFK task and start a fresh 10-min timer for current turn."""
+    old = AFK_TASKS.pop(match.match_id, None)
+    if old and not old.done():
+        old.cancel()
+    match.turn_deadline = time.time() + AFK_TIMEOUT
+    asyncio.create_task(save_match_state(match))
+    task = asyncio.create_task(
+        _afk_forfeit(match.match_id, int(match.current_turn), bot, chat_id)
+    )
+    AFK_TASKS[match.match_id] = task
+
+def start_forfeit_timer_on_startup(match: Match, bot):
+    """Reschedule the AFK forfeit timer on bot startup based on remaining turn_deadline."""
+    if match.state != "DRAFTING":
+        return
+    now = time.time()
+    if match.turn_deadline > 0:
+        remaining = match.turn_deadline - now
+        if remaining <= 0:
+            # Already expired, trigger forfeit immediately
+            asyncio.create_task(_afk_forfeit(match.match_id, int(match.current_turn), bot, match.chat_id))
+            return
+    else:
+        remaining = AFK_TIMEOUT
+        match.turn_deadline = now + AFK_TIMEOUT
+        asyncio.create_task(save_match_state(match))
+
+    old = AFK_TASKS.pop(match.match_id, None)
+    if old and not old.done():
+        old.cancel()
+
+    async def _afk_forfeit_startup():
+        await asyncio.sleep(remaining)
+        try:
+            m = await load_match_state(match.match_id)
+            if m and m.state == "DRAFTING" and int(m.current_turn) == int(match.current_turn):
+                await _afk_forfeit(match.match_id, int(match.current_turn), bot, match.chat_id)
+        except Exception:
+            pass
+    AFK_TASKS[match.match_id] = asyncio.create_task(_afk_forfeit_startup())
+
 
 async def handle_draft_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -230,9 +331,10 @@ async def handle_draw(update: Update, context: ContextTypes.DEFAULT_TYPE, match:
         
     match.pending_player_id = player['player_id']
     # Background the DB save — user doesn't need to wait for it.
-    # The pending_player_id is set in-memory first so idempotency still works.
     import asyncio as _aio
     _aio.create_task(save_match_state(match))
+    # Reset AFK timer — player has 10 min to assign
+    _reset_afk_timer(match, context.bot, match.chat_id)
     
     current_team = match.team_a if match.team_a.owner_id == match.current_turn else match.team_b
     
@@ -330,7 +432,6 @@ async def handle_assign(update: Update, context: ContextTypes.DEFAULT_TYPE, matc
     if player_id in match.draft_pool:
         match.draft_pool.remove(player_id)
         match.draft_pool_removed.append(player_id)  # Delta tracking
-        logger.info(f"DEBUG: Removed {player_id} from pool on Assignment.")
     else:
         logger.warning(f"DEBUG: {player_id} was assigned but not found in pool!")
 
@@ -378,6 +479,7 @@ async def handle_assign(update: Update, context: ContextTypes.DEFAULT_TYPE, matc
                 try:
                     from database import get_db
                     await get_db().matches.delete_one({"match_id": match_id})
+                    evict_match_cache(match_id)
                 except Exception:
                     pass
             except Exception as e:
@@ -385,6 +487,11 @@ async def handle_assign(update: Update, context: ContextTypes.DEFAULT_TYPE, matc
 
 
         asyncio.create_task(_auto_ready_live(context.bot, match.match_id, match.chat_id))
+
+        # Draft done — cancel AFK timer (no more turns)
+        old_afk = AFK_TASKS.pop(match.match_id, None)
+        if old_afk and not old_afk.done():
+            old_afk.cancel()
 
         board_text = format_draft_board(match)
         # Final Board Update
@@ -404,6 +511,8 @@ async def handle_assign(update: Update, context: ContextTypes.DEFAULT_TYPE, matc
     # Switch Turn
     await switch_turn(match)
     await save_match_state(match)
+    # Reset AFK timer for the next player's draw action
+    _reset_afk_timer(match, context.bot, match.chat_id)
     
     # Update Board for Next Turn (Restore Draw Button and Banner)
     board_text = format_draft_board(match)
@@ -421,22 +530,16 @@ async def handle_redraw(update: Update, context: ContextTypes.DEFAULT_TYPE, matc
         
         # Permanent Discard Logic
         if match.pending_player_id:
-            # Debug Logs
-            logger.info(f"DEBUG: Skipping Player {match.pending_player_id}. Pool Size Before: {len(match.draft_pool)}")
-            
-            # Remove from pool if present
             if match.pending_player_id in match.draft_pool:
                 match.draft_pool.remove(match.pending_player_id)
                 match.draft_pool_removed.append(match.pending_player_id)  # Delta tracking
-                logger.info(f"DEBUG: Permanently discarded {match.pending_player_id} from pool. New Size: {len(match.draft_pool)}")
-            else:
-                 logger.warning(f"DEBUG: Skipped Player {match.pending_player_id} NOT found in Draft Pool!")
-            
             match.pending_player_id = None
         
         # Switch Turn
         await switch_turn(match)
         await save_match_state(match)
+        # Reset AFK timer for the next draw
+        _reset_afk_timer(match, context.bot, match.chat_id)
         
         # Update Board (Restore Banner)
         board_text = format_draft_board(match)
