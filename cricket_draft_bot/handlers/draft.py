@@ -55,14 +55,30 @@ async def _afk_forfeit(match_id: str, expected_turn: int, bot, chat_id: int):
         await save_match_state(match)
         evict_match_cache(match_id)
 
-        msg = (
-            f"\u23f0 *Match Forfeited!*\n"
-            f"{esc(afk_team.owner_name)} went AFK for 10 minutes.\n"
-            f"\U0001f534 *+1 Loss* recorded for {esc(afk_team.owner_name)}.\n"
-            f"{esc(opp_team.owner_name)}'s match is *not counted* \u2014 no win, no loss."
-        )
+        msg = f"💤 *{esc(afk_team.owner_name)} forfeited due to being AFK for 10 mins.*"
         try:
-            await bot.send_message(chat_id=chat_id, text=msg, parse_mode="Markdown")
+            if match.draft_message_id:
+                try:
+                    await bot.edit_message_caption(
+                        chat_id=chat_id,
+                        message_id=match.draft_message_id,
+                        caption=msg,
+                        reply_markup=None,
+                        parse_mode="Markdown"
+                    )
+                except Exception:
+                    try:
+                        await bot.edit_message_text(
+                            chat_id=chat_id,
+                            message_id=match.draft_message_id,
+                            text=msg,
+                            reply_markup=None,
+                            parse_mode="Markdown"
+                        )
+                    except Exception:
+                        await bot.send_message(chat_id=chat_id, text=msg, parse_mode="Markdown")
+            else:
+                await bot.send_message(chat_id=chat_id, text=msg, parse_mode="Markdown")
         except Exception:
             pass
         # Cleanup pinned board and DB record
