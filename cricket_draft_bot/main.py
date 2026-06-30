@@ -260,13 +260,26 @@ async def _startup_recovery(bot):
                         await _gdb().matches.delete_one({"match_id": m_id})
                     except: pass
             asyncio.create_task(_delayed_unpin(bot, chat_id, pinned_id, match_id, remaining))
+            
+            # Restart AFK forfeit timer if in drafting phase
+            if state == "DRAFTING":
+                async def _startup_afk_recovery(m_id, b):
+                    try:
+                        from game.state import load_match_state
+                        from handlers.draft import start_forfeit_timer_on_startup
+                        m = await load_match_state(m_id)
+                        if m:
+                            start_forfeit_timer_on_startup(m, b)
+                    except Exception:
+                        pass
+                asyncio.create_task(_startup_afk_recovery(match_id, bot))
 
     logger.info(f"Startup recovery done: {cleaned} cleaned, {restarted} auto-simulating.")
 
     # ── Expire stale challenges (survived bot restart) ──────────────────
     try:
         from database import get_stale_challenges, delete_pending_challenge, get_db as _gdb
-        EXPIRED_TEXT = "⏰ <b>Challenge Expired</b>\nNo one joined in time. Start a new one with /challengeodi, /challengetest or /challengeipl."
+        EXPIRED_TEXT = "⏰ <b>Challenge Expired</b>\nNo one joined in time. Start a new one with /challenge odi or /challengeipl."
 
         # 1. Immediately expire challenges already older than 2 min
         stale = await get_stale_challenges(expiry_secs=120)
