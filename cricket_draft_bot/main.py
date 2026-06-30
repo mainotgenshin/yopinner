@@ -394,7 +394,7 @@ if __name__ == '__main__':
     application = (
         ApplicationBuilder()
         .token(BOT_TOKEN)
-        .rate_limiter(AIORateLimiter(max_retries=5))
+        .rate_limiter(AIORateLimiter(max_retries=5, group_max_rate=1000))
         .job_queue(None)
         .read_timeout(30)
         .write_timeout(30)
