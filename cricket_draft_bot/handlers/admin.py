@@ -882,8 +882,10 @@ async def handle_view_test_callback(update: Update, context: ContextTypes.DEFAUL
 async def reset_matches(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not await check_admin(update): return
     from database import clear_all_matches
-    clear_all_matches()
-    await update.message.reply_text("✅ All active matches have been cleared from the database.")
+    from game.state import clear_match_cache
+    await clear_all_matches()
+    clear_match_cache()
+    await update.message.reply_text("✅ All active matches have been cleared from the database and memory.")
 
 async def modify_stat_generic(update: Update, context: ContextTypes.DEFAULT_TYPE, stat_key: str, command_name: str):
     """
@@ -1966,14 +1968,26 @@ async def update_image_command(update, context):
     if not await check_admin(update): return
     import re
     text = update.message.text.replace("/update_image", "").strip()
-    fmt_m = re.search(r"format=(ipl|odi|test)", text, re.IGNORECASE)
-    target_format = fmt_m.group(1).lower() if fmt_m else "odi"
-    clean = re.sub(r"format=(ipl|odi|test)", "", text, flags=re.IGNORECASE).strip()
-    parts = clean.rsplit(" ", 1)
+    parts = text.rsplit(" ", 1)
     if len(parts) < 2:
-        await update.message.reply_text("Usage: /update_image Name format=[ipl|odi|test] URL")
+        await update.message.reply_text("Usage: /update_image Name [format=ipl|odi|test] URL")
         return
-    name, url = parts[0].strip(), parts[1].strip()
+    rest, url = parts[0].strip(), parts[1].strip()
+
+    # Match format
+    fmt_m = re.search(r"format=(ipl|odi|test)", rest, re.IGNORECASE)
+    if fmt_m:
+        target_format = fmt_m.group(1).lower()
+        name = re.sub(r"format=(ipl|odi|test)", "", rest, flags=re.IGNORECASE).strip()
+    else:
+        # Check if rest ends with a space followed by ipl, odi, or test
+        last_word_match = re.search(r"\s+(ipl|odi|test)$", rest, re.IGNORECASE)
+        if last_word_match:
+            target_format = last_word_match.group(1).lower()
+            name = rest[:last_word_match.start()].strip()
+        else:
+            target_format = "odi"
+            name = rest
     from database import get_player_by_name, save_player
     p = await get_player_by_name(name)
     if not p:
