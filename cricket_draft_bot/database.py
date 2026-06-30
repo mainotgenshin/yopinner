@@ -264,6 +264,42 @@ async def clear_all_matches():
     db = get_db()
     await db.matches.delete_many({})
 
+async def count_user_active_matches(user_id: int) -> int:
+    """Return how many DRAFTING/READY_CHECK matches this user is currently in."""
+    db = get_db()
+    return await db.matches.count_documents({
+        "state_data.state": {"$in": ["DRAFTING", "READY_CHECK"]},
+        "$or": [
+            {"state_data.team_a.owner_id": user_id},
+            {"state_data.team_b.owner_id": user_id}
+        ]
+    })
+
+async def get_user_active_matches_info(user_id: int) -> list:
+    """Return lightweight info about a user's active matches for the block message."""
+    db = get_db()
+    cursor = db.matches.find(
+        {
+            "state_data.state": {"$in": ["DRAFTING", "READY_CHECK"]},
+            "$or": [
+                {"state_data.team_a.owner_id": user_id},
+                {"state_data.team_b.owner_id": user_id}
+            ]
+        },
+        {
+            "state_data.mode": 1,
+            "state_data.state": 1,
+            "state_data.team_a.owner_id": 1,
+            "state_data.team_a.owner_name": 1,
+            "state_data.team_a.slots": 1,
+            "state_data.team_b.owner_id": 1,
+            "state_data.team_b.owner_name": 1,
+            "state_data.team_b.slots": 1,
+            "_id": 0
+        }
+    )
+    return await cursor.to_list(length=10)
+
 async def add_mod(user_id: int):
     db = get_db()
     await db.mods.update_one(
