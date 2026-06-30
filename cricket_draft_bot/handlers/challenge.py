@@ -673,6 +673,10 @@ async def handle_join(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # Edit the existing message into the draft board
     await update_draft_message(update, context, match, board_text, keyboard, media=banner)
 
+    # Start the 10-minute AFK forfeit timer for the first player's turn!
+    from handlers.draft import _reset_afk_timer
+    _reset_afk_timer(match, context.bot, update.effective_chat.id)
+
     # Pin the draft board — run in background task to avoid blocking the user
     pinned_msg_id = query.message.message_id
     async def _bg_pin():
