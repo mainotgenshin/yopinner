@@ -32,6 +32,10 @@ def evict_match_cache(match_id: str):
     """Call this when a match ends/is deleted to free the cache slot."""
     _MATCH_CACHE.pop(match_id, None)
 
+def clear_match_cache():
+    """Clear all cached matches from memory."""
+    _MATCH_CACHE.clear()
+
 async def create_match_state(chat_id: int, mode: str, owner_id: int, challenger_id: int, owner_name: str, challenger_name: str) -> Match:
     """Initializes a new match state async."""
     # Use cached pool projection (avoids re-querying DB if pool already cached)
