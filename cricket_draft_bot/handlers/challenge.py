@@ -19,6 +19,10 @@ logger = logging.getLogger(__name__)
 # key = owner_id, value = {task, chat_id, message_id}
 _pending_challenges: dict = {}
 
+# Locks to prevent double-clicks/spam on the mode picker buttons
+MODE_PICK_LOCKS = set()
+
+
 async def _expire_challenge(ch_key: str, owner_id: int, chat_id: int, message_id: int, bot):
     """After 2 minutes, expire the challenge if not yet joined."""
     await asyncio.sleep(120)  # 2 minutes
@@ -31,7 +35,7 @@ async def _expire_challenge(ch_key: str, owner_id: int, chat_id: int, message_id
         await delete_pending_challenge(owner_id, _mode)
     except Exception:
         pass
-    EXPIRED_TEXT = "⏰ <b>Challenge Expired</b>\nNo one joined in time. Start a new one with /challenge intl or /challengeipl."
+    EXPIRED_TEXT = "⏰ <b>Challenge Expired</b>\nNo one joined in time. Start a new one with /challenge odi or /challengeipl."
     try:
         await bot.edit_message_caption(
             chat_id=chat_id, message_id=message_id,
@@ -65,7 +69,7 @@ async def _replace_old_challenge(ch_key: str, bot):
     old_msg  = old.get('message_id')
     if not old_chat or not old_msg:
         return
-    EXPIRED_TEXT = "⏰ <b>Challenge Expired</b>\nNo one joined in time. Start a new one with /challenge intl or /challengeipl."
+    EXPIRED_TEXT = "⏰ <b>Challenge Expired</b>\nNo one joined in time. Start a new one with /challenge odi or /challengeipl."
     try:
         await bot.edit_message_caption(
             chat_id=old_chat, message_id=old_msg,
@@ -80,6 +84,45 @@ async def _replace_old_challenge(ch_key: str, bot):
         except Exception:
             pass
 
+
+async def _check_match_limit(user_id: int, mode_of_reply) -> bool:
+    """
+    Returns True if user can start/join a match.
+    If at limit (>=2), sends a descriptive message and returns False.
+    mode_of_reply: an Update.message or a CallbackQuery object.
+    """
+    from database import get_user_active_matches_info
+    from telegram.helpers import escape_markdown
+    def _esc(t): return escape_markdown(str(t), version=1)
+    matches = await get_user_active_matches_info(user_id)
+    if len(matches) < 2:
+        return True
+    # Build descriptive block message
+    lines = ["⛔ *Match limit reached (2/2)*", "Your active matches:"]
+    for doc in matches:
+        sd = doc.get("state_data", doc)  # handle both wrapped and unwrapped
+        mode  = sd.get("mode", "?")
+        ta    = sd.get("team_a", {})
+        tb    = sd.get("team_b", {})
+        opp   = tb.get("owner_name", "?") if ta.get("owner_id") == user_id else ta.get("owner_name", "?")
+        # Count filled slots
+        filled = sum(
+            1 for v in list(ta.get("slots", {}).values()) + list(tb.get("slots", {}).values())
+            if v is not None
+        )
+        status = sd.get("state", "?")
+        status_label = "🟡 Ready Check" if status == "READY_CHECK" else "🟢 Drafting"
+        lines.append(f"\u2022 {mode} vs {_esc(opp)} — {filled} picks done  {status_label}")
+    lines.append("\n_Finish a match first to start a new challenge._")
+    msg = "\n".join(lines)
+    try:
+        if hasattr(mode_of_reply, 'answer'):  # It's a CallbackQuery
+            await mode_of_reply.answer("⛔ You have 2 active matches! Finish one first.", show_alert=True)
+        elif hasattr(mode_of_reply, 'reply_text'):
+            await mode_of_reply.reply_text(msg, parse_mode="Markdown")
+    except Exception:
+        pass
+    return False
 
 async def challenge_handler(update: Update, context: ContextTypes.DEFAULT_TYPE, mode: str):
     """
@@ -130,6 +173,10 @@ async def challenge_ipl(update: Update, context: ContextTypes.DEFAULT_TYPE):
     from utils.banners import get_banner_for_mode
     owner_id = update.effective_user.id
     chat_id = update.effective_chat.id
+    # ─ Match limit check ─────────────────────────────────────
+    _reply_obj = getattr(update, 'effective_message', None) or getattr(update, 'callback_query', None)
+    if not await _check_match_limit(owner_id, _reply_obj):
+        return
     key = f"join_IPL_{owner_id}"
     keyboard = [[InlineKeyboardButton("⚔️ Join Game", callback_data=key)]]
     name = html.escape(update.effective_user.first_name)
@@ -172,6 +219,10 @@ async def challenge_odi(update: Update, context: ContextTypes.DEFAULT_TYPE):
     from utils.banners import get_banner_for_mode
     owner_id = update.effective_user.id
     chat_id = update.effective_chat.id
+    # ─ Match limit check
+    _reply_obj = getattr(update, 'effective_message', None) or getattr(update, 'callback_query', None)
+    if not await _check_match_limit(owner_id, _reply_obj):
+        return
     key = f"join_ODI_{owner_id}"
     keyboard = [[InlineKeyboardButton("\u2694\ufe0f Join Game", callback_data=key)]]
     name = html.escape(update.effective_user.first_name)
@@ -217,6 +268,10 @@ async def challenge_fifa(update: Update, context: ContextTypes.DEFAULT_TYPE):
     from utils.banners import get_banner_for_mode
     owner_id = update.effective_user.id
     chat_id = update.effective_chat.id
+    # ─ Match limit check
+    _reply_obj = getattr(update, 'effective_message', None) or getattr(update, 'callback_query', None)
+    if not await _check_match_limit(owner_id, _reply_obj):
+        return
     key = f"join_FIFA_{owner_id}"
     keyboard = [[InlineKeyboardButton("⚔️ Join Game", callback_data=key)]]
     name = html.escape(update.effective_user.first_name)
@@ -259,6 +314,10 @@ async def challenge_wwe(update: Update, context: ContextTypes.DEFAULT_TYPE):
     from utils.banners import get_banner_for_mode
     owner_id = update.effective_user.id
     chat_id = update.effective_chat.id
+    # ─ Match limit check
+    _reply_obj = getattr(update, 'effective_message', None) or getattr(update, 'callback_query', None)
+    if not await _check_match_limit(owner_id, _reply_obj):
+        return
     key = f"join_WWE_{owner_id}"
     keyboard = [[InlineKeyboardButton("⚔️ Join Game", callback_data=key)]]
     name = html.escape(update.effective_user.first_name)
@@ -300,6 +359,10 @@ async def challenge_test(update: Update, context: ContextTypes.DEFAULT_TYPE):
     from utils.banners import get_banner_for_mode
     owner_id = update.effective_user.id
     chat_id = update.effective_chat.id
+    # ─ Match limit check
+    _reply_obj = getattr(update, 'effective_message', None) or getattr(update, 'callback_query', None)
+    if not await _check_match_limit(owner_id, _reply_obj):
+        return
     key = f"join_Test_{owner_id}"
     keyboard = [[InlineKeyboardButton("\u2694\ufe0f Join Game", callback_data=key)]]
     name = html.escape(update.effective_user.first_name)
@@ -345,6 +408,9 @@ async def challenge_unified(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """
     if not context.args:
         owner_id = update.effective_user.id
+        # ─ Match limit check for /challenge with no args (picker)
+        if not await _check_match_limit(owner_id, update.effective_message):
+            return
         keyboard = [
             [
                 InlineKeyboardButton("\U0001f3cf IPL",  callback_data=f"challenge_pick_IPL_{owner_id}"),
@@ -356,11 +422,14 @@ async def challenge_unified(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 InlineKeyboardButton("\U0001f93c WWE",  callback_data=f"challenge_pick_WWE_{owner_id}"),
             ]
         ]
-        await update.effective_message.reply_text(
-            "\U0001f3ae <b>Choose a game mode to challenge:</b>",
-            reply_markup=InlineKeyboardMarkup(keyboard),
-            parse_mode="HTML"
-        )
+        try:
+            await update.effective_message.reply_text(
+                "\U0001f3ae <b>Choose a game mode to challenge:</b>",
+                reply_markup=InlineKeyboardMarkup(keyboard),
+                parse_mode="HTML"
+            )
+        except Exception:
+            pass  # Bot has no send rights in this chat
         return
 
     mode_arg = context.args[0].lower()
@@ -473,6 +542,14 @@ async def handle_mode_pick_callback(update: Update, context: ContextTypes.DEFAUL
         await query.answer("\u274c Not for you! Only the person who sent /challenge can pick a mode.", show_alert=True)
         return
 
+    # Check lock to prevent rapid double-clicks (spam)
+    msg_id = query.message.message_id if query.message else None
+    if msg_id:
+        if msg_id in MODE_PICK_LOCKS:
+            await query.answer("Processing your selection...", show_alert=False)
+            return
+        MODE_PICK_LOCKS.add(msg_id)
+
     await query.answer()
     try:
         await query.message.delete()
@@ -512,6 +589,13 @@ async def handle_join(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if query.from_user.id == owner_id:
         await query.answer("⛔ You cannot play against yourself!", show_alert=True)
         return
+
+    # ─ Match limit checks ────────────────────────────────────────
+    if not await _check_match_limit(query.from_user.id, query):
+        return  # Joiner is at limit
+    if not await _check_match_limit(owner_id, query):
+        await query.answer("⛔ The challenger already has 2 active matches.", show_alert=True)
+        return  # Owner somehow also at limit
 
     # Cancel expiry task for THIS specific message — only reached if a different user is joining
     _joined_msg_id = query.message.message_id if query.message else None
