@@ -74,3 +74,4 @@ class Match:
     pinned_message_id: Optional[int] = None  # Tracks the pinned draft board message
     draft_pool_removed: List[str] = field(default_factory=list)  # Delta: IDs removed from pool
     draft_completed_at: float = 0.0  # Timestamp when draft finished, for auto-ready 5min timer
+    turn_deadline: float = 0.0  # Unix timestamp when current turn's 10-min AFK window expires
