@@ -98,7 +98,7 @@ async def _check_match_limit(user_id: int, mode_of_reply) -> bool:
     if len(matches) < 2:
         return True
     # Build descriptive block message
-    lines = ["⛔ *Match limit reached (2/2)*", "Your active matches:"]
+    lines = ["⛔ *You are already playing 2 matches!*", "Your active matches:"]
     for doc in matches:
         sd = doc.get("state_data", doc)  # handle both wrapped and unwrapped
         mode  = sd.get("mode", "?")
@@ -113,11 +113,11 @@ async def _check_match_limit(user_id: int, mode_of_reply) -> bool:
         status = sd.get("state", "?")
         status_label = "🟡 Ready Check" if status == "READY_CHECK" else "🟢 Drafting"
         lines.append(f"\u2022 {mode} vs {_esc(opp)} — {filled} picks done  {status_label}")
-    lines.append("\n_Finish a match first to start a new challenge._")
+    lines.append("\n_Finish one of your matches first to start/join a new challenge._")
     msg = "\n".join(lines)
     try:
         if hasattr(mode_of_reply, 'answer'):  # It's a CallbackQuery
-            await mode_of_reply.answer("⛔ You have 2 active matches! Finish one first.", show_alert=True)
+            await mode_of_reply.answer("⛔ You are already playing 2 matches! Finish one before joining.", show_alert=True)
         elif hasattr(mode_of_reply, 'reply_text'):
             await mode_of_reply.reply_text(msg, parse_mode="Markdown")
     except Exception:
