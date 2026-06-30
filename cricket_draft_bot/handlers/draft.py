@@ -202,7 +202,7 @@ async def handle_draft_callback(update: Update, context: ContextTypes.DEFAULT_TY
         match = await load_match_state(match_id)
         if not match:
             logger.error(f"DEBUG: Match not found! ID: {match_id}")
-            await safe_answer(f"Match ended or expired. ({match_id})", alert=True)
+            await safe_answer("⚠️ Match ended or expired (Admin reset or maintenance).", alert=True)
             return
             
         # Check turn — cast both to int to guard against str/int type mismatch from MongoDB
