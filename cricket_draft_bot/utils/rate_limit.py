@@ -143,4 +143,4 @@ class MessageDebouncer:
             logger.error(f"Failed to recreate draft message: {e}")
 
 # Global instance
-debouncer = MessageDebouncer(delay=1.2)
+debouncer = MessageDebouncer(delay=0.2)
