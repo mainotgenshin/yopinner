@@ -1,6 +1,7 @@
 # game/state.py
 import json
 import logging
+import time
 from typing import Optional, Dict
 from game.models import Match, Team, Player
 from database import get_match, save_match, get_eligible_players_for_mode, get_cached_pool_for_mode, get_player
@@ -8,6 +9,28 @@ from utils.randomizer import get_random_player
 from config import MAX_REDRAWS
 
 logger = logging.getLogger(__name__)
+
+# ── In-memory match state cache ──────────────────────────────────────────────
+# Avoids a MongoDB read on every button click for active matches.
+# TTL = 30s; single-process safe (Heroku free tier = 1 dyno).
+_MATCH_CACHE: Dict[str, Dict] = {}  # {match_id: {"obj": Match, "ts": float}}
+_MATCH_CACHE_TTL = 30  # seconds
+
+def _cache_put(match: Match):
+    _MATCH_CACHE[match.match_id] = {"obj": match, "ts": time.time()}
+    if len(_MATCH_CACHE) > 60:  # evict oldest when over cap
+        oldest = min(_MATCH_CACHE, key=lambda k: _MATCH_CACHE[k]["ts"])
+        _MATCH_CACHE.pop(oldest, None)
+
+def _cache_get(match_id: str) -> Optional[Match]:
+    entry = _MATCH_CACHE.get(match_id)
+    if entry and (time.time() - entry["ts"]) < _MATCH_CACHE_TTL:
+        return entry["obj"]
+    return None
+
+def evict_match_cache(match_id: str):
+    """Call this when a match ends/is deleted to free the cache slot."""
+    _MATCH_CACHE.pop(match_id, None)
 
 async def create_match_state(chat_id: int, mode: str, owner_id: int, challenger_id: int, owner_name: str, challenger_name: str) -> Match:
     """Initializes a new match state async."""
@@ -79,11 +102,18 @@ async def save_match_state(match: Match):
         "pinned_message_id": getattr(match, 'pinned_message_id', None),
         "finished_at": match.finished_at,
         "draft_completed_at": getattr(match, 'draft_completed_at', 0.0),
-        "trade_offer": getattr(match, 'trade_offer', None)
+        "trade_offer": getattr(match, 'trade_offer', None),
+        "turn_deadline": getattr(match, 'turn_deadline', 0.0)
     }
+    _cache_put(match)  # Update in-memory cache immediately
     await save_match(match.match_id, match.chat_id, state_data)
 
 async def load_match_state(match_id: str) -> Optional[Match]:
+    # Fast path: serve from in-memory cache if fresh
+    cached = _cache_get(match_id)
+    if cached:
+        return cached
+
     data = await get_match(match_id)
     if not data:
         return None
@@ -124,6 +154,7 @@ async def load_match_state(match_id: str) -> Optional[Match]:
         finished_at=data.get('finished_at', 0.0),
         pinned_message_id=data.get('pinned_message_id'),
         draft_completed_at=data.get('draft_completed_at', 0.0),
+        turn_deadline=data.get('turn_deadline', 0.0),
     )
     m.trade_offer = data.get('trade_offer')
 
@@ -139,6 +170,7 @@ async def load_match_state(match_id: str) -> Optional[Match]:
         m.draft_pool = data.get('draft_pool', [])
         m.draft_pool_removed = []
 
+    _cache_put(m)  # Prime the cache
     return m
 
 async def draw_player_for_turn(match: Match) -> Optional[Dict]:
