@@ -406,11 +406,12 @@ async def challenge_unified(update: Update, context: ContextTypes.DEFAULT_TYPE):
     /challenge [mode] — Start a draft challenge.
     With no args: shows mode picker buttons (IPL, ODI, Test, FIFA, WWE).
     """
+    owner_id = update.effective_user.id
+    # ─ Match limit check for all /challenge entries (with or without args)
+    if not await _check_match_limit(owner_id, update.effective_message):
+        return
+
     if not context.args:
-        owner_id = update.effective_user.id
-        # ─ Match limit check for /challenge with no args (picker)
-        if not await _check_match_limit(owner_id, update.effective_message):
-            return
         keyboard = [
             [
                 InlineKeyboardButton("\U0001f3cf IPL",  callback_data=f"challenge_pick_IPL_{owner_id}"),
@@ -569,11 +570,6 @@ async def handle_mode_pick_callback(update: Update, context: ContextTypes.DEFAUL
 async def handle_join(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     
-    # Don't delete! We will edit it.
-    # await query.answer() 
-    # Actually answer() is needed to stop loading spinner, but doesn't affect message.
-    await query.answer()
-    
     parts = query.data.split('_') # join, MODE, OWNER_ID, [TARGET_ID]
     mode = parts[1]
     owner_id = int(parts[2])
@@ -596,6 +592,9 @@ async def handle_join(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not await _check_match_limit(owner_id, query):
         await query.answer("⛔ The challenger already has 2 active matches.", show_alert=True)
         return  # Owner somehow also at limit
+
+    # All checks passed — answer callback query to stop loading spinner
+    await query.answer()
 
     # Cancel expiry task for THIS specific message — only reached if a different user is joining
     _joined_msg_id = query.message.message_id if query.message else None
