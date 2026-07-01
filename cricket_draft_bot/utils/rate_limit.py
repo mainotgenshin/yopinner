@@ -11,10 +11,18 @@ class MessageDebouncer:
     Batches rapid Telegram message edits (e.g. during a draft) into a single API call.
     Includes state checking to skip duplicate updates and optimizes media edits.
     """
-    def __init__(self, delay=1.2):
+    def __init__(self, delay=0.5):
         self.delay = delay
         self.tasks = {}
         self.last_state = {}
+
+    def cancel_updates(self, chat_id: int, message_id: int):
+        """Cancel any pending screen updates in the queue for this message."""
+        key = f"{chat_id}_{message_id}"
+        task = self.tasks.pop(key, None)
+        if task and not task.done():
+            task.cancel()
+        self.last_state.pop(key, None)
     
     async def schedule_update(self, match, bot, caption, reply_markup, media=None, parse_mode="Markdown"):
         if not match.draft_message_id:
@@ -143,4 +151,4 @@ class MessageDebouncer:
             logger.error(f"Failed to recreate draft message: {e}")
 
 # Global instance
-debouncer = MessageDebouncer(delay=0.2)
+debouncer = MessageDebouncer(delay=0.5)
