@@ -593,6 +593,18 @@ async def handle_join(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.answer("⛔ The challenger already has 2 active matches.", show_alert=True)
         return  # Owner somehow also at limit
 
+    # ─ Atomic check and claim of the challenge ──────────────────
+    from database import find_and_delete_pending_challenge
+    claimed = await find_and_delete_pending_challenge(owner_id, mode)
+    if not claimed:
+        # Challenge is already accepted or expired
+        await query.answer("⚠️ Challenge has already been accepted or expired!", show_alert=True)
+        try:
+            await query.message.edit_reply_markup(reply_markup=None)
+        except Exception:
+            pass
+        return
+
     # All checks passed — answer callback query to stop loading spinner
     await query.answer()
 
@@ -604,11 +616,6 @@ async def handle_join(update: Update, context: ContextTypes.DEFAULT_TYPE):
         task = pending.get('task')
         if task and not task.done():
             task.cancel()
-    # Remove from DB — pass mode so compound (owner_id, mode) key is matched
-    try:
-        await delete_pending_challenge(owner_id, mode)
-    except Exception:
-        pass
 
         
     # Start Match
