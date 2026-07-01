@@ -505,6 +505,11 @@ async def save_pending_challenge(owner_id: int, chat_id: int, message_id: int, m
         upsert=True
     )
 
+async def find_and_delete_pending_challenge(owner_id: int, mode: str) -> Optional[dict]:
+    """Atomically find and delete a pending challenge to prevent double-joins."""
+    db = get_db()
+    return await db.pending_challenges.find_one_and_delete({"owner_id": owner_id, "mode": mode})
+
 async def delete_pending_challenge(owner_id: int, mode: str = None) -> None:
     """Remove a pending challenge (joined or naturally expired)."""
     db = get_db()
