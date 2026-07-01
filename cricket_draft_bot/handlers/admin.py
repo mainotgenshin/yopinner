@@ -2097,7 +2097,7 @@ async def handle_broadcast(update, context):
             try:
                 await context.bot.send_message(chat_id=chat_id, text=text_out, parse_mode="HTML")
                 success += 1
-                await asyncio.sleep(0.05)
+                await asyncio.sleep(0.5)
             except Forbidden:
                 await get_db().chats.delete_one({"chat_id": chat_id})
                 failed += 1
