@@ -54,6 +54,8 @@ async def _afk_forfeit(match_id: str, expected_turn: int, bot, chat_id: int):
         match.finished_at = _t.time()
         await save_match_state(match)
         evict_match_cache(match_id)
+        from utils.rate_limit import debouncer
+        debouncer.cancel_updates(chat_id, match.draft_message_id)
 
         msg = f"💤 *{esc(afk_team.owner_name)} forfeited due to being AFK for 10 mins.*"
         try:
@@ -526,7 +528,6 @@ async def handle_assign(update: Update, context: ContextTypes.DEFAULT_TYPE, matc
 
     # Switch Turn
     await switch_turn(match)
-    await save_match_state(match)
     # Reset AFK timer for the next player's draw action
     _reset_afk_timer(match, context.bot, match.chat_id)
     
@@ -553,7 +554,6 @@ async def handle_redraw(update: Update, context: ContextTypes.DEFAULT_TYPE, matc
         
         # Switch Turn
         await switch_turn(match)
-        await save_match_state(match)
         # Reset AFK timer for the next draw
         _reset_afk_timer(match, context.bot, match.chat_id)
         
