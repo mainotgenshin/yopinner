@@ -351,8 +351,8 @@ async def handle_draw(update: Update, context: ContextTypes.DEFAULT_TYPE, match:
     # Background the DB save — user doesn't need to wait for it.
     import asyncio as _aio
     _aio.create_task(save_match_state(match))
-    # Reset AFK timer — player has 10 min to assign
-    _reset_afk_timer(match, context.bot, match.chat_id)
+    # NOTE: AFK timer is reset AFTER update_draft_message below,
+    # ensuring the player sees the assign buttons before the 10-min clock starts.
     
     current_team = match.team_a if match.team_a.owner_id == match.current_turn else match.team_b
     
@@ -432,6 +432,8 @@ async def handle_draw(update: Update, context: ContextTypes.DEFAULT_TYPE, match:
     
     # Update the single message to show the card
     await update_draft_message(update, context, match, card_caption, keyboard, media=media)
+    # Reset AFK timer AFTER UI is queued — player has 10 min to assign
+    _reset_afk_timer(match, context.bot, match.chat_id)
 
 
 async def handle_assign(update: Update, context: ContextTypes.DEFAULT_TYPE, match: Match, player_id: str, slot: str):
@@ -528,8 +530,6 @@ async def handle_assign(update: Update, context: ContextTypes.DEFAULT_TYPE, matc
 
     # Switch Turn
     await switch_turn(match)
-    # Reset AFK timer for the next player's draw action
-    _reset_afk_timer(match, context.bot, match.chat_id)
     
     # Update Board for Next Turn (Restore Draw Button and Banner)
     board_text = format_draft_board(match)
@@ -537,6 +537,8 @@ async def handle_assign(update: Update, context: ContextTypes.DEFAULT_TYPE, matc
     
     banner = await get_banner_for_match(match)
     await update_draft_message(update, context, match, board_text, keyboard, media=banner)
+    # Reset AFK timer AFTER UI is queued — ensures next player sees Draw button before clock starts
+    _reset_afk_timer(match, context.bot, match.chat_id)
 
 
 async def handle_redraw(update: Update, context: ContextTypes.DEFAULT_TYPE, match: Match):
@@ -554,8 +556,6 @@ async def handle_redraw(update: Update, context: ContextTypes.DEFAULT_TYPE, matc
         
         # Switch Turn
         await switch_turn(match)
-        # Reset AFK timer for the next draw
-        _reset_afk_timer(match, context.bot, match.chat_id)
         
         # Update Board (Restore Banner)
         board_text = format_draft_board(match)
@@ -563,6 +563,8 @@ async def handle_redraw(update: Update, context: ContextTypes.DEFAULT_TYPE, matc
         
         banner = await get_banner_for_match(match)
         await update_draft_message(update, context, match, f"{board_text}\n\n⏩ {esc(current_team.owner_name)} Skipped! Turn Consumed.", keyboard, media=banner)
+        # Reset AFK timer AFTER UI is queued — ensures next player sees Draw button before clock starts
+        _reset_afk_timer(match, context.bot, match.chat_id)
         
     else:
         try:
