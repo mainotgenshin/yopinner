@@ -212,6 +212,7 @@ async def _startup_recovery(bot):
 
     cleaned = 0
     restarted = 0
+    _drafting_idx = 0  # Used to stagger UI refresh messages (avoid rate-limit burst)
 
     for doc in stuck:
         match_id  = doc.get("match_id")
@@ -273,6 +274,11 @@ async def _startup_recovery(bot):
                     except Exception:
                         pass
                 asyncio.create_task(_startup_afk_recovery(match_id, bot))
+                # Refresh the draft UI so players see the correct buttons after restart.
+                # Stagger sends by 1.5s per match to avoid hitting Telegram rate limits
+                # when there are 30+ concurrent matches.
+                asyncio.create_task(_refresh_draft_ui(bot, match_id, delay=_drafting_idx * 1.5))
+                _drafting_idx += 1
 
     logger.info(f"Startup recovery done: {cleaned} cleaned, {restarted} auto-simulating.")
 
@@ -388,6 +394,121 @@ async def _auto_simulate(bot, match_id: str):
 
     except Exception as e:
         logger.error(f"Auto-simulate failed for {match_id}: {e}")
+
+
+async def _refresh_draft_ui(bot, match_id: str, delay: float = 0.0):
+    """
+    After a bot restart (e.g. Koyeb dyno recycle), re-sends the correct draft
+    UI to the group so players are never left with a stale/buttonless message.
+
+    - If pending_player_id exists: re-shows the player card + assign buttons.
+    - Otherwise: re-shows the draft board + Draw Player button.
+
+    A new message is always sent (not edited) because the old draft_message_id
+    may be stale or show wrong state after restart.
+    """
+    if delay:
+        await asyncio.sleep(delay)
+
+    _logger = logging.getLogger(__name__)
+
+    try:
+        from game.state import load_match_state, save_match_state as _save
+        from telegram import InlineKeyboardButton, InlineKeyboardMarkup
+        from telegram.helpers import escape_markdown
+        from config import POSITIONS_T20, POSITIONS_TEST, POSITIONS_FIFA, POSITIONS_WWE
+
+        def _esc(t):
+            return escape_markdown(str(t), version=1)
+
+        match = await load_match_state(match_id)
+        if not match or match.state != "DRAFTING":
+            return
+
+        current_team = match.team_a if match.team_a.owner_id == match.current_turn else match.team_b
+
+        if match.pending_player_id:
+            # Mid-draw state — re-show the drawn player card with assign buttons
+            from database import get_player
+            p_data = await get_player(match.pending_player_id)
+            if not p_data:
+                return
+
+            if "Test" in match.mode:
+                active_positions = POSITIONS_TEST
+            elif match.mode == "FIFA":
+                active_positions = POSITIONS_FIFA
+            elif match.mode == "WWE":
+                active_positions = POSITIONS_WWE
+            else:
+                active_positions = POSITIONS_T20
+
+            keyboard = []
+            row = []
+            for pos in active_positions:
+                if not current_team.slots.get(pos):
+                    row.append(InlineKeyboardButton(f"🟢 {pos}", callback_data=f"assign_{match_id}|{pos}"))
+                if len(row) == 2:
+                    keyboard.append(row)
+                    row = []
+            if row:
+                keyboard.append(row)
+
+            footer_row = []
+            if current_team.redraws_remaining > 0:
+                footer_row.append(InlineKeyboardButton(
+                    f"🗑 Skip ({current_team.redraws_remaining})",
+                    callback_data=f"redraw_{match_id}"
+                ))
+            if current_team.replacements_remaining > 0 and any(current_team.slots.values()):
+                footer_row.append(InlineKeyboardButton(
+                    f"♻️ Replace ({current_team.replacements_remaining})",
+                    callback_data=f"replace_start_{match_id}"
+                ))
+            if footer_row:
+                keyboard.append(footer_row)
+
+            text = (
+                f"🔄 *Bot restarted — resuming your draft!*\n\n"
+                f"✨ ⚔️ {_esc(current_team.owner_name)}'s turn\n"
+                f"Pulled: {_esc(p_data['name'])}\n"
+                f"Assign a position:"
+            )
+        else:
+            # Waiting-to-draw state — re-show the board with Draw Player button
+            from handlers.draft import format_draft_board
+            board = format_draft_board(match)
+            text = f"🔄 *Bot restarted — resuming your draft!*\n\n{board}"
+            keyboard = [[InlineKeyboardButton("🎲 Draw Player", callback_data=f"draw_{match_id}")]]
+
+        reply_markup = InlineKeyboardMarkup(keyboard)
+
+        # Always send a NEW message — don't edit the old stale one
+        msg = await bot.send_message(
+            chat_id=match.chat_id,
+            text=text,
+            reply_markup=reply_markup,
+            parse_mode="Markdown"
+        )
+        match.draft_message_id = msg.message_id
+
+        # Re-pin so the draft board stays visible
+        try:
+            await bot.pin_chat_message(
+                chat_id=match.chat_id,
+                message_id=msg.message_id,
+                disable_notification=True
+            )
+            match.pinned_message_id = msg.message_id
+        except Exception:
+            pass
+
+        await _save(match)
+        _logger.info(f"Startup recovery: refreshed draft UI for match {match_id}")
+
+    except Exception as e:
+        _logger.error(f"_refresh_draft_ui failed for match {match_id}: {e}")
+
 
 if __name__ == '__main__':
     # Build application
