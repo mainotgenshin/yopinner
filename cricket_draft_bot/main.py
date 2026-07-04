@@ -294,6 +294,13 @@ async def _startup_recovery(bot):
             mid  = ch.get("message_id")
             oid  = ch.get("owner_id")
             mode = ch.get("mode", "")
+            # Atomically claim the DB record — if it's already gone the challenge
+            # was accepted while the bot was offline. In that case the message_id
+            # now belongs to the live draft board: DO NOT edit it.
+            from database import find_and_delete_pending_challenge as _claim
+            still_pending = await _claim(oid, mode)
+            if not still_pending:
+                continue  # Already accepted → skip, protect the draft board
             try:
                 await bot.edit_message_caption(chat_id=cid, message_id=mid, caption=EXPIRED_TEXT, parse_mode="HTML")
             except Exception:
@@ -301,10 +308,6 @@ async def _startup_recovery(bot):
                     await bot.edit_message_text(chat_id=cid, message_id=mid, text=EXPIRED_TEXT, parse_mode="HTML")
                 except Exception:
                     pass
-            try:
-                await delete_pending_challenge(oid, mode)
-            except Exception:
-                pass
             # Throttle: 50ms gap between edits to stay under Telegram's 30 msg/sec limit
             await asyncio.sleep(0.05)
         if stale:
@@ -324,11 +327,16 @@ async def _startup_recovery(bot):
 
             async def _recover_expire(bot, cid, mid, oid, mode, delay, text=EXPIRED_TEXT):
                 await asyncio.sleep(delay)
+                # Atomically claim the DB record. If it's already gone, the challenge
+                # was accepted while we were sleeping — the message_id is now the live
+                # draft board. DO NOT edit it in that case.
                 try:
-                    from database import delete_pending_challenge as _del
-                    await _del(oid, mode)
+                    from database import find_and_delete_pending_challenge as _claim
+                    still_pending = await _claim(oid, mode)
+                    if not still_pending:
+                        return  # Already accepted → protect the draft board
                 except Exception:
-                    pass
+                    return  # DB error — safer to skip than to risk wiping a live match
                 try:
                     await bot.edit_message_caption(chat_id=cid, message_id=mid, caption=text, parse_mode="HTML")
                 except Exception:
@@ -692,4 +700,10 @@ if __name__ == '__main__':
     application.add_error_handler(error_handler)
 
     print("Bot is running (Polling mode, Free tier compatible)...")
-    application.run_polling()
+    # drop_pending_updates=True: on restart, skip all queued updates that
+    # accumulated while the bot was offline. This prevents:
+    #   1. Ghost challenge banners (old /challenge commands replaying)
+    #   2. Rate limit bursts (processing 30+ stale commands at startup)
+    #   3. Stale button callbacks causing match state corruption
+    # Active match data in MongoDB is safe — _startup_recovery restores the UI.
+    application.run_polling(drop_pending_updates=True)
