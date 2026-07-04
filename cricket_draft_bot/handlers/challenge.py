@@ -23,6 +23,32 @@ _pending_challenges: dict = {}
 MODE_PICK_LOCKS = set()
 
 
+def _is_stale_command(update) -> bool:
+    """
+    Returns True if this command message is older than 30 seconds.
+
+    Why: When Koyeb restarts the bot, Telegram re-delivers all queued
+    updates (commands sent while the bot was offline). These stale commands
+    would be re-processed as if sent fresh — causing ghost challenge banners
+    to appear. Any legitimate fresh command is always <2 seconds old, so
+    a 30-second cutoff safely drops only re-queued stale commands.
+
+    NOTE: This only applies to text command handlers — button callbacks
+    (Join Game, Draw Player, etc.) are NOT affected by this check.
+    """
+    try:
+        msg_age = time.time() - update.effective_message.date.timestamp()
+        if msg_age > 30:
+            logger.info(
+                f"Dropping stale command from user {update.effective_user.id} "
+                f"(age={msg_age:.0f}s > 30s) — likely a post-restart replay."
+            )
+            return True
+    except Exception:
+        pass
+    return False
+
+
 async def _expire_challenge(ch_key: str, owner_id: int, chat_id: int, message_id: int, bot):
     """After 2 minutes, expire the challenge if not yet joined."""
     await asyncio.sleep(120)  # 2 minutes
@@ -170,6 +196,7 @@ async def challenge_handler(update: Update, context: ContextTypes.DEFAULT_TYPE, 
     )
 
 async def challenge_ipl(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if _is_stale_command(update): return  # Drop replayed command from before bot restart
     from utils.banners import get_banner_for_mode
     owner_id = update.effective_user.id
     chat_id = update.effective_chat.id
@@ -216,6 +243,7 @@ async def challenge_ipl(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def challenge_odi(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if _is_stale_command(update): return  # Drop replayed command from before bot restart
     from utils.banners import get_banner_for_mode
     owner_id = update.effective_user.id
     chat_id = update.effective_chat.id
@@ -265,6 +293,7 @@ challenge_intl = challenge_odi
 
 
 async def challenge_fifa(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if _is_stale_command(update): return  # Drop replayed command from before bot restart
     from utils.banners import get_banner_for_mode
     owner_id = update.effective_user.id
     chat_id = update.effective_chat.id
@@ -311,6 +340,7 @@ async def challenge_fifa(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def challenge_wwe(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if _is_stale_command(update): return  # Drop replayed command from before bot restart
     from utils.banners import get_banner_for_mode
     owner_id = update.effective_user.id
     chat_id = update.effective_chat.id
@@ -356,6 +386,7 @@ async def challenge_wwe(update: Update, context: ContextTypes.DEFAULT_TYPE):
         pass
 
 async def challenge_test(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if _is_stale_command(update): return  # Drop replayed command from before bot restart
     from utils.banners import get_banner_for_mode
     owner_id = update.effective_user.id
     chat_id = update.effective_chat.id
@@ -406,6 +437,7 @@ async def challenge_unified(update: Update, context: ContextTypes.DEFAULT_TYPE):
     /challenge [mode] — Start a draft challenge.
     With no args: shows mode picker buttons (IPL, ODI, Test, FIFA, WWE).
     """
+    if _is_stale_command(update): return  # Drop replayed command from before bot restart
     owner_id = update.effective_user.id
     # ─ Match limit check for all /challenge entries (with or without args)
     if not await _check_match_limit(owner_id, update.effective_message):
@@ -597,10 +629,28 @@ async def handle_join(update: Update, context: ContextTypes.DEFAULT_TYPE):
     from database import find_and_delete_pending_challenge
     claimed = await find_and_delete_pending_challenge(owner_id, mode)
     if not claimed:
-        # Challenge is already accepted or expired
+        # Challenge is already accepted or expired.
         await query.answer("⚠️ Challenge has already been accepted or expired!", show_alert=True)
         try:
-            await query.message.edit_reply_markup(reply_markup=None)
+            # CRITICAL: Only strip the button if this message is NOT a live draft board.
+            # If the challenge was already accepted, the same message_id is now the
+            # draft board with "Draw Player" button. Calling edit_reply_markup(None)
+            # here would silently wipe the Draw button from the active match.
+            # We check: is there a live DRAFTING match that owns this message_id?
+            from database import get_db as _gdb
+            _db = _gdb()
+            _msg_id = query.message.message_id if query.message else None
+            _is_live_draft = False
+            if _msg_id:
+                _live = await _db.matches.find_one({
+                    "state_data.state": {"$in": ["DRAFTING", "READY_CHECK"]},
+                    "state_data.draft_message_id": _msg_id
+                })
+                _is_live_draft = bool(_live)
+            if not _is_live_draft:
+                # Safe to remove button — this is a genuinely expired/stale challenge
+                await query.message.edit_reply_markup(reply_markup=None)
+            # If _is_live_draft is True: leave the message alone — it's the draft board
         except Exception:
             pass
         return
