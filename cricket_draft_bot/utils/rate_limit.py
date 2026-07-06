@@ -76,24 +76,52 @@ class MessageDebouncer:
         try:
             await asyncio.sleep(self.delay)
 
-            if key not in self._pending:
-                return  # Update was cancelled by cancel_updates() (match ended)
+            # Loop: keep delivering as long as there are pending updates for this key.
+            #
+            # KEY FIX vs old one-shot design:
+            #   The old code popped ONE pending state, ran the API call, then exited.
+            #   If a new update arrived in self._pending[key] WHILE the API call was
+            #   running (e.g. a player assigned a position while we were delivering
+            #   the "drawn player card"), the task exited without delivering it.
+            #   self._pending[key] was left populated but with no active task to
+            #   consume it — the next player's "Draw Player" board was silently dropped,
+            #   they never saw the button, and they got forfeited by the AFK timer.
+            #
+            # New behaviour:
+            #   After each successful delivery the loop checks self._pending[key] again.
+            #   If another update has queued up, it delivers that one too (with a short
+            #   anti-rate-limit pause), and so on until the queue is drained.
+            while key in self._pending:
+                caption, reply_markup, send_media, target_state = self._pending.pop(key)
 
-            caption, reply_markup, send_media, target_state = self._pending.pop(key)
+                success = await self._run_api_call(
+                    bot, match.chat_id, match.draft_message_id,
+                    caption, reply_markup, send_media, parse_mode
+                )
 
-            success = await self._run_api_call(
-                bot, match.chat_id, match.draft_message_id,
-                caption, reply_markup, send_media, parse_mode
-            )
+                if success:
+                    self.last_state[key] = target_state
+                else:
+                    logger.info(f"Debouncer: All API retries failed — recreating message for match {match.match_id}")
+                    await self._recreate_message(match, bot, caption, reply_markup, target_state.get('media'), parse_mode)
+                    if match.draft_message_id:
+                        new_key = f"{match.chat_id}_{match.draft_message_id}"
+                        self.last_state[new_key] = target_state
+                        # If the message was recreated with a new ID, migrate any pending
+                        # updates that accumulated under the old key to the new key and
+                        # spawn a fresh task so they are not silently dropped.
+                        if new_key != key and key in self._pending:
+                            self._pending[new_key] = self._pending.pop(key)
+                            if new_key not in self.tasks or self.tasks[new_key].done():
+                                self.tasks[new_key] = asyncio.create_task(
+                                    self._execute_update(new_key, match, bot, parse_mode)
+                                )
+                    return  # After recreate this key is stale; new task handles the rest
 
-            if success:
-                self.last_state[key] = target_state
-            else:
-                logger.info(f"Debouncer: All API retries failed — recreating message for match {match.match_id}")
-                await self._recreate_message(match, bot, caption, reply_markup, target_state.get('media'), parse_mode)
-                if match.draft_message_id:
-                    new_key = f"{match.chat_id}_{match.draft_message_id}"
-                    self.last_state[new_key] = target_state
+                # If another update arrived while we were running the API call,
+                # pause briefly before the next iteration to respect rate limits.
+                if key in self._pending:
+                    await asyncio.sleep(0.3)
 
         except asyncio.CancelledError:
             pass  # Cancelled by cancel_updates() when match ends — expected and OK
