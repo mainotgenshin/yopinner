@@ -439,6 +439,18 @@ async def handle_draw(update: Update, context: ContextTypes.DEFAULT_TYPE, match:
 async def handle_assign(update: Update, context: ContextTypes.DEFAULT_TYPE, match: Match, player_id: str, slot: str):
     
     p_data = await get_player(player_id)
+    if not p_data:
+        # Rare edge case: player deleted from DB while match was in progress.
+        # Return without changing match state so the player can retry by clicking again.
+        logger.error(f"handle_assign: player {player_id} not found in DB — match {match.match_id}")
+        try:
+            await update.callback_query.answer(
+                "⚠️ Error loading player data. Please click the position again to retry.",
+                show_alert=True
+            )
+        except Exception:
+            pass
+        return
     current_team = match.team_a if match.team_a.owner_id == match.current_turn else match.team_b
 
     # Filter p_data to only known fields
@@ -716,6 +728,8 @@ async def handle_replace_exec(update: Update, context: ContextTypes.DEFAULT_TYPE
     
     banner = await get_banner_for_match(match)
     await update_draft_message(update, context, match, f"{board_text}\n\n♻️ {esc(current_team.owner_name)} replaced {esc(old_player.name)} with {esc(new_player.name)}!", keyboard, media=banner)
+    # Reset AFK timer AFTER UI is queued — ensures next player sees Draw button before clock starts
+    _reset_afk_timer(match, context.bot, match.chat_id)
 
 async def handle_replace_cancel(update: Update, context: ContextTypes.DEFAULT_TYPE, match: Match):
     # Just go back to draw view
