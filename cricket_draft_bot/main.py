@@ -203,8 +203,12 @@ async def _startup_recovery(bot):
     logger.info("Startup recovery: scanning for stuck matches...")
 
     try:
+        # IMPORTANT: save_match() stores all match fields nested inside the
+        # 'state_data' sub-document, so the query must use 'state_data.state'.
+        # The old query {"state": ...} matched NOTHING because there is no
+        # top-level 'state' field — making _startup_recovery completely blind.
         stuck = await db.matches.find(
-            {"state": {"$in": ["DRAFTING", "READY_CHECK"]}}
+            {"state_data.state": {"$in": ["DRAFTING", "READY_CHECK"]}}
         ).to_list(length=200)
     except Exception as e:
         logger.error(f"Startup recovery query failed: {e}")
@@ -217,8 +221,9 @@ async def _startup_recovery(bot):
     for doc in stuck:
         match_id  = doc.get("match_id")
         chat_id   = doc.get("chat_id")
-        pinned_id = doc.get("pinned_message_id")
-        state     = doc.get("state", "DRAFTING")
+        sd        = doc.get("state_data", {})  # All match fields live inside state_data
+        pinned_id = sd.get("pinned_message_id")
+        state     = sd.get("state", "DRAFTING")
         # Use match creation time from match_id (format: ownerid_timestamp)
         try:
             created_at = float(match_id.split("_")[1])
@@ -226,7 +231,7 @@ async def _startup_recovery(bot):
             created_at = now - ABANDON_LIMIT - 1  # Force cleanup if unparseable
 
         age = now - created_at
-        draft_completed_at = doc.get("draft_completed_at", 0.0)
+        draft_completed_at = sd.get("draft_completed_at", 0.0)
 
         if age >= ABANDON_LIMIT:
             # Match is stale — clean it up
