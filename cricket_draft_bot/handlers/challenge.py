@@ -694,10 +694,14 @@ async def handle_mode_pick_callback(update: Update, context: ContextTypes.DEFAUL
         MODE_PICK_LOCKS.add(msg_id)
 
     await query.answer()
-    try:
-        await query.message.delete()
-    except Exception:
-        pass
+    if mode != "WWE":
+        try:
+            await query.message.delete()
+        except Exception:
+            pass
+    else:
+        if msg_id:
+            MODE_PICK_LOCKS.discard(msg_id)
     dispatch = {
         "IPL": challenge_ipl,
         "ODI": challenge_odi,
