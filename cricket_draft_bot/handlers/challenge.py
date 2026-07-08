@@ -344,8 +344,10 @@ async def send_wwe_gender_selector(update: Update, context: ContextTypes.DEFAULT
     Replies to the user with 2 buttons (Men / Women) to choose WWE challenge mode.
     """
     target_id = 0
-    if update.effective_message and update.effective_message.reply_to_message:
-        target_id = update.effective_message.reply_to_message.from_user.id
+    if not update.callback_query and update.effective_message and update.effective_message.reply_to_message:
+        replied_user = update.effective_message.reply_to_message.from_user
+        if replied_user and replied_user.id != owner_id:
+            target_id = replied_user.id
 
     keyboard = [
         [
