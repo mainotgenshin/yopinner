@@ -36,7 +36,7 @@ def clear_match_cache():
     """Clear all cached matches from memory."""
     _MATCH_CACHE.clear()
 
-async def create_match_state(chat_id: int, mode: str, owner_id: int, challenger_id: int, owner_name: str, challenger_name: str) -> Match:
+async def create_match_state(chat_id: int, mode: str, owner_id: int, challenger_id: int, owner_name: str, challenger_name: str, draft_message_id: Optional[int] = None) -> Match:
     """Initializes a new match state async."""
     # Use cached pool projection (avoids re-querying DB if pool already cached)
     draft_pool = await get_cached_pool_for_mode(mode)
@@ -51,7 +51,7 @@ async def create_match_state(chat_id: int, mode: str, owner_id: int, challenger_
         slot_keys = POSITIONS_TEST
     elif mode == "FIFA":
         slot_keys = POSITIONS_FIFA
-    elif mode == "WWE":
+    elif mode in ("WWE", "WWE Women"):
         slot_keys = POSITIONS_WWE
     else:
         slot_keys = POSITIONS_T20
@@ -69,7 +69,8 @@ async def create_match_state(chat_id: int, mode: str, owner_id: int, challenger_
         team_b=Team(owner_id=challenger_id, owner_name=challenger_name, slots=initial_slots.copy()),
         current_turn=first_drafter,
         draft_pool=draft_pool,
-        state="DRAFTING"
+        state="DRAFTING",
+        draft_message_id=draft_message_id
     )
     
     await save_match_state(match)
