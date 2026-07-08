@@ -15,6 +15,7 @@ _DEFAULTS = {
     "test": DRAFT_BANNER_TEST,
     "fifa": DRAFT_BANNER_FIFA,
     "wwe":  DRAFT_BANNER_WWE,
+    "wwe_women": DRAFT_BANNER_WWE,
 }
 
 
@@ -35,6 +36,8 @@ async def get_banner_for_match(match) -> str:
         return await get_banner_for_mode("fifa")
     elif match.mode == "WWE":
         return await get_banner_for_mode("wwe")
+    elif match.mode == "WWE Women":
+        return await get_banner_for_mode("wwe_women")
     elif match.mode == "Test":
         return await get_banner_for_mode("test")
     else:  # ODI (and legacy International)
