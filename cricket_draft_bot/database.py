@@ -203,8 +203,11 @@ async def get_eligible_players_for_mode(mode: str) -> List[str]:
             ]
         }
     elif mode == "WWE":
-        # WWE: all superstars are eligible
-        query = {"sport": "wwe"}
+        # WWE: Men superstars (sport="wwe" and gender not female)
+        query = {"sport": "wwe", "gender": {"$ne": "female"}}
+    elif mode == "WWE Women":
+        # WWE Women: Women superstars only
+        query = {"sport": "wwe", "gender": "female"}
     else:
         # Cricket — map mode string to DB stats key
         _m = mode.lower()
