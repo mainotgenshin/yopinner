@@ -272,12 +272,13 @@ import asyncio
 from telegram.error import RetryAfter
 from utils.rate_limit import debouncer
 
-async def update_draft_message(update: Update, context: ContextTypes.DEFAULT_TYPE, match: Match, caption: str, keyboard: list, media=None):
+async def update_draft_message(update: Update, context: ContextTypes.DEFAULT_TYPE, match: Match, caption: str, keyboard: list, media=None, synchronous: bool = False):
     """
     Unified handler to update the draft message using the Rate Limiter (Debouncer).
     Logic:
     - If no message exists, send a new one synchronously.
-    - If message exists, push the update to the Debouncer queue to prevent Error 429.
+    - If message exists and synchronous=True, edit it immediately to prevent race conditions.
+    - If message exists and synchronous=False, push the update to the Debouncer queue to prevent Error 429.
     """
     reply_markup = InlineKeyboardMarkup(keyboard)
     
@@ -324,7 +325,30 @@ async def update_draft_message(update: Update, context: ContextTypes.DEFAULT_TYP
         await save_match_state(match)
         return
 
-    # 2. Batched Editing (Asynchronous)
+    # 2. Synchronous Edit
+    if synchronous:
+        try:
+            if media:
+                await context.bot.edit_message_media(
+                    chat_id=match.chat_id,
+                    message_id=match.draft_message_id,
+                    media=InputMediaPhoto(media=media, caption=caption, parse_mode="Markdown"),
+                    reply_markup=reply_markup
+                )
+            else:
+                await context.bot.edit_message_caption(
+                    chat_id=match.chat_id,
+                    message_id=match.draft_message_id,
+                    caption=caption,
+                    reply_markup=reply_markup,
+                    parse_mode="Markdown"
+                )
+        except Exception as e:
+            logger.warning(f"Synchronous draft board edit failed: {e}. Falling back to recreation...")
+            await debouncer._recreate_message(match, context.bot, caption, reply_markup, media, "Markdown")
+        return
+
+    # 3. Batched Editing (Asynchronous)
     await debouncer.schedule_update(match, context.bot, caption, reply_markup, media=media, parse_mode="Markdown")
 
 
@@ -368,7 +392,7 @@ async def handle_draw(update: Update, context: ContextTypes.DEFAULT_TYPE, match:
     
     if match.mode == "FIFA":
         active_positions = POSITIONS_FIFA
-    elif match.mode == "WWE":
+    elif "WWE" in match.mode:
         active_positions = POSITIONS_WWE
     elif "Test" in match.mode:
         active_positions = POSITIONS_TEST
@@ -408,7 +432,7 @@ async def handle_draw(update: Update, context: ContextTypes.DEFAULT_TYPE, match:
         if p_data.get('image_file_id'):
             img_key = 'image_file_id'
         default_banner = DRAFT_BANNER_FIFA
-    elif match.mode == "WWE":
+    elif "WWE" in match.mode:
         img_key = 'wwe_image_url'
         if p_data.get('image_file_id'):
             img_key = 'image_file_id'
@@ -609,7 +633,7 @@ async def handle_replace_start(update: Update, context: ContextTypes.DEFAULT_TYP
     # Show active filled positions
     if match.mode == "FIFA":
         active_positions = POSITIONS_FIFA
-    elif match.mode == "WWE":
+    elif "WWE" in match.mode:
         active_positions = POSITIONS_WWE
     elif "Test" in match.mode:
         active_positions = POSITIONS_TEST
@@ -644,7 +668,7 @@ async def handle_replace_start(update: Update, context: ContextTypes.DEFAULT_TYP
         # Prefer file_id if manually updated
         if player.get('image_file_id'):
             img_key = 'image_file_id'
-    elif match.mode == "WWE":
+    elif "WWE" in match.mode:
         img_key = 'wwe_image_url'
         if player.get('image_file_id'):
             img_key = 'image_file_id'
@@ -661,7 +685,7 @@ async def handle_replace_start(update: Update, context: ContextTypes.DEFAULT_TYP
         default_banner = DRAFT_BANNER_IPL
     elif match.mode == "FIFA":
         default_banner = DRAFT_BANNER_FIFA
-    elif match.mode == "WWE":
+    elif "WWE" in match.mode:
         default_banner = DRAFT_BANNER_WWE
     elif match.mode == "Test":
         default_banner = DRAFT_BANNER_TEST
