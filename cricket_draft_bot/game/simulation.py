@@ -38,7 +38,7 @@ def calculate_slot_score(player: Player, role: str, mode: str) -> float:
     from config import ROLE_STATS_MAP, PENALTY_MULTIPLIERS, ZERO_SKILL_THRESHOLD
 
     # WWE: pure stat comparison, no role penalties
-    if mode == "WWE":
+    if mode in ("WWE", "WWE Women"):
         stat_key = WWE_POSITION_STATS.get(role, "power")
         wwe_stats = player.stats.get("wwe", {})
         val = wwe_stats.get(stat_key, 50)
