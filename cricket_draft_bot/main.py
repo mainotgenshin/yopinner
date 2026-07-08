@@ -171,6 +171,10 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     elif data.startswith("challenge_pick_"):
         await handle_mode_pick_callback(update, context)
 
+    elif data.startswith("wwe_pick_"):
+        from handlers.challenge import handle_wwe_pick_callback
+        await handle_wwe_pick_callback(update, context)
+
     elif data.startswith("gen_ipl_"):
         from handlers.admin import handle_gen_ipl_callback
         await handle_gen_ipl_callback(update, context)
