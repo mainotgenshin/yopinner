@@ -339,51 +339,161 @@ async def challenge_fifa(update: Update, context: ContextTypes.DEFAULT_TYPE):
         pass
 
 
+async def send_wwe_gender_selector(update: Update, context: ContextTypes.DEFAULT_TYPE, owner_id: int):
+    """
+    Replies to the user with 2 buttons (Men / Women) to choose WWE challenge mode.
+    """
+    target_id = 0
+    if update.effective_message and update.effective_message.reply_to_message:
+        target_id = update.effective_message.reply_to_message.from_user.id
+
+    keyboard = [
+        [
+            InlineKeyboardButton("♂️ Men (WWE)", callback_data=f"wwe_pick_men_{owner_id}_{target_id}"),
+            InlineKeyboardButton("♀️ Women (WWE)", callback_data=f"wwe_pick_women_{owner_id}_{target_id}")
+        ]
+    ]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    msg_text = "🤼 <b>WWE Challenge!</b>\nChoose the gender mode for this challenge:"
+    
+    if update.callback_query:
+        await update.callback_query.answer()
+        await update.callback_query.message.edit_text(
+            msg_text,
+            reply_markup=reply_markup,
+            parse_mode="HTML"
+        )
+    else:
+        await update.effective_message.reply_text(
+            msg_text,
+            reply_markup=reply_markup,
+            parse_mode="HTML"
+        )
+
+async def handle_wwe_pick_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    parts = query.data.split('_')  # ["wwe", "pick", gender, owner_id, target_id]
+    if len(parts) < 4:
+        return
+    gender = parts[2]
+    try:
+        owner_id = int(parts[3])
+    except ValueError:
+        return
+    target_id = int(parts[4]) if len(parts) >= 5 else 0
+
+    # Owner check
+    if query.from_user.id != owner_id:
+        await query.answer("⛔ Not for you! Only the person who sent the challenge can select the mode.", show_alert=True)
+        return
+
+    # Anti-spam lock
+    msg_id = query.message.message_id if query.message else None
+    if msg_id:
+        if msg_id in MODE_PICK_LOCKS:
+            await query.answer("Processing your selection...", show_alert=False)
+            return
+        MODE_PICK_LOCKS.add(msg_id)
+
+    await query.answer()
+
+    mode = "WWE" if gender == "men" else "WWE Women"
+    
+    # Delete selector message
+    try:
+        await query.message.delete()
+    except Exception:
+        pass
+
+    # Start WWE challenge
+    await challenge_wwe_start(update, context, owner_id, mode, target_id)
+
+async def challenge_wwe_start(update: Update, context: ContextTypes.DEFAULT_TYPE, owner_id: int, mode: str, target_id: int = 0):
+    from utils.banners import get_banner_for_mode
+    chat_id = update.effective_chat.id
+    
+    # Re-verify match limit
+    _reply_obj = getattr(update, 'effective_message', None) or getattr(update, 'callback_query', None)
+    if not await _check_match_limit(owner_id, _reply_obj):
+        # Remove from locks if limit hit
+        msg_id = update.callback_query.message.message_id if update.callback_query and update.callback_query.message else None
+        if msg_id:
+            MODE_PICK_LOCKS.discard(msg_id)
+        return
+
+    target_user = None
+    if target_id > 0:
+        try:
+            member = await context.bot.get_chat_member(chat_id=chat_id, user_id=target_id)
+            target_user = member.user
+        except Exception:
+            pass
+
+    # Avoid spaces in callback mode string
+    ch_mode_key = "WWEWomen" if mode == "WWE Women" else "WWE"
+    key = f"join_{ch_mode_key}_{owner_id}"
+    if target_id > 0:
+        key += f"_{target_id}"
+        
+    keyboard = [[InlineKeyboardButton("⚔️ Join Game", callback_data=key)]]
+    challenger_name = update.effective_user.first_name
+    banner = await get_banner_for_mode("wwe" if mode == "WWE" else "wwe_women")
+    
+    from telegram.helpers import escape_markdown
+    def _esc(t): return escape_markdown(t, version=1)
+    
+    if target_user:
+        msg_text = (
+            f"🤼 *{mode} Challenge!*\n"
+            f"From: {_esc(challenger_name)}\n"
+            f"To: {_esc(target_user.first_name)}\n\n"
+            f"Waiting for {_esc(target_user.first_name)} to accept..."
+        )
+    else:
+        msg_text = (
+            f"🤼 *{mode} Challenge!*\n"
+            f"User: {_esc(challenger_name)}\n"
+            f"Waiting for opponent... _(expires in 2 min)_"
+        )
+        
+    sent_msg = None
+    try:
+        sent_msg = await context.bot.send_photo(
+            chat_id=chat_id, photo=banner, caption=msg_text,
+            reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="Markdown"
+        )
+    except Exception:
+        try:
+            sent_msg = await context.bot.send_message(
+                chat_id=chat_id,
+                text=msg_text + "\n*(Enable media permissions in this chat to see banners)*",
+                reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="Markdown"
+            )
+        except Exception:
+            return
+            
+    if not sent_msg:
+        return
+        
+    _ch_key = f"{owner_id}_{ch_mode_key}_{sent_msg.message_id}"
+    task = asyncio.create_task(
+        _expire_challenge(_ch_key, owner_id, chat_id, sent_msg.message_id, context.bot)
+    )
+    _pending_challenges[_ch_key] = {'task': task, 'chat_id': chat_id, 'message_id': sent_msg.message_id}
+    
+    try:
+        await save_pending_challenge(owner_id, chat_id, sent_msg.message_id, ch_mode_key)
+    except Exception:
+        pass
+
 async def challenge_wwe(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if _is_stale_command(update): return  # Drop replayed command from before bot restart
-    from utils.banners import get_banner_for_mode
     owner_id = update.effective_user.id
-    chat_id = update.effective_chat.id
     # ─ Match limit check
     _reply_obj = getattr(update, 'effective_message', None) or getattr(update, 'callback_query', None)
     if not await _check_match_limit(owner_id, _reply_obj):
         return
-    key = f"join_WWE_{owner_id}"
-    keyboard = [[InlineKeyboardButton("⚔️ Join Game", callback_data=key)]]
-    name = html.escape(update.effective_user.first_name)
-    caption = f"🤼 <b>WWE Challenge!</b>\nUser: {name}\nMode: WWE\nWaiting for opponent... <i>(expires in 2 min)</i>"
-    banner = await get_banner_for_mode("wwe")
-    msg = None
-    try:
-        msg = await context.bot.send_photo(
-            chat_id=chat_id, photo=banner, caption=caption,
-            reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="HTML"
-        )
-    except ChatMigrated as e:
-        chat_id = e.migrate_to_chat_id
-        try:
-            msg = await context.bot.send_photo(
-                chat_id=chat_id, photo=banner, caption=caption,
-                reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="HTML"
-            )
-        except Exception:
-            pass
-    except Exception:
-        try:
-            msg = await context.bot.send_message(
-                chat_id=chat_id, text=caption + "\n<i>(Enable media permissions to see banners)</i>",
-                reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="HTML"
-            )
-        except Exception:
-            return
-    if not msg: return
-    _ch_key = f"{owner_id}_WWE_{msg.message_id}"
-    task = asyncio.create_task(_expire_challenge(_ch_key, owner_id, chat_id, msg.message_id, context.bot))
-    _pending_challenges[_ch_key] = {'task': task, 'chat_id': chat_id, 'message_id': msg.message_id}
-    try:
-        await save_pending_challenge(owner_id, chat_id, msg.message_id, "WWE")
-    except Exception:
-        pass
+    await send_wwe_gender_selector(update, context, owner_id)
 
 async def challenge_test(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if _is_stale_command(update): return  # Drop replayed command from before bot restart
@@ -481,8 +591,8 @@ async def challenge_unified(update: Update, context: ContextTypes.DEFAULT_TYPE):
         real_mode = "FIFA"
         banner = await get_banner_for_mode("fifa")
     elif mode_arg in ('wwe', 'wrestling'):
-        real_mode = "WWE"
-        banner = await get_banner_for_mode("wwe")
+        await send_wwe_gender_selector(update, context, owner_id)
+        return
     else:
         await update.effective_message.reply_text(
             f"\u274c Unknown mode: {mode_arg}\nUse: `odi`, `test`, `ipl`, `fifa`, `wwe`.",
@@ -604,6 +714,7 @@ async def handle_join(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     parts = query.data.split('_') # join, MODE, OWNER_ID, [TARGET_ID]
     mode = parts[1]
+    real_mode = "WWE Women" if mode == "WWEWomen" else mode
     owner_id = int(parts[2])
     
     # Check for Targeted Challenge
@@ -636,15 +747,23 @@ async def handle_join(update: Update, context: ContextTypes.DEFAULT_TYPE):
             # If the challenge was already accepted, the same message_id is now the
             # draft board with "Draw Player" button. Calling edit_reply_markup(None)
             # here would silently wipe the Draw button from the active match.
-            # We check: is there a live DRAFTING match that owns this message_id?
+            # We check: is there a live DRAFTING match that owns this message_id,
+            # or does either player in this chat currently have an active match?
             from database import get_db as _gdb
             _db = _gdb()
             _msg_id = query.message.message_id if query.message else None
             _is_live_draft = False
             if _msg_id:
                 _live = await _db.matches.find_one({
+                    "chat_id": query.message.chat.id if query.message else None,
                     "state_data.state": {"$in": ["DRAFTING", "READY_CHECK"]},
-                    "state_data.draft_message_id": _msg_id
+                    "$or": [
+                        {"state_data.draft_message_id": _msg_id},
+                        {"state_data.team_a.owner_id": owner_id},
+                        {"state_data.team_b.owner_id": owner_id},
+                        {"state_data.team_a.owner_id": query.from_user.id},
+                        {"state_data.team_b.owner_id": query.from_user.id}
+                    ]
                 })
                 _is_live_draft = bool(_live)
             if not _is_live_draft:
@@ -691,22 +810,15 @@ async def handle_join(update: Update, context: ContextTypes.DEFAULT_TYPE):
     joiner_name = query.from_user.first_name
     
     # Initialize Match
-    # Initialize Match
     match = await create_match_state(
         chat_id=update.effective_chat.id,
-        mode=mode, 
+        mode=real_mode, 
         owner_id=owner_id, 
         challenger_id=query.from_user.id,
         owner_name=challenger_name, # In state.py owner_name is param 5
-        challenger_name=joiner_name # In state.py challenger_name is param 6
+        challenger_name=joiner_name, # In state.py challenger_name is param 6
+        draft_message_id=query.message.message_id
     )
-    
-    # CRITICAL: Reuse Message ID
-    match.draft_message_id = query.message.message_id
-    
-    # Save Initial State
-    from game.state import save_match_state
-    await save_match_state(match)
     
     # Start Draft (Update the message)
     from handlers.draft import format_draft_board, update_draft_message
@@ -719,15 +831,15 @@ async def handle_join(update: Update, context: ContextTypes.DEFAULT_TYPE):
         banner = await get_banner_for_mode("ipl")
     elif mode == "FIFA":
         banner = await get_banner_for_mode("fifa")
-    elif mode == "WWE":
-        banner = await get_banner_for_mode("wwe")
+    elif mode in ("WWE", "WWEWomen"):
+        banner = await get_banner_for_mode("wwe" if mode == "WWE" else "wwe_women")
     elif mode == "Test":
         banner = await get_banner_for_mode("test")
     else:  # ODI (and legacy International)
         banner = await get_banner_for_mode("odi")
 
-    # Edit the existing message into the draft board
-    await update_draft_message(update, context, match, board_text, keyboard, media=banner)
+    # Edit the existing message into the draft board synchronously to bypass debouncer delay
+    await update_draft_message(update, context, match, board_text, keyboard, media=banner, synchronous=True)
 
     # Start the 10-minute AFK forfeit timer for the first player's turn!
     from handlers.draft import _reset_afk_timer
