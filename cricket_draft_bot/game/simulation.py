@@ -1,4 +1,5 @@
 # game/simulation.py
+import asyncio
 from game.models import Match, Team, Player
 from config import ROLE_WEIGHTS, WWE_POSITION_STATS
 from utils.randomizer import calculate_variance
@@ -233,10 +234,14 @@ async def run_simulation(match: Match) -> str:
             res_a = "L"
             res_b = "W"
             
-        await update_user_stats(match.team_a.owner_id, match.team_a.owner_name, res_a,
-                                 mode=match.mode, chat_id=match.chat_id)
-        await update_user_stats(match.team_b.owner_id, match.team_b.owner_name, res_b,
-                                 mode=match.mode, chat_id=match.chat_id)
+        # Write stats for both players concurrently instead of sequentially
+        await asyncio.gather(
+            update_user_stats(match.team_a.owner_id, match.team_a.owner_name, res_a,
+                              mode=match.mode, chat_id=match.chat_id),
+            update_user_stats(match.team_b.owner_id, match.team_b.owner_name, res_b,
+                              mode=match.mode, chat_id=match.chat_id),
+        )
+
         
     except Exception as e:
         logger.error(f"Failed to persist user stats: {e}")
