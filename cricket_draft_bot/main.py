@@ -367,6 +367,7 @@ async def _auto_simulate(bot, match_id: str):
     """Trigger simulation for a READY_CHECK match that timed out."""
     from game.state import load_match_state, save_match_state
     from game.simulation import run_simulation
+    from utils.rate_limit import debouncer
 
     logger = logging.getLogger(__name__)
     try:
@@ -384,9 +385,12 @@ async def _auto_simulate(bot, match_id: str):
         match.finished_at = time.time()
         await save_match_state(match)
 
+        # Clean up debouncer state for this match to prevent memory leak
+        debouncer.cancel_updates(match.chat_id, match.draft_message_id)
+
         await bot.send_message(
             chat_id=match.chat_id,
-            text=f"⏰ *Auto-Ready triggered (5min timeout)*\n\n{result_text}",
+            text=f"\u23f0 *Auto-Ready triggered (5min timeout)*\n\n{result_text}",
             parse_mode="Markdown"
         )
 
@@ -400,9 +404,6 @@ async def _auto_simulate(bot, match_id: str):
 
         # Update user stats
         from database import update_user_stats
-        winner_id = match.team_a.owner_id if match.team_a.score > match.team_b.score else (
-            match.team_b.owner_id if match.team_b.score > match.team_a.score else None
-        )
         result_a = "W" if match.team_a.score > match.team_b.score else ("D" if match.team_a.score == match.team_b.score else "L")
         result_b = "W" if match.team_b.score > match.team_a.score else ("D" if match.team_a.score == match.team_b.score else "L")
         mode = match.mode
@@ -532,7 +533,14 @@ if __name__ == '__main__':
     application = (
         ApplicationBuilder()
         .token(BOT_TOKEN)
-        .rate_limiter(AIORateLimiter(max_retries=5, group_max_rate=1000))
+        .rate_limiter(AIORateLimiter(
+            max_retries=3,
+            overall_max_rate=28,     # Telegram allows ~30/sec globally; stay safely under
+            overall_time_period=1,
+            group_max_rate=18,       # Telegram allows ~20/min per group; stay safely under
+            group_time_period=60,
+        ))
+
         .job_queue(None)
         .read_timeout(30)
         .write_timeout(30)
