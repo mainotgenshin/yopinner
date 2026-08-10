@@ -1,4 +1,5 @@
-# game/state.py
+import asyncio
+import inspect
 import json
 import logging
 import time
@@ -9,6 +10,10 @@ from utils.randomizer import get_random_player
 from config import MAX_REDRAWS
 
 logger = logging.getLogger(__name__)
+
+# Cache Player dataclass fields once at module load — avoids reflect on every cache miss
+_PLAYER_FIELDS = set(inspect.signature(Player).parameters.keys())
+
 
 # ── In-memory match state cache ──────────────────────────────────────────────
 # Avoids a MongoDB read on every button click for active matches.
@@ -131,17 +136,21 @@ async def load_match_state(match_id: str) -> Optional[Match]:
         t.score = d.get('score', 0)
         t.trades_used = d.get('trades_used', 0)
         t.swaps_used = d.get('swaps_used', 0)
-        # Reconstruct slots
-        import inspect
-        _player_fields = set(inspect.signature(Player).parameters.keys())
-        for slot, pid in d['slots'].items():
-            if pid:
-                p_data = await get_player(pid)
-                if p_data:
-                    filtered_p_data = {k: v for k, v in p_data.items() if k in _player_fields}
-                    t.slots[slot] = Player(**filtered_p_data)
+        # Reconstruct slots — fetch all players in PARALLEL to avoid serial DB round-trips
+        slot_items = list(d['slots'].items())
+        pids = [pid for _, pid in slot_items if pid]
+        if pids:
+            player_results = await asyncio.gather(*[get_player(pid) for pid in pids])
+            player_map = {p['player_id']: p for p in player_results if p}
+        else:
+            player_map = {}
+        for slot, pid in slot_items:
+            if pid and pid in player_map:
+                p_data = player_map[pid]
+                filtered_p_data = {k: v for k, v in p_data.items() if k in _PLAYER_FIELDS}
+                t.slots[slot] = Player(**filtered_p_data)
             else:
-                 t.slots[slot] = None
+                t.slots[slot] = None
         return t
 
     m = Match(
@@ -192,8 +201,8 @@ async def draw_player_for_turn(match: Match) -> Optional[Dict]:
         
     return await get_player(pid)
 
-async def switch_turn(match: Match):
-    """Switches the turn to the other player."""
+async def switch_turn(match: Match, save: bool = True):
+    """Switches the turn to the other player. Pass save=False if caller will save."""
     current_team = match.team_a if match.current_turn == match.team_a.owner_id else match.team_b
     next_team = match.team_b if current_team == match.team_a else match.team_a
     
@@ -203,4 +212,5 @@ async def switch_turn(match: Match):
     else:
         match.current_turn = next_team.owner_id
 
-    await save_match_state(match)
+    if save:
+        await save_match_state(match)
