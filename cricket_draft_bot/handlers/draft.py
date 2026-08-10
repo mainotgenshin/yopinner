@@ -312,9 +312,11 @@ async def update_draft_message(update: Update, context: ContextTypes.DEFAULT_TYP
         async def _abandon_timeout(bot, chat_id, msg_id, match_id, delay=1800):
             await asyncio.sleep(delay)
             from game.state import load_match_state
+            from utils.rate_limit import debouncer
             m = await load_match_state(match_id)
             if not m or m.state in ["DRAFTING", "READY_CHECK"]:
                 try:
+                    debouncer.cancel_updates(chat_id, msg_id)
                     await bot.unpin_chat_message(chat_id=chat_id, message_id=msg_id)
                     if m:
                         from database import get_db
@@ -505,6 +507,7 @@ async def handle_assign(update: Update, context: ContextTypes.DEFAULT_TYPE, matc
             await asyncio.sleep(300)  # 5 minutes
             from game.state import load_match_state, save_match_state as _save
             from game.simulation import run_simulation
+            from utils.rate_limit import debouncer
             m = await load_match_state(match_id)
             if not m or m.state != "READY_CHECK":
                 return  # Already simulated or cancelled
@@ -518,6 +521,7 @@ async def handle_assign(update: Update, context: ContextTypes.DEFAULT_TYPE, matc
                 m.state = "FINISHED"
                 m.finished_at = _t.time()
                 await _save(m)
+                debouncer.cancel_updates(chat_id, m.draft_message_id)
                 msg = f"⏰ *Auto-Ready triggered (5min timeout)*\n\n{result_text}"
                 try:
                     await bot.send_message(chat_id=chat_id, text=msg, parse_mode="Markdown")
@@ -564,8 +568,8 @@ async def handle_assign(update: Update, context: ContextTypes.DEFAULT_TYPE, matc
         await update_draft_message(update, context, match, f"{format_draft_board(match, include_turn=False)}\n\n✅ *Draft Complete!* Waiting for Ready...", keyboard, media=banner)
         return
 
-    # Switch Turn
-    await switch_turn(match)
+    # Switch Turn — save=False avoids double MongoDB write; update_draft_message persists state
+    await switch_turn(match, save=False)
     
     # Update Board for Next Turn (Restore Draw Button and Banner)
     board_text = format_draft_board(match)
@@ -739,8 +743,8 @@ async def handle_replace_exec(update: Update, context: ContextTypes.DEFAULT_TYPE
     
     match.pending_player_id = None
     
-    # Switch Turn
-    await switch_turn(match)
+    # Switch Turn — caller will save via update_draft_message path
+    await switch_turn(match, save=False)
     await save_match_state(match)
     
     # Update Board
