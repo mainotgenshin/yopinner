@@ -397,18 +397,22 @@ async def handle_wwe_pick_callback(update: Update, context: ContextTypes.DEFAULT
             return
         MODE_PICK_LOCKS.add(msg_id)
 
-    await query.answer()
-
-    mode = "WWE" if gender == "men" else "WWE Women"
-    
-    # Delete selector message
     try:
-        await query.message.delete()
-    except Exception:
-        pass
+        await query.answer()
 
-    # Start WWE challenge
-    await challenge_wwe_start(update, context, owner_id, mode, target_id)
+        mode = "WWE" if gender == "men" else "WWE Women"
+
+        # Delete selector message
+        try:
+            await query.message.delete()
+        except Exception:
+            pass
+
+        # Start WWE challenge
+        await challenge_wwe_start(update, context, owner_id, mode, target_id)
+    finally:
+        if msg_id:
+            MODE_PICK_LOCKS.discard(msg_id)
 
 async def challenge_wwe_start(update: Update, context: ContextTypes.DEFAULT_TYPE, owner_id: int, mode: str, target_id: int = 0):
     from utils.banners import get_banner_for_mode
@@ -695,25 +699,26 @@ async def handle_mode_pick_callback(update: Update, context: ContextTypes.DEFAUL
             return
         MODE_PICK_LOCKS.add(msg_id)
 
-    await query.answer()
-    if mode != "WWE":
-        try:
-            await query.message.delete()
-        except Exception:
-            pass
-    else:
+    try:
+        await query.answer()
+        if mode != "WWE":
+            try:
+                await query.message.delete()
+            except Exception:
+                pass
+        dispatch = {
+            "IPL": challenge_ipl,
+            "ODI": challenge_odi,
+            "Test": challenge_test,
+            "FIFA": challenge_fifa,
+            "WWE": challenge_wwe,
+        }
+        fn = dispatch.get(mode)
+        if fn:
+            await fn(update, context)
+    finally:
         if msg_id:
             MODE_PICK_LOCKS.discard(msg_id)
-    dispatch = {
-        "IPL": challenge_ipl,
-        "ODI": challenge_odi,
-        "Test": challenge_test,
-        "FIFA": challenge_fifa,
-        "WWE": challenge_wwe,
-    }
-    fn = dispatch.get(mode)
-    if fn:
-        await fn(update, context)
 
 async def handle_join(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -735,12 +740,21 @@ async def handle_join(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.answer("⛔ You cannot play against yourself!", show_alert=True)
         return
 
-    # ─ Match limit checks ────────────────────────────────────────
-    if not await _check_match_limit(query.from_user.id, query):
-        return  # Joiner is at limit
-    if not await _check_match_limit(owner_id, query):
+    # ─ Match limit checks — run both concurrently to save ~20ms serial latency ─
+    from database import get_user_active_matches_info
+    joiner_matches, owner_matches = await asyncio.gather(
+        get_user_active_matches_info(query.from_user.id),
+        get_user_active_matches_info(owner_id),
+    )
+
+    if len(joiner_matches) >= 2:
+        # Re-use _check_match_limit just for the reply formatting
+        await _check_match_limit(query.from_user.id, query)
+        return
+    if len(owner_matches) >= 2:
         await query.answer("⛔ The challenger already has 2 active matches.", show_alert=True)
-        return  # Owner somehow also at limit
+        return
+
 
     # ─ Atomic check and claim of the challenge ──────────────────
     from database import find_and_delete_pending_challenge
