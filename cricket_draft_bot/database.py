@@ -61,6 +61,21 @@ async def init_db():
         
         await db.matches.create_index([("last_updated", ASCENDING)], expireAfterSeconds=86400)
         await db.users.create_index([("user_id", ASCENDING)], unique=True)
+
+        # ── Performance indexes added for stability ──────────────────────────
+        # Speeds up count_user_active_matches, get_user_active_matches_info,
+        # and _startup_recovery which all filter by state_data.state
+        await db.matches.create_index([("state_data.state", ASCENDING)])
+        # Speeds up per-user match lookups (join/challenge limit checks)
+        await db.matches.create_index([("state_data.team_a.owner_id", ASCENDING)])
+        await db.matches.create_index([("state_data.team_b.owner_id", ASCENDING)])
+        # Speeds up find_and_delete_pending_challenge, get_stale_challenges
+        await db.pending_challenges.create_index(
+            [("owner_id", ASCENDING), ("mode", ASCENDING)], unique=True
+        )
+        await db.pending_challenges.create_index([("created_at", ASCENDING)])
+        # Speeds up broadcast get_all_chats
+        await db.chats.create_index([("chat_id", ASCENDING)], unique=True)
         
         logger.info("Async MongoDB Indexes Verified.")
     except Exception as e:
