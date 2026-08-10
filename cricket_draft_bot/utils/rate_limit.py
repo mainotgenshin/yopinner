@@ -91,7 +91,13 @@ class MessageDebouncer:
             #   After each successful delivery the loop checks self._pending[key] again.
             #   If another update has queued up, it delivers that one too (with a short
             #   anti-rate-limit pause), and so on until the queue is drained.
-            while key in self._pending:
+            # Drain the pending queue, delivering the latest state each time.
+            # Guard with a max-iteration cap so rapid clicks + slow API can't
+            # cause this task to run indefinitely.
+            _max_iters = 15
+            _iters = 0
+            while key in self._pending and _iters < _max_iters:
+                _iters += 1
                 caption, reply_markup, send_media, target_state = self._pending.pop(key)
 
                 success = await self._run_api_call(
@@ -122,6 +128,7 @@ class MessageDebouncer:
                 # pause briefly before the next iteration to respect rate limits.
                 if key in self._pending:
                     await asyncio.sleep(0.3)
+
 
         except asyncio.CancelledError:
             pass  # Cancelled by cancel_updates() when match ends — expected and OK
