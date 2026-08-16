@@ -86,6 +86,48 @@ async def handle_profile(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "━━━━━━━━━━━━━━━━━━"
     )
 
+    # Show favorite card image if available
+    try:
+        from database import get_fav_card, get_user_cards, get_player
+        fav = await get_fav_card(user_id)
+        if fav:
+            # Get the card image
+            player_doc = await get_player(fav["player_id"])
+            if player_doc:
+                fmt = fav["format"]
+                if fmt == "ipl":
+                    image = player_doc.get("ipl_image_file_id") or player_doc.get("image_file_id")
+                elif fmt == "odi":
+                    image = player_doc.get("odi_image_file_id") or player_doc.get("image_file_id")
+                elif fmt == "test":
+                    image = player_doc.get("test_image_url") or player_doc.get("image_file_id")
+                elif fmt == "wwe":
+                    image = player_doc.get("wwe_image_url") or player_doc.get("image_file_id")
+                elif fmt == "fifa":
+                    image = player_doc.get("fifa_image_url") or player_doc.get("image_file_id")
+                else:
+                    image = player_doc.get("image_file_id")
+                
+                if image:
+                    card_data = player_doc.get("cards", {}).get(fmt, {})
+                    fmt_labels = {"ipl": "IPL", "odi": "ODI", "test": "Test", "wwe": "WWE", "fifa": "FIFA"}
+                    RARITY_EMOJI_MAP = {"common": "⚪", "rare": "🔵", "epic": "🟣", "legend": "🟡"}
+                    rarity = card_data.get("rarity", "")
+                    ovr    = card_data.get("ovr", "")
+                    fav_line = f"\n\n⭐ *Fav Card:* {player_doc['name']} ({fmt_labels.get(fmt, fmt)}) {RARITY_EMOJI_MAP.get(rarity, '')} OVR {ovr}"
+                    full_caption = text + fav_line
+                    try:
+                        await update.effective_message.reply_photo(
+                            photo=image,
+                            caption=full_caption,
+                            parse_mode="Markdown"
+                        )
+                        return
+                    except Exception:
+                        pass  # Fall through to text-only
+    except Exception:
+        pass  # Never break profile due to card system errors
+    
     try:
         await update.effective_message.reply_text(text, parse_mode="Markdown")
     except Exception:
