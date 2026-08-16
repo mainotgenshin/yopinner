@@ -267,7 +267,7 @@ async def _show_mycards(message_or_query, owner_id: int, viewer_id: int, sport_f
     if not cards:
         text = "🃏 *Your Collection*\n━━━━━━━━━━━━━━━━━━\nNo cards yet! Use /pack to buy packs."
     else:
-        lines = [f"🃏 *Your Collection* ({total} copies)\n━━━━━━━━━━━━━━━━━━"]
+        lines = [f"🃏 *Your Collection*\n━━━━━━━━━━━━━━━━━━"]
         for c in page_cards:
             r_emoji = RARITY_EMOJI.get(c["rarity"], "⚪")
             f_label = FORMAT_LABEL.get(c["format"], c["format"].upper())
@@ -379,7 +379,6 @@ async def _show_card_detail(msg_or_query, owner_id: int, card: dict, edit: bool)
         f"📦 Owned: *{card['quantity']}×*\n"
         f"━━━━━━━━━━━━━━━━━━"
     )
-    from database import RARITY_EMOJI as _re
     SELL_VALUES = {"common": 25, "rare": 75, "epic": 200, "legend": 600}
     sell_val = SELL_VALUES.get(card["rarity"], 25)
     fav_label = "💔 Remove Fav" if is_fav else "❤️ Set as Fav"
