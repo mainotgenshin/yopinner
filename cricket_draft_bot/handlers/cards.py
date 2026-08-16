@@ -401,8 +401,23 @@ async def _show_card_detail(msg_or_query, owner_id: int, card: dict, edit: bool)
     )
     SELL_VALUES = {"common": 25, "rare": 75, "epic": 200, "legend": 600}
     sell_val = SELL_VALUES.get(card["rarity"], 25)
+    is_last_copy = card["quantity"] <= 1
     fav_label = "💔 Remove Fav" if is_fav else "❤️ Set as Fav"
     fav_cb = f"vc_unfav|{owner_id}|{card['player_id']}|{card['format']}" if is_fav else f"vc_fav|{owner_id}|{card['player_id']}|{card['format']}"
+    # Show fav warning in card text if this is their only copy
+    fav_warning = ""
+    if is_fav and is_last_copy:
+        fav_warning = "\n\n⭐ *Fav Card* — Remove fav to sell or trade this card."
+    text = (
+        f"🃏 *{esc(card['name'])}*\n"
+        f"━━━━━━━━━━━━━━━━━━\n"
+        f"📋 Format: *{f_label}*\n"
+        f"{r_emoji} Rarity: *{card['rarity'].title()}*\n"
+        f"⭐ OVR: *{card['ovr']}*\n"
+        f"📦 Owned: *{card['quantity']}×*"
+        f"{fav_warning}\n"
+        f"━━━━━━━━━━━━━━━━━━"
+    )
     kb = InlineKeyboardMarkup([
         [InlineKeyboardButton(fav_label, callback_data=fav_cb)],
         [InlineKeyboardButton(f"💰 Sell for {sell_val}🪙", callback_data=f"vc_sell|{owner_id}|{card['player_id']}|{card['format']}|{sell_val}")],
@@ -477,7 +492,10 @@ async def cb_vc_sell(update: Update, context: ContextTypes.DEFAULT_TYPE):
     fav = await get_fav_card(int(owner_id))
     is_fav = fav and fav.get("player_id") == player_id and fav.get("format") == fmt
     if is_fav and card["quantity"] <= 1:
-        await query.answer("❌ Remove this card as favorite before selling your last copy!", show_alert=True)
+        await query.answer(
+            "⭐ This is your Fav Card!\n\nTap '💔 Remove Fav' first, then you can sell it.",
+            show_alert=True
+        )
         return
     f_label = FORMAT_LABEL.get(fmt, fmt.upper())
     text = (
@@ -523,7 +541,11 @@ async def cb_vc_sell_ok(update: Update, context: ContextTypes.DEFAULT_TYPE):
         fav = await get_fav_card(user_id)
         is_fav = fav and fav.get("player_id") == player_id and fav.get("format") == fmt
         if is_fav and card["quantity"] <= 1:
-            await query.answer("❌ Remove from favorites first!", show_alert=True); return
+            await query.answer(
+                "⭐ This is your Fav Card!\n\nTap '💔 Remove Fav' in /viewcard first, then sell.",
+                show_alert=True
+            )
+            return
         sell_val = int(sell_val_str)
         remaining = await remove_card_from_user(user_id, player_id, fmt)
         new_bal = await add_card_coins(user_id, sell_val)
@@ -622,6 +644,10 @@ async def cb_tr_offer(update: Update, context: ContextTypes.DEFAULT_TYPE):
     _, initiator_id, target_id, player_id, fmt = query.data.split("|")
     if str(query.from_user.id) != initiator_id:
         await query.answer("⛔ Not your trade.", show_alert=True); return
+    # DB-level cooldown
+    from database import try_acquire_action_cooldown
+    if not await try_acquire_action_cooldown(int(initiator_id), "trade_offer", cooldown_seconds=3):
+        await query.answer("⏳ Please wait a moment...", show_alert=False); return
     lock = _get_lock(int(initiator_id))
     if lock.locked():
         await query.answer("⏳ Please wait a moment...", show_alert=False); return
@@ -641,7 +667,11 @@ async def cb_tr_offer(update: Update, context: ContextTypes.DEFAULT_TYPE):
         fav = await get_fav_card(int(initiator_id))
         is_fav = fav and fav.get("player_id") == player_id and fav.get("format") == fmt
         if is_fav and offered["quantity"] <= 1:
-            await query.answer("❌ Remove this card as favorite before trading your last copy!", show_alert=True); return
+            await query.answer(
+                "⭐ This is your Fav Card!\n\nTap '💔 Remove Fav' in /viewcard first, then trade.",
+                show_alert=True
+            )
+            return
         # Check target has cards of same rarity
         target_cards = await get_user_cards(int(target_id))
         matching_rarity = [c for c in target_cards if c["rarity"] == offered["rarity"]]
@@ -704,6 +734,10 @@ async def cb_tr_pick(update: Update, context: ContextTypes.DEFAULT_TYPE):
     _, target_id, trade_id, player_id, fmt = query.data.split("|")
     if str(query.from_user.id) != target_id:
         await query.answer("⛔ Not your trade.", show_alert=True); return
+    # DB-level cooldown
+    from database import try_acquire_action_cooldown
+    if not await try_acquire_action_cooldown(int(target_id), "trade_pick", cooldown_seconds=3):
+        await query.answer("⏳ Please wait a moment...", show_alert=False); return
     lock = _get_lock(int(target_id))
     if lock.locked():
         await query.answer("⏳ Please wait a moment...", show_alert=False); return
@@ -728,7 +762,11 @@ async def cb_tr_pick(update: Update, context: ContextTypes.DEFAULT_TYPE):
         fav = await get_fav_card(int(target_id))
         is_fav = fav and fav.get("player_id") == player_id and fav.get("format") == fmt
         if is_fav and their_card["quantity"] <= 1:
-            await query.answer("❌ Remove this from favorites before trading your last copy!", show_alert=True); return
+            await query.answer(
+                "⭐ That's your Fav Card!\n\nTap '💔 Remove Fav' in /viewcard first, then trade.",
+                show_alert=True
+            )
+            return
         # Update trade with target's pick
         await update_trade(trade_id, {
             "requested_player_id": player_id,
@@ -769,18 +807,30 @@ async def cb_tr_confirm(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = query.from_user.id
     if str(user_id) != initiator_id:
         await query.answer("⛔ Not your trade.", show_alert=True); return
+    # DB-level cooldown — prevents spam confirm clicks showing repeated error messages
+    from database import try_acquire_action_cooldown
+    if not await try_acquire_action_cooldown(user_id, "trade_confirm", cooldown_seconds=5):
+        await query.answer("⏳ Please wait a moment...", show_alert=False); return
     lock = _get_lock(user_id)
     if lock.locked():
         await query.answer("⏳ Please wait a moment...", show_alert=False); return
     async with lock:
         await query.answer()
-        from database import get_trade, update_trade, get_user_cards, remove_card_from_user, add_card_to_user, increment_quest_progress
-        trade = await get_trade(trade_id)
-        if not trade or trade["status"] != "awaiting_confirmation":
-            await query.edit_message_text("❌ Trade expired or already completed."); return
+        from database import get_trade, update_trade, get_user_cards, remove_card_from_user, add_card_to_user, increment_quest_progress, get_db
+        # ── ATOMIC STATUS LOCK: claim the trade before doing any card operations ──
+        # This prevents any double-execution even in edge-case race conditions.
+        db = get_db()
+        claimed = await db.active_trades.find_one_and_update(
+            {"trade_id": trade_id, "status": "awaiting_confirmation"},
+            {"$set": {"status": "completing"}},
+            return_document=False
+        )
+        if not claimed:
+            # Either already completing, completed, expired, or cancelled
+            await query.edit_message_text("❌ Trade already completed or expired."); return
+        trade = claimed  # contains the pre-update document
         if time.time() - trade["created_at"] > 300:
-            from database import cancel_trade
-            await cancel_trade(trade_id)
+            await db.active_trades.update_one({"trade_id": trade_id}, {"$set": {"status": "expired"}})
             await query.edit_message_text("❌ Trade expired (5 min timeout)."); return
         # Verify both parties still have the cards
         init_id  = trade["initiator_id"]
@@ -824,6 +874,10 @@ async def cb_tr_decline(update: Update, context: ContextTypes.DEFAULT_TYPE):
     _, user_id_str, trade_id = query.data.split("|")
     if str(query.from_user.id) != user_id_str:
         await query.answer("⛔ Not your trade.", show_alert=True); return
+    # DB-level cooldown — stops repeated decline messages
+    from database import try_acquire_action_cooldown
+    if not await try_acquire_action_cooldown(int(user_id_str), "trade_decline", cooldown_seconds=5):
+        await query.answer("⏳ Please wait a moment...", show_alert=False); return
     lock = _get_lock(int(user_id_str))
     if lock.locked():
         await query.answer("⏳ Please wait a moment...", show_alert=False); return
