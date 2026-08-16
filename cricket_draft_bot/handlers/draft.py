@@ -27,7 +27,7 @@ PROCESSING_LOCKS = set()
 
 # ── AFK Forfeit System ──────────────────────────────────────────────────
 AFK_TASKS: dict = {}  # match_id -> asyncio.Task
-AFK_TIMEOUT = 600    # 10 minutes
+AFK_TIMEOUT = 300    # 5 minutes
 
 async def _afk_forfeit(match_id: str, expected_turn: int, bot, chat_id: int):
     """Fires after AFK_TIMEOUT seconds if the same player still hasn't moved."""
@@ -57,7 +57,14 @@ async def _afk_forfeit(match_id: str, expected_turn: int, bot, chat_id: int):
         from utils.rate_limit import debouncer
         debouncer.cancel_updates(chat_id, match.draft_message_id)
 
-        msg = f"💤 *{esc(afk_team.owner_name)} forfeited due to being AFK for 10 mins.*"
+        # Deduct 5 card coins from forfeiting user
+        try:
+            from database import deduct_card_coins
+            await deduct_card_coins(afk_team.owner_id, 5)
+            coin_note = " \n💸 *-5 card coins deducted.*"
+        except Exception:
+            coin_note = ""
+        msg = f"💤 *{esc(afk_team.owner_name)} forfeited due to being AFK for 5 mins.*{coin_note}"
         try:
             if match.draft_message_id:
                 try:
