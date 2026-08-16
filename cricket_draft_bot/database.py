@@ -77,6 +77,21 @@ async def init_db():
         # Speeds up broadcast get_all_chats
         await db.chats.create_index([("chat_id", ASCENDING)], unique=True)
         
+        # ── Card System Indexes ───────────────────────────────────────────────
+        await db.user_cards.create_index(
+            [("user_id", ASCENDING), ("player_id", ASCENDING), ("format", ASCENDING)],
+            unique=True
+        )
+        await db.user_cards.create_index([("user_id", ASCENDING)])
+        await db.active_trades.create_index([("initiator_id", ASCENDING), ("status", ASCENDING)])
+        await db.active_trades.create_index([("target_id", ASCENDING), ("status", ASCENDING)])
+        await db.active_trades.create_index([("expires_at", ASCENDING)])
+        await db.players.create_index([("cards.ipl.rarity", ASCENDING)])
+        await db.players.create_index([("cards.odi.rarity", ASCENDING)])
+        await db.players.create_index([("cards.test.rarity", ASCENDING)])
+        await db.players.create_index([("cards.wwe.rarity", ASCENDING)])
+        await db.players.create_index([("cards.fifa.rarity", ASCENDING)])
+
         logger.info("Async MongoDB Indexes Verified.")
     except Exception as e:
         logger.error(f"DB Init Failed: {e}")
@@ -335,6 +350,12 @@ async def is_mod(user_id: int) -> bool:
     doc = await db.mods.find_one({"user_id": user_id})
     return doc is not None
 
+async def is_admin(user_id: int) -> bool:
+    from config import OWNER_IDS
+    if user_id in OWNER_IDS:
+        return True
+    return await is_mod(user_id)
+
 async def get_all_mods() -> list:
     db = get_db()
     cursor = db.mods.find({})
@@ -542,3 +563,503 @@ async def get_stale_challenges(expiry_secs: int = 120) -> list:
     cutoff = _time_mod.time() - expiry_secs
     cursor = db.pending_challenges.find({"created_at": {"$lt": cutoff}})
     return await cursor.to_list(length=200)
+
+# ═══════════════════════════════════════════════════════════════════════════
+# CARD SYSTEM — Database Functions
+# ═══════════════════════════════════════════════════════════════════════════
+
+import time as _time
+import random
+
+# ── Card Coins ──────────────────────────────────────────────────────────────
+
+async def get_card_coins(user_id: int) -> int:
+    db = get_db()
+    doc = await db.users.find_one({"user_id": user_id}, {"card_coins": 1})
+    return int(doc.get("card_coins", 0)) if doc else 0
+
+async def add_card_coins(user_id: int, amount: int) -> int:
+    """Add card coins to user. Returns new balance."""
+    db = get_db()
+    result = await db.users.find_one_and_update(
+        {"user_id": user_id},
+        {"$inc": {"card_coins": amount}},
+        upsert=True,
+        return_document=True
+    )
+    return int(result.get("card_coins", 0))
+
+async def deduct_card_coins(user_id: int, amount: int) -> tuple[bool, int]:
+    """Deduct card coins. Returns (success, new_balance). Fails if insufficient."""
+    db = get_db()
+    # Atomic check-and-deduct
+    result = await db.users.find_one_and_update(
+        {"user_id": user_id, "card_coins": {"$gte": amount}},
+        {"$inc": {"card_coins": -amount}},
+        return_document=True
+    )
+    if result is None:
+        balance = await get_card_coins(user_id)
+        return False, balance
+    return True, int(result.get("card_coins", 0))
+
+# ── Pack Inventory ───────────────────────────────────────────────────────────
+
+async def get_pack_inventory(user_id: int) -> dict:
+    """Returns {basic: int, premium: int, elite: int, sport selections preserved}."""
+    db = get_db()
+    doc = await db.users.find_one({"user_id": user_id}, {"pack_inventory": 1})
+    default = {"basic": 0, "premium": 0, "elite": 0}
+    if not doc or "pack_inventory" not in doc:
+        return default
+    inv = doc["pack_inventory"]
+    return {
+        "basic":   int(inv.get("basic", 0)),
+        "premium": int(inv.get("premium", 0)),
+        "elite":   int(inv.get("elite", 0)),
+    }
+
+async def add_pack(user_id: int, pack_type: str) -> None:
+    """Add one pack of given type to user inventory."""
+    db = get_db()
+    await db.users.update_one(
+        {"user_id": user_id},
+        {"$inc": {f"pack_inventory.{pack_type}": 1}},
+        upsert=True
+    )
+
+async def use_pack(user_id: int, pack_type: str) -> bool:
+    """Atomically consume one pack. Returns True if successful."""
+    db = get_db()
+    result = await db.users.find_one_and_update(
+        {"user_id": user_id, f"pack_inventory.{pack_type}": {"$gt": 0}},
+        {"$inc": {f"pack_inventory.{pack_type}": -1}},
+        return_document=True
+    )
+    return result is not None
+
+async def add_pack_to_all_users(pack_type: str) -> int:
+    """Give one pack of type to every user. Returns count of users updated."""
+    db = get_db()
+    result = await db.users.update_many(
+        {},
+        {"$inc": {f"pack_inventory.{pack_type}": 1}}
+    )
+    return result.modified_count
+
+# ── User Cards Collection ────────────────────────────────────────────────────
+
+async def get_user_cards(user_id: int, sport_filter: str = None) -> list:
+    """
+    Returns list of card dicts with player info attached.
+    Each entry: {user_id, player_id, format, quantity, name, rarity, ovr, image}
+    sport_filter: 'cricket' | 'football' | 'wwe' | None (all)
+    """
+    db = get_db()
+    # Get owned cards
+    cards_cursor = db.user_cards.find({"user_id": user_id})
+    cards = [c async for c in cards_cursor]
+    if not cards:
+        return []
+
+    # Enrich with player data
+    result = []
+    for card in cards:
+        pid = card["player_id"]
+        fmt = card["format"]
+        p = await get_player(pid)
+        if not p:
+            continue
+        card_data = p.get("cards", {}).get(fmt, {})
+        if not card_data:
+            continue
+        # Sport filter
+        p_sport = p.get("sport", "cricket")
+        if sport_filter == "cricket" and p_sport in ("wwe", "football"):
+            continue
+        if sport_filter == "football" and p_sport != "football":
+            continue
+        if sport_filter == "wwe" and p_sport != "wwe":
+            continue
+        # Build image field
+        image = _get_card_image(p, fmt)
+        result.append({
+            "user_id":   user_id,
+            "player_id": pid,
+            "format":    fmt,
+            "quantity":  card["quantity"],
+            "name":      p["name"],
+            "rarity":    card_data.get("rarity", "common"),
+            "ovr":       card_data.get("ovr", 0),
+            "image":     image,
+        })
+    return result
+
+def _get_card_image(player_doc: dict, fmt: str) -> Optional[str]:
+    """Get best available image for a player-format card."""
+    if fmt == "ipl":
+        return player_doc.get("ipl_image_file_id") or player_doc.get("image_file_id")
+    elif fmt == "odi":
+        return player_doc.get("odi_image_file_id") or player_doc.get("image_file_id")
+    elif fmt == "test":
+        return player_doc.get("test_image_url") or player_doc.get("image_file_id")
+    elif fmt == "wwe":
+        return player_doc.get("wwe_image_url") or player_doc.get("image_file_id")
+    elif fmt == "fifa":
+        return player_doc.get("fifa_image_url") or player_doc.get("image_file_id")
+    return player_doc.get("image_file_id")
+
+async def get_user_card(user_id: int, player_id: str, fmt: str) -> Optional[dict]:
+    """Get a single user card entry or None."""
+    db = get_db()
+    return await db.user_cards.find_one({"user_id": user_id, "player_id": player_id, "format": fmt})
+
+async def add_card_to_user(user_id: int, player_id: str, fmt: str) -> int:
+    """Add one copy of a card. Returns new quantity."""
+    db = get_db()
+    result = await db.user_cards.find_one_and_update(
+        {"user_id": user_id, "player_id": player_id, "format": fmt},
+        {"$inc": {"quantity": 1}},
+        upsert=True,
+        return_document=True
+    )
+    return result["quantity"]
+
+async def remove_card_from_user(user_id: int, player_id: str, fmt: str) -> int:
+    """Remove one copy. Deletes doc if quantity reaches 0. Returns remaining quantity."""
+    db = get_db()
+    # Decrement
+    result = await db.user_cards.find_one_and_update(
+        {"user_id": user_id, "player_id": player_id, "format": fmt, "quantity": {"$gt": 0}},
+        {"$inc": {"quantity": -1}},
+        return_document=True
+    )
+    if result is None:
+        return 0
+    new_qty = result["quantity"]
+    if new_qty <= 0:
+        await db.user_cards.delete_one({"user_id": user_id, "player_id": player_id, "format": fmt})
+        return 0
+    return new_qty
+
+async def count_user_cards(user_id: int) -> int:
+    """Total number of card copies owned."""
+    db = get_db()
+    pipeline = [
+        {"$match": {"user_id": user_id}},
+        {"$group": {"_id": None, "total": {"$sum": "$quantity"}}}
+    ]
+    result = await db.user_cards.aggregate(pipeline).to_list(1)
+    return result[0]["total"] if result else 0
+
+# ── Favourite Card ────────────────────────────────────────────────────────────
+
+async def get_fav_card(user_id: int) -> Optional[dict]:
+    db = get_db()
+    doc = await db.users.find_one({"user_id": user_id}, {"fav_card": 1})
+    return doc.get("fav_card") if doc else None
+
+async def set_fav_card(user_id: int, player_id: str, fmt: str) -> None:
+    db = get_db()
+    await db.users.update_one(
+        {"user_id": user_id},
+        {"$set": {"fav_card": {"player_id": player_id, "format": fmt}}},
+        upsert=True
+    )
+
+async def clear_fav_card(user_id: int) -> None:
+    db = get_db()
+    await db.users.update_one(
+        {"user_id": user_id},
+        {"$unset": {"fav_card": ""}}
+    )
+
+# ── Daily Quests ──────────────────────────────────────────────────────────────
+
+QUEST_RESET_SECONDS = 86400  # 24 hours
+
+QUEST_DEFINITIONS = {
+    "obtain_2": {"label": "Obtain 2 cards via pack",  "field": "cards_obtained", "target": 2,  "reward": 10},
+    "obtain_5": {"label": "Obtain 5 cards via pack",  "field": "cards_obtained", "target": 5,  "reward": 20},
+    "trade_1":  {"label": "Trade 1 card",             "field": "cards_traded",   "target": 1,  "reward": 10},
+    "sell_2":   {"label": "Sell 2 cards",             "field": "cards_sold",     "target": 2,  "reward": 10},
+}
+
+async def get_daily_quests(user_id: int) -> dict:
+    """
+    Returns quest state. Auto-resets if 24h has passed.
+    Structure: {reset_at, cards_obtained, cards_traded, cards_sold, claimed: []}
+    """
+    db = get_db()
+    doc = await db.users.find_one({"user_id": user_id}, {"daily_quests": 1})
+    now = _time.time()
+
+    default = {
+        "reset_at":       now + QUEST_RESET_SECONDS,
+        "cards_obtained": 0,
+        "cards_traded":   0,
+        "cards_sold":     0,
+        "claimed":        [],
+    }
+
+    if not doc or "daily_quests" not in doc:
+        await db.users.update_one(
+            {"user_id": user_id},
+            {"$set": {"daily_quests": default}},
+            upsert=True
+        )
+        return default
+
+    quests = doc["daily_quests"]
+    # Check if reset needed
+    if now >= quests.get("reset_at", 0):
+        new_quests = {
+            "reset_at":       now + QUEST_RESET_SECONDS,
+            "cards_obtained": 0,
+            "cards_traded":   0,
+            "cards_sold":     0,
+            "claimed":        [],
+        }
+        await db.users.update_one(
+            {"user_id": user_id},
+            {"$set": {"daily_quests": new_quests}}
+        )
+        return new_quests
+    return quests
+
+async def increment_quest_progress(user_id: int, field: str, amount: int = 1) -> None:
+    """Increment a quest progress counter (cards_obtained / cards_traded / cards_sold)."""
+    db = get_db()
+    # Only increment if quests are not reset (ensure doc exists)
+    await get_daily_quests(user_id)  # ensures doc + handles reset
+    await db.users.update_one(
+        {"user_id": user_id},
+        {"$inc": {f"daily_quests.{field}": amount}}
+    )
+
+async def claim_quest_rewards(user_id: int) -> tuple[int, list]:
+    """
+    Claims all completed, unclaimed quest rewards.
+    Returns (total_coins_awarded, list_of_claimed_quest_keys).
+    """
+    quests = await get_daily_quests(user_id)
+    claimed = quests.get("claimed", [])
+    total_coins = 0
+    newly_claimed = []
+
+    for key, defn in QUEST_DEFINITIONS.items():
+        if key in claimed:
+            continue  # already claimed
+        progress = quests.get(defn["field"], 0)
+        if progress >= defn["target"]:
+            total_coins += defn["reward"]
+            newly_claimed.append(key)
+
+    if not newly_claimed:
+        return 0, []
+
+    # Mark as claimed + award coins atomically
+    db = get_db()
+    await db.users.update_one(
+        {"user_id": user_id},
+        {
+            "$push": {"daily_quests.claimed": {"$each": newly_claimed}},
+            "$inc":  {"card_coins": total_coins}
+        }
+    )
+    return total_coins, newly_claimed
+
+# ── Card Catalog ──────────────────────────────────────────────────────────────
+
+async def get_card_catalog_entry(player_id: str, fmt: str) -> Optional[dict]:
+    """Returns {ovr, rarity} or None if not in catalog."""
+    db = get_db()
+    doc = await db.players.find_one(
+        {"player_id": player_id},
+        {f"cards.{fmt}": 1}
+    )
+    if not doc:
+        return None
+    return doc.get("cards", {}).get(fmt)
+
+async def add_to_card_catalog(player_id: str, fmt: str, ovr: int, rarity: str) -> bool:
+    """Add a player-format to card catalog. Returns False if already exists."""
+    # Check existing
+    existing = await get_card_catalog_entry(player_id, fmt)
+    if existing:
+        return False
+    db = get_db()
+    await db.players.update_one(
+        {"player_id": player_id},
+        {"$set": {f"cards.{fmt}": {"ovr": ovr, "rarity": rarity.lower()}}}
+    )
+    clear_player_cache()
+    return True
+
+async def update_card_catalog(player_id: str, fmt: str, ovr: int, rarity: str) -> bool:
+    """Update a player-format in catalog. Returns False if not found."""
+    existing = await get_card_catalog_entry(player_id, fmt)
+    if not existing:
+        return False
+    db = get_db()
+    await db.players.update_one(
+        {"player_id": player_id},
+        {"$set": {f"cards.{fmt}": {"ovr": ovr, "rarity": rarity.lower()}}}
+    )
+    clear_player_cache()
+    return True
+
+# ── Card Pack Drawing ─────────────────────────────────────────────────────────
+
+PACK_ODDS = {
+    "basic":   {"legend": 0,  "epic": 5,  "rare": 35, "common": 60},
+    "premium": {"legend": 5,  "epic": 35, "rare": 45, "common": 15},
+    "elite":   {"legend": 30, "epic": 55, "rare": 15, "common": 0},
+}
+
+_card_pool_cache: dict = {}  # sport -> list of {player_id, name, format, rarity, ovr, image}
+_card_pool_cache_time: dict = {}
+CARD_POOL_CACHE_TTL = 300  # 5 minutes
+
+async def _build_card_pool(sport: str) -> list:
+    """Build and cache the drawable card pool for a sport."""
+    now = _time.time()
+    if sport in _card_pool_cache and (now - _card_pool_cache_time.get(sport, 0)) < CARD_POOL_CACHE_TTL:
+        return _card_pool_cache[sport]
+
+    db = get_db()
+    pool = []
+
+    if sport == "cricket":
+        query = {"sport": {"$nin": ["wwe", "football"]}, "cards": {"$exists": True}}
+        formats = ["ipl", "odi", "test"]
+    elif sport == "wwe":
+        query = {"sport": "wwe", "gender": {"$ne": "female"}, "cards": {"$exists": True}}
+        formats = ["wwe"]
+    elif sport == "football":
+        query = {"sport": "football", "cards": {"$exists": True}}
+        formats = ["fifa"]
+    else:
+        return []
+
+    async for p in db.players.find(query, {"player_id": 1, "name": 1, "cards": 1,
+                                            "ipl_image_file_id": 1, "image_file_id": 1,
+                                            "wwe_image_url": 1, "fifa_image_url": 1,
+                                            "test_image_url": 1}):
+        for fmt in formats:
+            card_data = p.get("cards", {}).get(fmt)
+            if not card_data:
+                continue
+            pool.append({
+                "player_id": p["player_id"],
+                "name":      p["name"],
+                "format":    fmt,
+                "rarity":    card_data.get("rarity", "common"),
+                "ovr":       card_data.get("ovr", 0),
+                "image":     _get_card_image(p, fmt),
+            })
+
+    _card_pool_cache[sport] = pool
+    _card_pool_cache_time[sport] = now
+    return pool
+
+def _invalidate_card_pool_cache():
+    """Call after /add_card or /update_card to refresh pool."""
+    _card_pool_cache.clear()
+    _card_pool_cache_time.clear()
+
+async def draw_pack_cards(pack_type: str, sport: str, count: int = 3) -> list:
+    """
+    Draw `count` cards from the pool for given pack_type and sport.
+    Returns list of card dicts. Empty list if pool is empty.
+    """
+    pool = await _build_card_pool(sport)
+    if not pool:
+        return []
+
+    drawn = []
+    odds = PACK_ODDS[pack_type]
+
+    for _ in range(count):
+        # Roll rarity
+        roll = random.randint(1, 100)
+        cumulative = 0
+        rarity = "common"
+        for r in ["legend", "epic", "rare", "common"]:
+            cumulative += odds[r]
+            if roll <= cumulative:
+                rarity = r
+                break
+
+        # Pick random card of that rarity
+        rarity_pool = [c for c in pool if c["rarity"] == rarity]
+        # Fallback to next rarity up if rarity pool empty
+        if not rarity_pool:
+            for fallback in ["rare", "epic", "legend", "common"]:
+                rarity_pool = [c for c in pool if c["rarity"] == fallback]
+                if rarity_pool:
+                    break
+        if not rarity_pool:
+            continue
+        drawn.append(random.choice(rarity_pool))
+
+    return drawn
+
+# ── Active Trades ─────────────────────────────────────────────────────────────
+
+async def create_trade(data: dict) -> str:
+    """Insert a new trade. Returns trade_id."""
+    db = get_db()
+    await db.active_trades.insert_one(data)
+    return data["trade_id"]
+
+async def get_trade(trade_id: str) -> Optional[dict]:
+    db = get_db()
+    doc = await db.active_trades.find_one({"trade_id": trade_id})
+    if doc:
+        doc.pop("_id", None)
+    return doc
+
+async def update_trade(trade_id: str, update_data: dict) -> None:
+    db = get_db()
+    await db.active_trades.update_one(
+        {"trade_id": trade_id},
+        {"$set": update_data}
+    )
+
+async def get_user_active_trade(user_id: int) -> Optional[dict]:
+    """Get the active trade for a user (initiator or target), if any."""
+    db = get_db()
+    doc = await db.active_trades.find_one({
+        "$or": [{"initiator_id": user_id}, {"target_id": user_id}],
+        "status": {"$in": ["awaiting_target_pick", "awaiting_confirmation"]}
+    })
+    if doc:
+        doc.pop("_id", None)
+    return doc
+
+async def cancel_trade(trade_id: str) -> None:
+    db = get_db()
+    await db.active_trades.update_one(
+        {"trade_id": trade_id},
+        {"$set": {"status": "cancelled"}}
+    )
+
+async def expire_old_trades() -> int:
+    """Cancel all trades older than 5 minutes. Returns count cancelled."""
+    db = get_db()
+    cutoff = _time.time() - 300  # 5 minutes
+    result = await db.active_trades.update_many(
+        {
+            "created_at": {"$lt": cutoff},
+            "status": {"$in": ["awaiting_target_pick", "awaiting_confirmation"]}
+        },
+        {"$set": {"status": "expired"}}
+    )
+    return result.modified_count
+
+# ── Admin: Gift Coins ─────────────────────────────────────────────────────────
+
+async def gift_card_coins(target_user_id: int, amount: int) -> int:
+    """Admin gift: add coins to any user by Telegram ID. Returns new balance."""
+    return await add_card_coins(target_user_id, amount)
