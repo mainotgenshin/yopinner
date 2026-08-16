@@ -582,11 +582,19 @@ async def get_player_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     stats  = p.get('stats', {})
     sport  = p.get('sport', 'cricket')
+    cards  = p.get('cards', {})
+    RARITY_EMOJI = {'common': '⚪', 'rare': '🔵', 'epic': '🟣', 'legend': '🟡'}
 
     # ── WWE ──────────────────────────────────────────────────────────────────
     if sport == 'wwe':
         ws = stats.get('wwe', {})
         def w(k): return ws.get(k, 'N/A')
+        card_wwe = cards.get('wwe')
+        if card_wwe and 'ovr' in card_wwe:
+            r = card_wwe.get('rarity', 'common').lower()
+            cat_wwe = f"\n\n🃏 *Card Catalog:*\n  WWE: OVR {card_wwe.get('ovr')} | {RARITY_EMOJI.get(r, '⚪')} {r.title()}"
+        else:
+            cat_wwe = "\n\n🃏 *Card Catalog:*\n  WWE: Not added yet"
         msg = (
             f"🤼 *{esc(p['name'])}* (WWE)\n"
             f"━━━━━━━━━━━━━━━\n"
@@ -600,6 +608,7 @@ async def get_player_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"📋 Intelligence: {w('intelligence')}\n"
             f"🪂 Aerial:       {w('aerial')}\n"
             f"🔒 Submission:   {w('submission')}"
+            f"{cat_wwe}"
         )
         img = p.get('image_file_id') or p.get('wwe_image_url')
         if img:
@@ -615,6 +624,12 @@ async def get_player_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if sport == 'football':
         fs = stats.get('fifa', {})
         def f(k): return fs.get(k, 0)
+        card_fifa = cards.get('fifa')
+        if card_fifa and 'ovr' in card_fifa:
+            r = card_fifa.get('rarity', 'common').lower()
+            cat_fifa = f"\n\n🃏 *Card Catalog:*\n  FIFA: OVR {card_fifa.get('ovr')} | {RARITY_EMOJI.get(r, '⚪')} {r.title()}"
+        else:
+            cat_fifa = "\n\n🃏 *Card Catalog:*\n  FIFA: Not added yet"
         msg = (
             f"⚽ *{esc(p['name'])}* (FIFA)\n"
             f"🏅 Overall: {p.get('overall', 'N/A')}  "
@@ -624,6 +639,7 @@ async def get_player_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"🎯 LW: {f('LW')}  RW: {f('RW')}  CAM: {f('CAM')}\n"
             f"🧠 CM: {f('CM')}  CDM: {f('CDM')}\n"
             f"🛡 CB: {f('CB')}  LB: {f('LB')}  RB: {f('RB')}"
+            f"{cat_fifa}"
         )
         sent = False
         for img_key in ('image_file_id', 'fifa_image_url'):
@@ -667,17 +683,35 @@ async def get_player_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     intl_display = format_stats(stats.get('odi', {}))
 
+    # Card Catalog info for cricket
+    cat_lines_md = ["\n\n🃏 *Card Catalog:*"]
+    cat_lines_html = ["\n\n🃏 <b>Card Catalog:</b>"]
+    for label, fmt_key in [('IPL', 'ipl'), ('ODI', 'odi'), ('Test', 'test')]:
+        c_info = cards.get(fmt_key)
+        if c_info and 'ovr' in c_info:
+            r = c_info.get('rarity', 'common').lower()
+            emoji = RARITY_EMOJI.get(r, '⚪')
+            cat_lines_md.append(f"  {label}: OVR {c_info.get('ovr')} | {emoji} {r.title()}")
+            cat_lines_html.append(f"  {label}: OVR {c_info.get('ovr')} | {emoji} {r.title()}")
+        else:
+            cat_lines_md.append(f"  {label}: Not added yet")
+            cat_lines_html.append(f"  {label}: Not added yet")
+    card_cat_md = "\n".join(cat_lines_md)
+    card_cat_html = "\n".join(cat_lines_html)
+
     msg = (
         f"📊 <b>{p['name']}</b>\n"
         f"<i>ODI Stats</i>\n"
         f"{intl_display}\n\n"
         f"Roles: {', '.join(roles)}"
+        f"{card_cat_html}"
     )
     # Also build a Markdown version for photo caption (player names in captions are safe)
     md_msg = (
         f"📊 *{esc(p['name'])}*\n"
         f"*ODI Stats*\n{intl_display}\n\n"
         f"Roles: {esc(', '.join(roles))}"
+        f"{card_cat_md}"
     )
 
     from telegram import InlineKeyboardButton, InlineKeyboardMarkup
@@ -2160,3 +2194,210 @@ async def remove_player_fifa(update, context):
         await update.message.reply_text(f"✅ Removed '{text}'.")
     else:
         await update.message.reply_text(f"❌ '{text}' not found.")
+
+
+# ── /update_card ─────────────────────────────────────────────────────────────
+async def handle_update_card(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """/update_card <name> format=<fmt> ovr=<n> rarity=<tier> — Admin only."""
+    user = update.effective_user
+    from database import is_admin
+    if not await is_admin(user.id):
+        await update.effective_message.reply_text("⛔ Admin only.")
+        return
+    args = context.args
+    if not args:
+        await update.effective_message.reply_text(
+            "Usage: /update_card <name> format=<ipl|odi|test|wwe|fifa> ovr=<number> rarity=<common|rare|epic|legend>"
+        )
+        return
+    # Parse kwargs from args
+    params = {}
+    name_parts = []
+    for a in args:
+        if '=' in a:
+            k, v = a.split('=', 1)
+            params[k.lower()] = v.strip()
+        else:
+            name_parts.append(a)
+    name_query = ' '.join(name_parts)
+    fmt    = params.get('format', '').lower()
+    ovr_s  = params.get('ovr', '')
+    rarity = params.get('rarity', '').lower()
+    if not all([name_query, fmt, ovr_s, rarity]):
+        await update.effective_message.reply_text("❌ Missing required parameters. Provide name, format, ovr, and rarity.")
+        return
+    if fmt not in ('ipl', 'odi', 'test', 'wwe', 'fifa'):
+        await update.effective_message.reply_text("❌ Invalid format. Use: ipl, odi, test, wwe, fifa")
+        return
+    if rarity not in ('common', 'rare', 'epic', 'legend'):
+        await update.effective_message.reply_text("❌ Invalid rarity. Use: common, rare, epic, legend")
+        return
+    try:
+        ovr = int(ovr_s)
+    except ValueError:
+        await update.effective_message.reply_text("❌ OVR must be a number.")
+        return
+    # Find player by name
+    from database import get_db
+    import re
+    db = get_db()
+    pattern = re.compile(re.escape(name_query), re.IGNORECASE)
+    players = await db.players.find({"name": pattern}).to_list(10)
+    if not players:
+        await update.effective_message.reply_text(f"❌ No player found matching '{name_query}'.")
+        return
+    if len(players) > 1:
+        lines = [f"Multiple players found for '{name_query}'. Please be more specific:"]
+        for p in players:
+            lines.append(f"• {p['name']} ({p.get('player_id', '')})")        
+        await update.effective_message.reply_text('\n'.join(lines))
+        return
+    player = players[0]
+    from database import update_card_catalog, _invalidate_card_pool_cache
+    success = await update_card_catalog(player['player_id'], fmt, ovr, rarity)
+    _invalidate_card_pool_cache()
+    if not success:
+        await update.effective_message.reply_text(
+            f"❌ '{player['name']}' has no {fmt.upper()} card in catalog yet.\nUse /add_card first."
+        )
+        return
+    RARITY_EMOJI = {'common': '⚪', 'rare': '🔵', 'epic': '🟣', 'legend': '🟡'}
+    await update.effective_message.reply_text(
+        f"✅ Updated card:\n*{player['name']}* ({fmt.upper()})\n"
+        f"OVR: {ovr} | {RARITY_EMOJI[rarity]} {rarity.title()}",
+        parse_mode='Markdown'
+    )
+
+# ── /add_card ─────────────────────────────────────────────────────────────────
+async def handle_add_card(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """/add_card <name> format=<fmt> ovr=<n> rarity=<tier> — Admin only."""
+    user = update.effective_user
+    from database import is_admin
+    if not await is_admin(user.id):
+        await update.effective_message.reply_text("⛔ Admin only.")
+        return
+    args = context.args
+    if not args:
+        await update.effective_message.reply_text(
+            "Usage: /add_card <name> format=<ipl|odi|test|wwe|fifa> ovr=<number> rarity=<common|rare|epic|legend>"
+        )
+        return
+    params = {}
+    name_parts = []
+    for a in args:
+        if '=' in a:
+            k, v = a.split('=', 1)
+            params[k.lower()] = v.strip()
+        else:
+            name_parts.append(a)
+    name_query = ' '.join(name_parts)
+    fmt    = params.get('format', '').lower()
+    ovr_s  = params.get('ovr', '')
+    rarity = params.get('rarity', '').lower()
+    if not all([name_query, fmt, ovr_s, rarity]):
+        await update.effective_message.reply_text("❌ Missing required parameters.")
+        return
+    if fmt not in ('ipl', 'odi', 'test', 'wwe', 'fifa'):
+        await update.effective_message.reply_text("❌ Invalid format. Use: ipl, odi, test, wwe, fifa")
+        return
+    if rarity not in ('common', 'rare', 'epic', 'legend'):
+        await update.effective_message.reply_text("❌ Invalid rarity. Use: common, rare, epic, legend")
+        return
+    try:
+        ovr = int(ovr_s)
+    except ValueError:
+        await update.effective_message.reply_text("❌ OVR must be a number.")
+        return
+    from database import get_db
+    import re
+    db = get_db()
+    pattern = re.compile(re.escape(name_query), re.IGNORECASE)
+    players = await db.players.find({"name": pattern}).to_list(10)
+    if not players:
+        await update.effective_message.reply_text(f"❌ No player found matching '{name_query}'.")
+        return
+    if len(players) > 1:
+        lines = [f"Multiple players found for '{name_query}'. Please be more specific:"]
+        for p in players:
+            lines.append(f"• {p['name']} ({p.get('player_id', '')})")        
+        await update.effective_message.reply_text('\n'.join(lines))
+        return
+    player = players[0]
+    from database import add_to_card_catalog, _invalidate_card_pool_cache
+    success = await add_to_card_catalog(player['player_id'], fmt, ovr, rarity)
+    _invalidate_card_pool_cache()
+    RARITY_EMOJI = {'common': '⚪', 'rare': '🔵', 'epic': '🟣', 'legend': '🟡'}
+    if not success:
+        await update.effective_message.reply_text(
+            f"❌ *{player['name']}* already has an {fmt.upper()} card in the catalog.",
+            parse_mode='Markdown'
+        )
+        return
+    await update.effective_message.reply_text(
+        f"✅ Added to card catalog:\n*{player['name']}* ({fmt.upper()})\n"
+        f"OVR: {ovr} | {RARITY_EMOJI[rarity]} {rarity.title()}",
+        parse_mode='Markdown'
+    )
+
+# ── /gift ─────────────────────────────────────────────────────────────────────
+async def handle_gift_coins(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """/gift <telegram_user_id> <amount> — Admin only."""
+    user = update.effective_user
+    from database import is_admin
+    if not await is_admin(user.id):
+        await update.effective_message.reply_text("⛔ Admin only.")
+        return
+    args = context.args
+    if len(args) < 2:
+        await update.effective_message.reply_text("Usage: /gift <telegram_id> <amount>")
+        return
+    try:
+        target_id = int(args[0])
+        amount    = int(args[1])
+    except ValueError:
+        await update.effective_message.reply_text("❌ Both telegram_id and amount must be numbers.")
+        return
+    if amount <= 0:
+        await update.effective_message.reply_text("❌ Amount must be positive.")
+        return
+    from database import gift_card_coins
+    new_bal = await gift_card_coins(target_id, amount)
+    await update.effective_message.reply_text(
+        f"✅ Gifted *{amount}🪙* to user `{target_id}`\nNew balance: *{new_bal}🪙*",
+        parse_mode='Markdown'
+    )
+
+# ── /add_packall ─────────────────────────────────────────────────────────────
+async def handle_add_packall(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """/add_packall <pack_type> — Give one pack of type to all users. Admin only."""
+    user = update.effective_user
+    from database import is_admin
+    if not await is_admin(user.id):
+        await update.effective_message.reply_text("⛔ Admin only.")
+        return
+    args = context.args
+    if not args:
+        await update.effective_message.reply_text(
+            "Usage: /add_packall <basic|premium|elite>_<cricket|football|wwe>\nExample: /add_packall premium_cricket"
+        )
+        return
+    pack_key = args[0].lower()
+    valid_tiers  = ('basic', 'premium', 'elite')
+    valid_sports = ('cricket', 'football', 'wwe')
+    parts = pack_key.split('_', 1)
+    if len(parts) != 2 or parts[0] not in valid_tiers or parts[1] not in valid_sports:
+        await update.effective_message.reply_text(
+            "❌ Invalid pack type. Format: <basic|premium|elite>_<cricket|football|wwe>\n"
+            "Example: premium_cricket"
+        )
+        return
+    await update.effective_message.reply_text(f"⏳ Gifting packs to all users...")
+    from database import add_pack_to_all_users
+    count = await add_pack_to_all_users(pack_key)
+    PACK_EMOJI = {'basic': '🟦', 'premium': '🟣', 'elite': '🟡'}
+    tier, sport = parts
+    SPORT_LABEL = {'cricket': 'Cricket', 'football': 'FIFA', 'wwe': 'WWE Men'}
+    await update.effective_message.reply_text(
+        f"✅ Gifted *{PACK_EMOJI[tier]} {tier.title()} {SPORT_LABEL[sport]} Pack* to *{count}* users!",
+        parse_mode='Markdown'
+    )
