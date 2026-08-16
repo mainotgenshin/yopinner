@@ -636,6 +636,13 @@ if __name__ == '__main__':
     application.add_handler(CommandHandler('broadcast', wrap_admin_logging(handle_broadcast, "Send Broadcast Message")))
     application.add_handler(CommandHandler('banner', wrap_admin_logging(handle_banner, "Modify Banner overrides")))
 
+    # Card Catalog Admin commands
+    from handlers.admin import handle_add_card, handle_update_card, handle_gift_coins, handle_add_packall
+    application.add_handler(CommandHandler('add_card',    wrap_admin_logging(handle_add_card,    "Add Card to Catalog")))
+    application.add_handler(CommandHandler('update_card', wrap_admin_logging(handle_update_card, "Update Card OVR/Rarity")))
+    application.add_handler(CommandHandler('gift',        wrap_admin_logging(handle_gift_coins,  "Gift Card Coins")))
+    application.add_handler(CommandHandler('add_packall', wrap_admin_logging(handle_add_packall, "Gift Pack to All Users")))
+
     # Game
     from handlers.challenge import challenge_unified, challenge_ipl, challenge_odi, challenge_test, challenge_fifa
     application.add_handler(CommandHandler('challenge_ipl', challenge_ipl))
@@ -661,6 +668,25 @@ if __name__ == '__main__':
     from handlers.profile import handle_profile
     application.add_handler(CommandHandler('myprofile', handle_profile))
 
+    # ── Card System ───────────────────────────────────────────────
+    from handlers.cards import (
+        handle_pack, handle_inventory, handle_mycards, handle_viewcard,
+        handle_trade_card, handle_quest,
+        cb_pack_sport, cb_pack_tier, cb_pack_confirm, cb_pack_back,
+        cb_inv_packs, cb_inv_open,
+        cb_mc_page,
+        cb_vc_fmt, cb_vc_fav, cb_vc_unfav, cb_vc_sell, cb_vc_sell_ok,
+        cb_tr_page, cb_tr_offer, cb_tr_pick, cb_tr_confirm, cb_tr_decline, cb_tr_cancel,
+        cb_quest_claim,
+    )
+    # Commands
+    application.add_handler(CommandHandler('pack',       handle_pack))
+    application.add_handler(CommandHandler('inventory',  handle_inventory))
+    application.add_handler(CommandHandler('mycards',    handle_mycards))
+    application.add_handler(CommandHandler('viewcard',   handle_viewcard))
+    application.add_handler(CommandHandler('trade_card', handle_trade_card))
+    application.add_handler(CommandHandler('quest',      handle_quest))
+
     # Standings / Leaderboard
     from handlers.standings import handle_standings, handle_standings_callback
     application.add_handler(CommandHandler('standings', handle_standings))
@@ -674,7 +700,28 @@ if __name__ == '__main__':
     application.add_handler(CallbackQueryHandler(handle_swap_pick2, pattern=r"^swap2\|"))
     application.add_handler(CallbackQueryHandler(handle_swap_cancel, pattern=r"^swapcancel\|"))
 
-    # Callbacks
+    # Card system callbacks (specific patterns BEFORE the catch-all)
+    application.add_handler(CallbackQueryHandler(cb_pack_sport,   pattern=r"^pack_sport\|"))
+    application.add_handler(CallbackQueryHandler(cb_pack_tier,    pattern=r"^pack_tier\|"))
+    application.add_handler(CallbackQueryHandler(cb_pack_confirm, pattern=r"^pack_confirm\|"))
+    application.add_handler(CallbackQueryHandler(cb_pack_back,    pattern=r"^pack_back\|"))
+    application.add_handler(CallbackQueryHandler(cb_inv_packs,    pattern=r"^inv_packs\|"))
+    application.add_handler(CallbackQueryHandler(cb_inv_open,     pattern=r"^inv_open\|"))
+    application.add_handler(CallbackQueryHandler(cb_mc_page,      pattern=r"^mc_page\|"))
+    application.add_handler(CallbackQueryHandler(cb_vc_fmt,       pattern=r"^vc_fmt\|"))
+    application.add_handler(CallbackQueryHandler(cb_vc_fav,       pattern=r"^vc_fav\|"))
+    application.add_handler(CallbackQueryHandler(cb_vc_unfav,     pattern=r"^vc_unfav\|"))
+    application.add_handler(CallbackQueryHandler(cb_vc_sell,      pattern=r"^vc_sell\|"))
+    application.add_handler(CallbackQueryHandler(cb_vc_sell_ok,   pattern=r"^vc_sell_ok\|"))
+    application.add_handler(CallbackQueryHandler(cb_tr_page,      pattern=r"^tr_page\|"))
+    application.add_handler(CallbackQueryHandler(cb_tr_offer,     pattern=r"^tr_offer\|"))
+    application.add_handler(CallbackQueryHandler(cb_tr_pick,      pattern=r"^tr_pick\|"))
+    application.add_handler(CallbackQueryHandler(cb_tr_confirm,   pattern=r"^tr_confirm\|"))
+    application.add_handler(CallbackQueryHandler(cb_tr_decline,   pattern=r"^tr_decline\|"))
+    application.add_handler(CallbackQueryHandler(cb_tr_cancel,    pattern=r"^tr_cancel\|"))
+    application.add_handler(CallbackQueryHandler(cb_quest_claim,  pattern=r"^quest_claim\|"))
+
+    # Catch-all callback (must be LAST)
     application.add_handler(CallbackQueryHandler(handle_callback))
 
     # ---- HEALTH SERVER (FREE TIER FIX) ----
