@@ -114,6 +114,16 @@ async def cb_pack_confirm(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = query.from_user.id
     if str(user_id) != owner_id:
         await query.answer("⛔ Not your menu.", show_alert=True); return
+
+    # ── DB-level atomic cooldown (primary spam-click guard) ──────────────────
+    # asyncio.Lock only protects concurrent requests; DB cooldown protects
+    # sequential spam clicks (each completes before the next starts).
+    from database import try_acquire_action_cooldown
+    allowed = await try_acquire_action_cooldown(user_id, "pack_buy", cooldown_seconds=5)
+    if not allowed:
+        await query.answer("⏳ Please wait before buying again!", show_alert=False)
+        return
+    # ── asyncio.Lock (secondary guard for truly concurrent requests) ─────────
     lock = _get_lock(user_id)
     if lock.locked():
         await query.answer("⏳ Please wait a moment...", show_alert=False); return
@@ -132,6 +142,7 @@ async def cb_pack_confirm(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"Balance: *{new_bal}🪙* | Use /inventory to open packs.",
             parse_mode="Markdown"
         )
+
 
 async def cb_pack_back(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -203,6 +214,14 @@ async def cb_inv_open(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = query.from_user.id
     if str(user_id) != owner_id:
         await query.answer("⛔ Not your menu.", show_alert=True); return
+
+    # ── DB-level atomic cooldown (primary spam-click guard) ──────────────────
+    from database import try_acquire_action_cooldown
+    allowed = await try_acquire_action_cooldown(user_id, "pack_open", cooldown_seconds=5)
+    if not allowed:
+        await query.answer("⏳ Please wait before opening another pack!", show_alert=False)
+        return
+    # ── asyncio.Lock (secondary guard for truly concurrent requests) ─────────
     lock = _get_lock(user_id)
     if lock.locked():
         await query.answer("⏳ Please wait a moment...", show_alert=False); return
@@ -246,6 +265,7 @@ async def cb_inv_open(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"Collection: *{total} cards*"
         )
         await query.edit_message_text(text, parse_mode="Markdown")
+
 
 # ─────────────────────────────────────────────────────────────────────────────
 # /mycards
@@ -389,16 +409,20 @@ async def _show_card_detail(msg_or_query, owner_id: int, card: dict, edit: bool)
     ])
     # Show with image if available
     image = card.get("image")
-    if image and edit:
-        await msg_or_query.edit_message_text(text, reply_markup=kb, parse_mode="Markdown")
-    elif image and not edit:
-        try:
-            await msg_or_query.reply_photo(photo=image, caption=text, reply_markup=kb, parse_mode="Markdown")
-        except Exception:
-            await msg_or_query.reply_text(text, reply_markup=kb, parse_mode="Markdown")
-    else:
-        if edit:
+    if edit:
+        # Editing existing message — must match original message type
+        is_photo = bool(getattr(msg_or_query, 'message', None) and msg_or_query.message.photo)
+        if is_photo:
+            await msg_or_query.edit_message_caption(caption=text, reply_markup=kb, parse_mode="Markdown")
+        else:
             await msg_or_query.edit_message_text(text, reply_markup=kb, parse_mode="Markdown")
+    else:
+        # New reply
+        if image:
+            try:
+                await msg_or_query.reply_photo(photo=image, caption=text, reply_markup=kb, parse_mode="Markdown")
+            except Exception:
+                await msg_or_query.reply_text(text, reply_markup=kb, parse_mode="Markdown")
         else:
             await msg_or_query.reply_text(text, reply_markup=kb, parse_mode="Markdown")
 
@@ -468,7 +492,11 @@ async def cb_vc_sell(update: Update, context: ContextTypes.DEFAULT_TYPE):
         InlineKeyboardButton("✅ Confirm Sell", callback_data=f"vc_sell_ok|{owner_id}|{player_id}|{fmt}|{sell_val_str}"),
         InlineKeyboardButton("❌ Cancel",       callback_data=f"vc_fmt|{owner_id}|{player_id}|{fmt}"),
     ]])
-    await query.edit_message_text(text, reply_markup=kb, parse_mode="Markdown")
+    # Handle photo messages (viewcard sends photo+caption)
+    if query.message and query.message.photo:
+        await query.edit_message_caption(caption=text, reply_markup=kb, parse_mode="Markdown")
+    else:
+        await query.edit_message_text(text, reply_markup=kb, parse_mode="Markdown")
 
 async def cb_vc_sell_ok(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Execute sell with anti-spam lock."""
@@ -478,6 +506,10 @@ async def cb_vc_sell_ok(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = query.from_user.id
     if str(user_id) != owner_id:
         await query.answer("⛔ Not your menu.", show_alert=True); return
+    # DB-level cooldown
+    from database import try_acquire_action_cooldown
+    if not await try_acquire_action_cooldown(user_id, "card_sell", cooldown_seconds=5):
+        await query.answer("⏳ Please wait a moment...", show_alert=False); return
     lock = _get_lock(user_id)
     if lock.locked():
         await query.answer("⏳ Please wait a moment...", show_alert=False); return
@@ -497,11 +529,14 @@ async def cb_vc_sell_ok(update: Update, context: ContextTypes.DEFAULT_TYPE):
         new_bal = await add_card_coins(user_id, sell_val)
         await increment_quest_progress(user_id, "cards_sold", 1)
         f_label = FORMAT_LABEL.get(fmt, fmt.upper())
-        await query.edit_message_text(
+        success_text = (
             f"✅ Sold *{esc(card['name'])}* ({f_label}) for *{sell_val}🪙*!\n"
-            f"Balance: *{new_bal}🪙* | Remaining copies: *{remaining}×*",
-            parse_mode="Markdown"
+            f"Balance: *{new_bal}🪙* | Remaining copies: *{remaining}×*"
         )
+        if query.message and query.message.photo:
+            await query.edit_message_caption(caption=success_text, parse_mode="Markdown")
+        else:
+            await query.edit_message_text(success_text, parse_mode="Markdown")
 
 # ─────────────────────────────────────────────────────────────────────────────
 # /trade_card
