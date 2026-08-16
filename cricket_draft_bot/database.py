@@ -1063,3 +1063,35 @@ async def expire_old_trades() -> int:
 async def gift_card_coins(target_user_id: int, amount: int) -> int:
     """Admin gift: add coins to any user by Telegram ID. Returns new balance."""
     return await add_card_coins(target_user_id, amount)
+
+# ── Atomic Action Cooldown (spam-click protection) ────────────────────────────
+
+async def try_acquire_action_cooldown(user_id: int, action: str, cooldown_seconds: int = 5) -> bool:
+    """
+    Atomically acquire a per-user per-action cooldown stored in MongoDB.
+    Returns True if the action is allowed to proceed (cooldown not active).
+    Returns False if the user is still within the cooldown window.
+
+    This is the primary defense against spam-clicks that arrive as sequential
+    Telegram updates (which bypass in-memory asyncio.Lock checks).
+    """
+    import time as _time
+    db = get_db()
+    now = _time.time()
+    cutoff = now - cooldown_seconds
+    field = f"cooldowns.{action}"
+
+    result = await db.users.find_one_and_update(
+        {
+            "user_id": user_id,
+            "$or": [
+                {field: {"$exists": False}},
+                {field: {"$lt": cutoff}},
+            ]
+        },
+        {"$set": {field: now}},
+        upsert=False,           # User must already exist
+        return_document=False,  # We only need modified_count logic
+    )
+    # find_one_and_update returns the document if matched, None if no match
+    return result is not None
