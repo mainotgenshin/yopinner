@@ -114,17 +114,17 @@ async def _replace_old_challenge(ch_key: str, bot):
 async def _check_match_limit(user_id: int, mode_of_reply) -> bool:
     """
     Returns True if user can start/join a match.
-    If at limit (>=2), sends a descriptive message and returns False.
+    If at limit (>=1), sends a descriptive message and returns False.
     mode_of_reply: an Update.message or a CallbackQuery object.
     """
     from database import get_user_active_matches_info
     from telegram.helpers import escape_markdown
     def _esc(t): return escape_markdown(str(t), version=1)
     matches = await get_user_active_matches_info(user_id)
-    if len(matches) < 2:
+    if len(matches) < 1:
         return True
     # Build descriptive block message
-    lines = ["⛔ *You are already playing 2 matches!*", "Your active matches:"]
+    lines = ["⛔ *You are already playing a match!*", "Your active match:"]
     for doc in matches:
         sd = doc.get("state_data", doc)  # handle both wrapped and unwrapped
         mode  = sd.get("mode", "?")
@@ -139,11 +139,11 @@ async def _check_match_limit(user_id: int, mode_of_reply) -> bool:
         status = sd.get("state", "?")
         status_label = "🟡 Ready Check" if status == "READY_CHECK" else "🟢 Drafting"
         lines.append(f"\u2022 {mode} vs {_esc(opp)} — {filled} picks done  {status_label}")
-    lines.append("\n_Finish one of your matches first to start/join a new challenge._")
+    lines.append("\n_Finish your match first to start/join a new challenge._")
     msg = "\n".join(lines)
     try:
         if hasattr(mode_of_reply, 'answer'):  # It's a CallbackQuery
-            await mode_of_reply.answer("⛔ You are already playing 2 matches! Finish one before joining.", show_alert=True)
+            await mode_of_reply.answer("⛔ You are already playing a match! Finish it before joining.", show_alert=True)
         elif hasattr(mode_of_reply, 'reply_text'):
             await mode_of_reply.reply_text(msg, parse_mode="Markdown")
     except Exception:
@@ -747,12 +747,12 @@ async def handle_join(update: Update, context: ContextTypes.DEFAULT_TYPE):
         get_user_active_matches_info(owner_id),
     )
 
-    if len(joiner_matches) >= 2:
+    if len(joiner_matches) >= 1:
         # Re-use _check_match_limit just for the reply formatting
         await _check_match_limit(query.from_user.id, query)
         return
-    if len(owner_matches) >= 2:
-        await query.answer("⛔ The challenger already has 2 active matches.", show_alert=True)
+    if len(owner_matches) >= 1:
+        await query.answer("⛔ The challenger already has an active match.", show_alert=True)
         return
 
 
