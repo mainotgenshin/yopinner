@@ -776,7 +776,16 @@ async def clear_fav_card(user_id: int) -> None:
 
 # ── Daily Quests ──────────────────────────────────────────────────────────────
 
-QUEST_RESET_SECONDS = 86400  # 24 hours
+def _next_midnight_utc() -> float:
+    """Returns the Unix timestamp of the next midnight UTC.
+    Everyone resets at the same wall-clock time — no more per-user rolling windows.
+    """
+    import datetime as _dt
+    now_utc = _dt.datetime.now(_dt.timezone.utc)
+    tomorrow = (now_utc + _dt.timedelta(days=1)).replace(
+        hour=0, minute=0, second=0, microsecond=0
+    )
+    return tomorrow.timestamp()
 
 QUEST_DEFINITIONS = {
     "obtain_2": {"label": "Obtain 2 cards via pack",  "field": "cards_obtained", "target": 2,  "reward": 10},
@@ -787,7 +796,7 @@ QUEST_DEFINITIONS = {
 
 async def get_daily_quests(user_id: int) -> dict:
     """
-    Returns quest state. Auto-resets if 24h has passed.
+    Returns quest state. Auto-resets at midnight UTC (same time for all users).
     Structure: {reset_at, cards_obtained, cards_traded, cards_sold, claimed: []}
     """
     db = get_db()
