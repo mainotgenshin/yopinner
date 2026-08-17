@@ -1028,11 +1028,17 @@ async def update_trade(trade_id: str, update_data: dict) -> None:
     )
 
 async def get_user_active_trade(user_id: int) -> Optional[dict]:
-    """Get the active trade for a user (initiator or target), if any."""
+    """Get the active trade for a user (initiator or target), if any.
+    Automatically excludes trades older than 5 minutes so users are never
+    permanently blocked by a forgotten/abandoned trade.
+    """
+    import time as _t
     db = get_db()
+    cutoff = _t.time() - 300  # 5 minutes
     doc = await db.active_trades.find_one({
         "$or": [{"initiator_id": user_id}, {"target_id": user_id}],
-        "status": {"$in": ["awaiting_target_pick", "awaiting_confirmation"]}
+        "status": {"$in": ["awaiting_target_pick", "awaiting_confirmation", "completing"]},
+        "created_at": {"$gte": cutoff}   # ← exclude trades older than 5 min
     })
     if doc:
         doc.pop("_id", None)
