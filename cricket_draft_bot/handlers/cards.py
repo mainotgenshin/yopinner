@@ -483,12 +483,12 @@ async def cb_vc_sell(update: Update, context: ContextTypes.DEFAULT_TYPE):
     _, owner_id, player_id, fmt, sell_val_str = parts
     if str(query.from_user.id) != owner_id:
         await query.answer("⛔ Not your menu.", show_alert=True); return
-    await query.answer()
     from database import get_user_cards, get_fav_card
     cards = await get_user_cards(int(owner_id))
     card = next((c for c in cards if c["player_id"] == player_id and c["format"] == fmt), None)
     if not card:
-        await query.edit_message_text("❌ Card not found."); return
+        await query.answer(); await query.edit_message_text("❌ Card not found."); return
+    # Check fav BEFORE answering (query can only be answered once)
     fav = await get_fav_card(int(owner_id))
     is_fav = fav and fav.get("player_id") == player_id and fav.get("format") == fmt
     if is_fav and card["quantity"] <= 1:
@@ -497,6 +497,7 @@ async def cb_vc_sell(update: Update, context: ContextTypes.DEFAULT_TYPE):
             show_alert=True
         )
         return
+    await query.answer()  # answered here, after all popup-answer paths are done
     f_label = FORMAT_LABEL.get(fmt, fmt.upper())
     text = (
         f"💰 *Sell Confirmation*\n"
@@ -639,7 +640,7 @@ async def cb_tr_page(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await _show_trade_picker(query, int(initiator_id), target_id_int, f"User {target_id}", cards, int(page_str), edit=True)
 
 async def cb_tr_offer(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Initiator picked card to offer. Create trade and notify target."""
+    """Initiator picked card to offer. Edit message to show target's card picker (single-msg flow)."""
     query = update.callback_query
     _, initiator_id, target_id, player_id, fmt = query.data.split("|")
     if str(query.from_user.id) != initiator_id:
@@ -652,18 +653,16 @@ async def cb_tr_offer(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if lock.locked():
         await query.answer("⏳ Please wait a moment...", show_alert=False); return
     async with lock:
-        await query.answer()
-        from database import get_user_cards, get_player, get_user_active_trade, create_trade
+        from database import get_user_cards, get_user_active_trade, create_trade, get_fav_card
         # Re-check active trade
         my_trade = await get_user_active_trade(int(initiator_id))
         if my_trade:
-            await query.edit_message_text("❌ You already have an active trade."); return
+            await query.answer("❌ You already have an active trade.", show_alert=True); return
         cards = await get_user_cards(int(initiator_id))
         offered = next((c for c in cards if c["player_id"] == player_id and c["format"] == fmt), None)
         if not offered:
-            await query.edit_message_text("❌ Card not in your collection."); return
-        # Fav protection
-        from database import get_fav_card
+            await query.answer("❌ Card not in your collection.", show_alert=True); return
+        # Fav protection — check BEFORE answering
         fav = await get_fav_card(int(initiator_id))
         is_fav = fav and fav.get("player_id") == player_id and fav.get("format") == fmt
         if is_fav and offered["quantity"] <= 1:
@@ -672,11 +671,11 @@ async def cb_tr_offer(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 show_alert=True
             )
             return
+        await query.answer()  # safe to answer now
         # Check target has cards of same rarity
         target_cards = await get_user_cards(int(target_id))
         matching_rarity = [c for c in target_cards if c["rarity"] == offered["rarity"]]
         if not matching_rarity:
-            f_label = FORMAT_LABEL.get(fmt, fmt.upper())
             await query.edit_message_text(
                 f"❌ The other user has no *{offered['rarity'].title()}* cards to trade with yours.",
                 parse_mode="Markdown"
@@ -693,43 +692,36 @@ async def cb_tr_offer(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "offered_name":      offered["name"],
             "status":            "awaiting_target_pick",
             "chat_id":           query.message.chat_id,
+            "message_id":        query.message.message_id,
             "created_at":        time.time(),
         }
         await create_trade(trade_data)
         f_label = FORMAT_LABEL.get(fmt, fmt.upper())
         r_emoji = RARITY_EMOJI.get(offered["rarity"], "⚪")
-        # Update initiator message
-        await query.edit_message_text(
-            f"♻️ *Trade Sent!*\n"
-            f"Offering: {r_emoji} *{esc(offered['name'])}* ({f_label})\n"
-            f"Waiting for response... (expires in 5 min)",
-            parse_mode="Markdown"
-        )
-        # Notify target — show their matching rarity cards
+        # ── SINGLE MESSAGE: edit M1 to show target's picker (no new message) ───────────────
         rarity_order = {"legend": 0, "epic": 1, "rare": 2, "common": 3}
         matching_rarity.sort(key=lambda c: (rarity_order.get(c["rarity"], 9), c["name"]))
         pick_buttons = [
             [InlineKeyboardButton(
-                f"{RARITY_EMOJI.get(c['rarity'],'⚪')} {c['name']} ({FORMAT_LABEL.get(c['format'],c['format'])})",
+                f"{RARITY_EMOJI.get(c['rarity'],'')}{c['name']} ({FORMAT_LABEL.get(c['format'],c['format'])})",
                 callback_data=f"tr_pick|{target_id}|{trade_id}|{c['player_id']}|{c['format']}"
             )]
             for c in matching_rarity[:8]
         ]
         pick_buttons.append([InlineKeyboardButton("❌ Decline", callback_data=f"tr_decline|{target_id}|{trade_id}")])
-        await context.bot.send_message(
-            chat_id=query.message.chat_id,
-            text=(
-                f"♻️ *Trade Request!*\n"
-                f"*{esc(query.from_user.first_name)}* is offering:\n"
-                f"{r_emoji} *{esc(offered['name'])}* ({f_label}) — OVR {offered['ovr']}\n\n"
-                f"Pick one of your *{offered['rarity'].title()}* cards to trade back:"
-            ),
+        await query.edit_message_text(
+            f"♻️ *Trade Request*\n"
+            f"━━━━━━━━━━━━━━━━━━\n"
+            f"*{esc(query.from_user.first_name)}* is offering:\n"
+            f"{r_emoji} *{esc(offered['name'])}* ({f_label}) — OVR {offered['ovr']}\n"
+            f"━━━━━━━━━━━━━━━━━━\n"
+            f"Pick one of your *{offered['rarity'].title()}* cards to trade back:",
             reply_markup=InlineKeyboardMarkup(pick_buttons),
             parse_mode="Markdown"
         )
 
 async def cb_tr_pick(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Target picked their card. Show summary to initiator for confirmation."""
+    """Target picked their card. Edit message to show summary+confirm (single-msg flow)."""
     query = update.callback_query
     _, target_id, trade_id, player_id, fmt = query.data.split("|")
     if str(query.from_user.id) != target_id:
@@ -742,23 +734,21 @@ async def cb_tr_pick(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if lock.locked():
         await query.answer("⏳ Please wait a moment...", show_alert=False); return
     async with lock:
-        await query.answer()
-        from database import get_trade, update_trade, get_user_cards
+        from database import get_trade, update_trade, get_user_cards, get_fav_card
         trade = await get_trade(trade_id)
         if not trade or trade["status"] != "awaiting_target_pick":
-            await query.edit_message_text("❌ This trade has expired or been cancelled."); return
+            await query.answer("❌ This trade has expired or been cancelled.", show_alert=True); return
         # Check expiry
         if time.time() - trade["created_at"] > 300:
             from database import cancel_trade
             await cancel_trade(trade_id)
-            await query.edit_message_text("❌ Trade expired (5 min timeout)."); return
+            await query.answer("❌ Trade expired (5 min timeout).", show_alert=True); return
         # Verify target still has the card
         target_cards = await get_user_cards(int(target_id))
         their_card = next((c for c in target_cards if c["player_id"] == player_id and c["format"] == fmt), None)
         if not their_card:
-            await query.edit_message_text("❌ You no longer have that card."); return
-        # Fav protection for target
-        from database import get_fav_card
+            await query.answer("❌ You no longer have that card.", show_alert=True); return
+        # Fav protection — check BEFORE answering silently
         fav = await get_fav_card(int(target_id))
         is_fav = fav and fav.get("player_id") == player_id and fav.get("format") == fmt
         if is_fav and their_card["quantity"] <= 1:
@@ -767,6 +757,7 @@ async def cb_tr_pick(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 show_alert=True
             )
             return
+        await query.answer()  # silent ack after all popup paths handled
         # Update trade with target's pick
         await update_trade(trade_id, {
             "requested_player_id": player_id,
@@ -774,28 +765,21 @@ async def cb_tr_pick(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "requested_name":      their_card["name"],
             "status":              "awaiting_confirmation"
         })
-        # Close target's message
         r_off = RARITY_EMOJI.get(trade["offered_rarity"], "⚪")
         r_req = RARITY_EMOJI.get(their_card["rarity"], "⚪")
         off_fl = FORMAT_LABEL.get(trade["offered_format"], trade["offered_format"])
         req_fl = FORMAT_LABEL.get(fmt, fmt)
-        await query.edit_message_text(
-            f"✅ Offer sent! Waiting for {esc(str(trade['initiator_id']))} to confirm..."
-        )
-        # Send confirmation to initiator
+        # ── SINGLE MESSAGE: edit M1 to show trade summary + Accept/Decline for initiator ──
         confirm_buttons = InlineKeyboardMarkup([[
             InlineKeyboardButton("✅ Accept",  callback_data=f"tr_confirm|{trade['initiator_id']}|{trade_id}"),
             InlineKeyboardButton("❌ Decline", callback_data=f"tr_decline|{trade['initiator_id']}|{trade_id}"),
         ]])
-        await context.bot.send_message(
-            chat_id=trade["chat_id"],
-            text=(
-                f"♻️ *Trade Summary*\n━━━━━━━━━━━━━━━━━━\n"
-                f"You give: {r_off} *{esc(trade['offered_name'])}* ({off_fl})\n"
-                f"You get:  {r_req} *{esc(their_card['name'])}* ({req_fl})\n"
-                f"━━━━━━━━━━━━━━━━━━\n"
-                f"Do you accept?"
-            ),
+        await query.edit_message_text(
+            f"♻️ *Trade Summary*\n━━━━━━━━━━━━━━━━━━\n"
+            f"You give: {r_off} *{esc(trade['offered_name'])}* ({off_fl})\n"
+            f"You get:  {r_req} *{esc(their_card['name'])}* ({req_fl})\n"
+            f"━━━━━━━━━━━━━━━━━━\n"
+            f"Do you accept?",
             reply_markup=confirm_buttons,
             parse_mode="Markdown"
         )
@@ -874,7 +858,7 @@ async def cb_tr_decline(update: Update, context: ContextTypes.DEFAULT_TYPE):
     _, user_id_str, trade_id = query.data.split("|")
     if str(query.from_user.id) != user_id_str:
         await query.answer("⛔ Not your trade.", show_alert=True); return
-    # DB-level cooldown — stops repeated decline messages
+    # DB-level cooldown
     from database import try_acquire_action_cooldown
     if not await try_acquire_action_cooldown(int(user_id_str), "trade_decline", cooldown_seconds=5):
         await query.answer("⏳ Please wait a moment...", show_alert=False); return
@@ -883,19 +867,10 @@ async def cb_tr_decline(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.answer("⏳ Please wait a moment...", show_alert=False); return
     async with lock:
         await query.answer()
-        from database import cancel_trade, get_trade
-        trade = await get_trade(trade_id)
+        from database import cancel_trade
         await cancel_trade(trade_id)
-        await query.edit_message_text("❌ *Trade declined.*", parse_mode="Markdown")
-        # Notify other party if applicable
-        if trade and trade["status"] == "awaiting_confirmation":
-            try:
-                await context.bot.send_message(
-                    chat_id=trade["chat_id"],
-                    text=f"❌ Trade was declined."
-                )
-            except Exception:
-                pass
+        # Single message flow — just edit M1 to show declined result (no second message needed)
+        await query.edit_message_text("❌ *Trade Declined.*", parse_mode="Markdown")
 
 async def cb_tr_cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
