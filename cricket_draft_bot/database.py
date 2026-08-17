@@ -804,7 +804,7 @@ async def get_daily_quests(user_id: int) -> dict:
     now = _time.time()
 
     default = {
-        "reset_at":       now + QUEST_RESET_SECONDS,
+        "reset_at":       _next_midnight_utc(),
         "cards_obtained": 0,
         "cards_traded":   0,
         "cards_sold":     0,
@@ -823,7 +823,7 @@ async def get_daily_quests(user_id: int) -> dict:
     # Check if reset needed
     if now >= quests.get("reset_at", 0):
         new_quests = {
-            "reset_at":       now + QUEST_RESET_SECONDS,
+            "reset_at":       _next_midnight_utc(),
             "cards_obtained": 0,
             "cards_traded":   0,
             "cards_sold":     0,
