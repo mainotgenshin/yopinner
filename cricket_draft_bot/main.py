@@ -188,14 +188,21 @@ async def post_init(application):
     await init_db()
     # Startup recovery: clean up stuck matches and restart timers
     await _startup_recovery(application.bot)
-    # Periodic cleanup: expire abandoned trades every 2 minutes
-    async def _cleanup_expired_trades(context):
+    # Periodic cleanup: expire abandoned trades every 2 minutes (plain asyncio, no APScheduler needed)
+    async def _trade_cleanup_loop():
+        import asyncio as _aio
         from database import expire_old_trades
-        count = await expire_old_trades()
-        if count:
-            import logging
-            logging.getLogger(__name__).info(f"Expired {count} stale trade(s).")
-    application.job_queue.run_repeating(_cleanup_expired_trades, interval=120, first=60)
+        _log = logging.getLogger(__name__)
+        await _aio.sleep(60)          # first run after 60s
+        while True:
+            try:
+                count = await expire_old_trades()
+                if count:
+                    _log.info(f"Expired {count} stale trade(s).")
+            except Exception as e:
+                _log.warning(f"Trade cleanup error: {e}")
+            await _aio.sleep(120)     # then every 2 minutes
+    asyncio.create_task(_trade_cleanup_loop())
 
 async def _startup_recovery(bot):
     """On every bot start, scan for stuck matches and:
