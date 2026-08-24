@@ -54,6 +54,15 @@ async def _get_raw_inv(user_id: int) -> dict:
 # ─────────────────────────────────────────────────────────────────────────────
 async def handle_pack(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
+    if update.effective_chat.type != "private":
+        kb = InlineKeyboardMarkup([[InlineKeyboardButton(
+            "📬 Open in DM", url=f"https://t.me/{context.bot.username}"
+        )]])
+        await update.effective_message.reply_text(
+            "📦 Please use /pack in my DM to keep the group clean!",
+            reply_markup=kb
+        )
+        return
     keyboard = InlineKeyboardMarkup([[
         InlineKeyboardButton("🏏 Cricket", callback_data=f"pack_sport|{user.id}|cricket"),
         InlineKeyboardButton("⚽ FIFA",    callback_data=f"pack_sport|{user.id}|football"),
@@ -162,6 +171,15 @@ async def cb_pack_back(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # ─────────────────────────────────────────────────────────────────────────────
 async def handle_inventory(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
+    if update.effective_chat.type != "private":
+        kb = InlineKeyboardMarkup([[InlineKeyboardButton(
+            "📬 Open in DM", url=f"https://t.me/{context.bot.username}"
+        )]])
+        await update.effective_message.reply_text(
+            "📦 Please use /inventory in my DM to keep the group clean!",
+            reply_markup=kb
+        )
+        return
     from database import get_card_coins
     balance = await get_card_coins(user.id)
     raw_inv = await _get_raw_inv(user.id)
@@ -385,26 +403,17 @@ async def cb_vc_fmt(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await _show_card_detail(query, int(owner_id), card, edit=True)
 
 async def _show_card_detail(msg_or_query, owner_id: int, card: dict, edit: bool):
-    from database import get_fav_card
-    fav = await get_fav_card(owner_id)
+    from database import validate_fav_card
+    # validate_fav_card auto-clears stale fav if card was traded/sold
+    fav = await validate_fav_card(owner_id)
     is_fav = fav and fav.get("player_id") == card["player_id"] and fav.get("format") == card["format"]
     r_emoji = RARITY_EMOJI.get(card["rarity"], "⚪")
     f_label = FORMAT_LABEL.get(card["format"], card["format"].upper())
-    text = (
-        f"🃏 *{esc(card['name'])}*\n"
-        f"━━━━━━━━━━━━━━━━━━\n"
-        f"📋 Format: *{f_label}*\n"
-        f"{r_emoji} Rarity: *{card['rarity'].title()}*\n"
-        f"⭐ OVR: *{card['ovr']}*\n"
-        f"📦 Owned: *{card['quantity']}×*\n"
-        f"━━━━━━━━━━━━━━━━━━"
-    )
     SELL_VALUES = {"common": 25, "rare": 75, "epic": 200, "legend": 600}
     sell_val = SELL_VALUES.get(card["rarity"], 25)
     is_last_copy = card["quantity"] <= 1
     fav_label = "💔 Remove Fav" if is_fav else "❤️ Set as Fav"
     fav_cb = f"vc_unfav|{owner_id}|{card['player_id']}|{card['format']}" if is_fav else f"vc_fav|{owner_id}|{card['player_id']}|{card['format']}"
-    # Show fav warning in card text if this is their only copy
     fav_warning = ""
     if is_fav and is_last_copy:
         fav_warning = "\n\n⭐ *Fav Card* — Remove fav to sell or trade this card."
@@ -422,17 +431,25 @@ async def _show_card_detail(msg_or_query, owner_id: int, card: dict, edit: bool)
         [InlineKeyboardButton(fav_label, callback_data=fav_cb)],
         [InlineKeyboardButton(f"💰 Sell for {sell_val}🪙", callback_data=f"vc_sell|{owner_id}|{card['player_id']}|{card['format']}|{sell_val}")],
     ])
-    # Show with image if available
     image = card.get("image")
     if edit:
-        # Editing existing message — must match original message type
         is_photo = bool(getattr(msg_or_query, 'message', None) and msg_or_query.message.photo)
         if is_photo:
             await msg_or_query.edit_message_caption(caption=text, reply_markup=kb, parse_mode="Markdown")
+        elif image:
+            # Original message was text (format picker) but card has an image —
+            # convert to photo via edit_message_media so the image actually appears
+            from telegram import InputMediaPhoto
+            try:
+                await msg_or_query.edit_message_media(
+                    media=InputMediaPhoto(media=image, caption=text, parse_mode="Markdown"),
+                    reply_markup=kb
+                )
+            except Exception:
+                await msg_or_query.edit_message_text(text, reply_markup=kb, parse_mode="Markdown")
         else:
             await msg_or_query.edit_message_text(text, reply_markup=kb, parse_mode="Markdown")
     else:
-        # New reply
         if image:
             try:
                 await msg_or_query.reply_photo(photo=image, caption=text, reply_markup=kb, parse_mode="Markdown")
@@ -453,8 +470,9 @@ async def cb_vc_fav(update: Update, context: ContextTypes.DEFAULT_TYPE):
         from database import set_fav_card, get_user_cards
         cards = await get_user_cards(int(owner_id))
         card = next((c for c in cards if c["player_id"] == player_id and c["format"] == fmt), None)
-        if not card:
-            await query.answer("❌ Card not in your collection.", show_alert=True); return
+        if not card or card["quantity"] < 1:
+            # Card was traded/sold after this menu was opened
+            await query.answer("❌ You no longer own this card.", show_alert=True); return
         await set_fav_card(int(owner_id), player_id, fmt)
         await query.answer(f"❤️ {card['name']} ({FORMAT_LABEL.get(fmt, fmt)}) set as favorite!", show_alert=True)
         await _show_card_detail(query, int(owner_id), card, edit=True)
@@ -538,7 +556,11 @@ async def cb_vc_sell_ok(update: Update, context: ContextTypes.DEFAULT_TYPE):
         cards = await get_user_cards(user_id)
         card = next((c for c in cards if c["player_id"] == player_id and c["format"] == fmt), None)
         if not card or card["quantity"] < 1:
-            await query.edit_message_text("❌ Card not available to sell."); return
+            err_text = "❌ Card not available to sell."
+            if query.message and query.message.photo:
+                await query.edit_message_caption(caption=err_text); return
+            else:
+                await query.edit_message_text(err_text); return
         fav = await get_fav_card(user_id)
         is_fav = fav and fav.get("player_id") == player_id and fav.get("format") == fmt
         if is_fav and card["quantity"] <= 1:
@@ -698,27 +720,75 @@ async def cb_tr_offer(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await create_trade(trade_data)
         f_label = FORMAT_LABEL.get(fmt, fmt.upper())
         r_emoji = RARITY_EMOJI.get(offered["rarity"], "⚪")
-        # ── SINGLE MESSAGE: edit M1 to show target's picker (no new message) ───────────────
+        # ── Show target's paginated picker (page 0) ──────────────────────────
         rarity_order = {"legend": 0, "epic": 1, "rare": 2, "common": 3}
         matching_rarity.sort(key=lambda c: (rarity_order.get(c["rarity"], 9), c["name"]))
-        pick_buttons = [
-            [InlineKeyboardButton(
-                f"{RARITY_EMOJI.get(c['rarity'],'')}{c['name']} ({FORMAT_LABEL.get(c['format'],c['format'])})",
-                callback_data=f"tr_pick|{target_id}|{trade_id}|{c['player_id']}|{c['format']}"
-            )]
-            for c in matching_rarity[:8]
-        ]
-        pick_buttons.append([InlineKeyboardButton("❌ Decline", callback_data=f"tr_decline|{target_id}|{trade_id}")])
-        await query.edit_message_text(
+        header = (
             f"♻️ *Trade Request*\n"
             f"━━━━━━━━━━━━━━━━━━\n"
             f"*{esc(query.from_user.first_name)}* is offering:\n"
             f"{r_emoji} *{esc(offered['name'])}* ({f_label}) — OVR {offered['ovr']}\n"
             f"━━━━━━━━━━━━━━━━━━\n"
-            f"Pick one of your *{offered['rarity'].title()}* cards to trade back:",
-            reply_markup=InlineKeyboardMarkup(pick_buttons),
-            parse_mode="Markdown"
+            f"Pick one of your *{offered['rarity'].title()}* cards to trade back:"
         )
+        await _show_target_picker(query, trade_id, target_id, matching_rarity, header, page=0)
+
+async def _show_target_picker(query, trade_id: str, target_id: str, cards: list, header: str, page: int):
+    """Render the target's card picker with pagination."""
+    TPAGE_SIZE = 8
+    total_pages = max(1, (len(cards) + TPAGE_SIZE - 1) // TPAGE_SIZE)
+    page_cards = cards[page * TPAGE_SIZE:(page + 1) * TPAGE_SIZE]
+    pick_buttons = [
+        [InlineKeyboardButton(
+            f"{RARITY_EMOJI.get(c['rarity'],'')}{c['name']} ({FORMAT_LABEL.get(c['format'],c['format'])})",
+            callback_data=f"tr_pick|{target_id}|{trade_id}|{c['player_id']}|{c['format']}"
+        )]
+        for c in page_cards
+    ]
+    nav = []
+    if page > 0:
+        nav.append(InlineKeyboardButton("◀️", callback_data=f"tr_tpage|{target_id}|{trade_id}|{page-1}"))
+    if page < total_pages - 1:
+        nav.append(InlineKeyboardButton("▶️", callback_data=f"tr_tpage|{target_id}|{trade_id}|{page+1}"))
+    if nav:
+        pick_buttons.append(nav)
+    pick_buttons.append([InlineKeyboardButton("❌ Decline", callback_data=f"tr_decline|{target_id}|{trade_id}")])
+    page_note = f" (Page {page+1}/{total_pages})" if total_pages > 1 else ""
+    await query.edit_message_text(
+        header + page_note,
+        reply_markup=InlineKeyboardMarkup(pick_buttons),
+        parse_mode="Markdown"
+    )
+
+async def cb_tr_tpage(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Target-side pagination for the trade card picker."""
+    query = update.callback_query
+    _, target_id, trade_id, page_str = query.data.split("|")
+    if str(query.from_user.id) != target_id:
+        await query.answer("⛔ Not your trade.", show_alert=True); return
+    await query.answer()
+    from database import get_trade, get_user_cards
+    trade = await get_trade(trade_id)
+    if not trade or trade["status"] != "awaiting_target_pick":
+        await query.answer("❌ Trade expired or cancelled.", show_alert=True); return
+    if time.time() - trade["created_at"] > 300:
+        from database import cancel_trade
+        await cancel_trade(trade_id)
+        await query.answer("❌ Trade expired (5 min timeout).", show_alert=True); return
+    target_cards = await get_user_cards(int(target_id))
+    matching_rarity = [c for c in target_cards if c["rarity"] == trade["offered_rarity"]]
+    rarity_order = {"legend": 0, "epic": 1, "rare": 2, "common": 3}
+    matching_rarity.sort(key=lambda c: (rarity_order.get(c["rarity"], 9), c["name"]))
+    r_emoji = RARITY_EMOJI.get(trade["offered_rarity"], "⚪")
+    f_label = FORMAT_LABEL.get(trade.get("offered_format", ""), trade.get("offered_format", ""))
+    header = (
+        f"♻️ *Trade Request*\n"
+        f"━━━━━━━━━━━━━━━━━━\n"
+        f"Offered: {r_emoji} *{esc(trade['offered_name'])}* ({f_label})\n"
+        f"━━━━━━━━━━━━━━━━━━\n"
+        f"Pick one of your *{trade['offered_rarity'].title()}* cards to trade back:"
+    )
+    await _show_target_picker(query, trade_id, target_id, matching_rarity, header, page=int(page_str))
 
 async def cb_tr_pick(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Target picked their card. Edit message to show summary+confirm (single-msg flow)."""
@@ -889,6 +959,15 @@ async def cb_tr_cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # ─────────────────────────────────────────────────────────────────────────────
 async def handle_quest(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
+    if update.effective_chat.type != "private":
+        kb = InlineKeyboardMarkup([[InlineKeyboardButton(
+            "📬 Open in DM", url=f"https://t.me/{context.bot.username}"
+        )]])
+        await update.effective_message.reply_text(
+            "📋 Please use /quest in my DM to keep the group clean!",
+            reply_markup=kb
+        )
+        return
     from database import get_daily_quests, QUEST_DEFINITIONS
     quests = await get_daily_quests(user.id)
     reset_at = quests.get("reset_at", 0)
@@ -944,3 +1023,106 @@ async def cb_quest_claim(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"Come back tomorrow for new quests!",
             parse_mode="Markdown"
         )
+
+# ─────────────────────────────────────────────────────────────────────────────
+# /ggive — Gift coins to another user
+# Usage: reply to target user's message, then /ggive <amount>
+# ─────────────────────────────────────────────────────────────────────────────
+async def handle_ggive(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    msg = update.effective_message
+    sender = update.effective_user
+    if not msg.reply_to_message:
+        await msg.reply_text("💸 Reply to the target user's message and use:\n/ggive <amount>")
+        return
+    target = msg.reply_to_message.from_user
+    if target.is_bot or target.id == sender.id:
+        await msg.reply_text("❌ You can't send coins to a bot or yourself.")
+        return
+    args = context.args
+    if not args or not args[0].isdigit():
+        await msg.reply_text("💸 Usage: /ggive <amount>\nExample: /ggive 100")
+        return
+    amount = int(args[0])
+    if amount < 1:
+        await msg.reply_text("❌ Amount must be at least 1🪙.")
+        return
+    lock = _get_lock(sender.id)
+    if lock.locked():
+        await msg.reply_text("⏳ Please wait a moment before transferring again.")
+        return
+    async with lock:
+        from database import get_card_coins, deduct_card_coins, add_card_coins
+        sender_balance = await get_card_coins(sender.id)
+        if sender_balance < amount:
+            await msg.reply_text(
+                f"❌ Insufficient balance.\n"
+                f"You have *{sender_balance}🪙*, trying to send *{amount}🪙*.",
+                parse_mode="Markdown"
+            )
+            return
+        success, new_sender_bal = await deduct_card_coins(sender.id, amount)
+        if not success:
+            await msg.reply_text("❌ Transfer failed — insufficient balance.", parse_mode="Markdown")
+            return
+        await add_card_coins(target.id, amount)
+        await msg.reply_text(
+            f"✅ Sent *{amount}🪙* to {esc(target.first_name)}!\n"
+            f"Your balance: *{new_sender_bal}🪙*",
+            parse_mode="Markdown"
+        )
+
+# ─────────────────────────────────────────────────────────────────────────────
+# /h2h — Head-to-head stats (PM only, during an active match)
+# ─────────────────────────────────────────────────────────────────────────────
+async def handle_h2h(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user = update.effective_user
+    if update.effective_chat.type != "private":
+        await update.effective_message.reply_text("⚔️ Use /h2h in my DM during an active match!")
+        return
+    # Find the user's active match to determine opponent
+    from database import get_db
+    db = get_db()
+    # Search for an active DRAFTING or READY_CHECK match involving this user
+    match_doc = await db.matches.find_one({
+        "$or": [
+            {"state_data.team_a.owner_id": user.id, "state_data.state": {"$in": ["DRAFTING", "READY_CHECK"]}},
+            {"state_data.team_b.owner_id": user.id, "state_data.state": {"$in": ["DRAFTING", "READY_CHECK"]}},
+        ]
+    })
+    if not match_doc:
+        await update.effective_message.reply_text(
+            "❌ No active match found.\n\n/challenge someone to see H2H stats!"
+        )
+        return
+    state = match_doc.get("state_data", {})
+    team_a = state.get("team_a", {})
+    team_b = state.get("team_b", {})
+    if team_a.get("owner_id") == user.id:
+        my_name  = team_a["owner_name"]
+        opp_id   = team_b["owner_id"]
+        opp_name = team_b["owner_name"]
+    else:
+        my_name  = team_b["owner_name"]
+        opp_id   = team_a["owner_id"]
+        opp_name = team_a["owner_name"]
+    from database import get_h2h_stats
+    stats = await get_h2h_stats(user.id, opp_id)
+    total   = stats["total"]
+    my_wins = stats["a_wins"]
+    op_wins = stats["b_wins"]
+    draws   = stats["draws"]
+    my_pct  = round(my_wins / total * 100) if total else 0
+    op_pct  = round(op_wins / total * 100) if total else 0
+    await update.effective_message.reply_text(
+        f"⚔️ *HEAD-TO-HEAD*\n"
+        f"━━━━━━━━━━━━━━━━━━\n"
+        f"🔵 {esc(my_name)}  vs  🔴 {esc(opp_name)}\n"
+        f"━━━━━━━━━━━━━━━━━━\n"
+        f"Matches: *{total}*\n"
+        f"🔵 {esc(my_name)} wins: *{my_wins}* ({my_pct}%)\n"
+        f"🔴 {esc(opp_name)} wins: *{op_wins}* ({op_pct}%)\n"
+        f"Draws: *{draws}*\n"
+        f"━━━━━━━━━━━━━━━━━━\n"
+        + (f"_H2H tracked from latest bot update onwards_" if total == 0 else ""),
+        parse_mode="Markdown"
+    )
