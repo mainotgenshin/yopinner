@@ -91,6 +91,9 @@ async def init_db():
         await db.players.create_index([("cards.test.rarity", ASCENDING)])
         await db.players.create_index([("cards.wwe.rarity", ASCENDING)])
         await db.players.create_index([("cards.fifa.rarity", ASCENDING)])
+        # H2H result lookups by player pair
+        await db.match_results.create_index([("player_a_id", ASCENDING), ("player_b_id", ASCENDING)])
+        await db.match_results.create_index([("played_at", ASCENDING)])
 
         logger.info("Async MongoDB Indexes Verified.")
     except Exception as e:
@@ -654,26 +657,30 @@ async def get_user_cards(user_id: int, sport_filter: str = None) -> list:
     Returns list of card dicts with player info attached.
     Each entry: {user_id, player_id, format, quantity, name, rarity, ovr, image}
     sport_filter: 'cricket' | 'football' | 'wwe' | None (all)
+
+    Uses a single batch $in query for all players instead of N individual
+    get_player() calls — dramatically reduces DB round-trips for large collections.
     """
     db = get_db()
-    # Get owned cards
-    cards_cursor = db.user_cards.find({"user_id": user_id})
-    cards = [c async for c in cards_cursor]
+    cards = await db.user_cards.find({"user_id": user_id}).to_list(None)
     if not cards:
         return []
 
-    # Enrich with player data
+    # Batch-fetch all referenced players in ONE query
+    player_ids = list({c["player_id"] for c in cards})
+    player_docs = await db.players.find({"player_id": {"$in": player_ids}}).to_list(None)
+    players_by_id = {p["player_id"]: p for p in player_docs}
+
     result = []
     for card in cards:
         pid = card["player_id"]
         fmt = card["format"]
-        p = await get_player(pid)
+        p = players_by_id.get(pid)
         if not p:
             continue
         card_data = p.get("cards", {}).get(fmt, {})
         if not card_data:
             continue
-        # Sport filter
         p_sport = p.get("sport", "cricket")
         if sport_filter == "cricket" and p_sport in ("wwe", "football"):
             continue
@@ -681,7 +688,6 @@ async def get_user_cards(user_id: int, sport_filter: str = None) -> list:
             continue
         if sport_filter == "wwe" and p_sport != "wwe":
             continue
-        # Build image field
         image = _get_card_image(p, fmt)
         result.append({
             "user_id":   user_id,
@@ -1110,3 +1116,68 @@ async def try_acquire_action_cooldown(user_id: int, action: str, cooldown_second
     )
     # find_one_and_update returns the document if matched, None if no match
     return result is not None
+
+# ═══════════════════════════════════════════════════════════════════════════
+# FAV CARD VALIDATION
+# ═══════════════════════════════════════════════════════════════════════════
+
+async def validate_fav_card(user_id: int) -> Optional[dict]:
+    """
+    Returns the fav card dict only if the user still owns at least 1 copy.
+    If the card was traded/sold, auto-clears the stale fav and returns None.
+    """
+    fav = await get_fav_card(user_id)
+    if not fav:
+        return None
+    db = get_db()
+    owned = await db.user_cards.find_one(
+        {"user_id": user_id, "player_id": fav["player_id"],
+         "format": fav["format"], "quantity": {"$gt": 0}}
+    )
+    if not owned:
+        await clear_fav_card(user_id)
+        return None
+    return fav
+
+# ═══════════════════════════════════════════════════════════════════════════
+# HEAD-TO-HEAD (H2H) RECORDS
+# ═══════════════════════════════════════════════════════════════════════════
+
+async def record_match_result(
+    winner_id: int, winner_name: str,
+    loser_id: int, loser_name: str,
+    is_draw: bool, mode: str, chat_id: int
+) -> None:
+    """Store a completed match result for H2H lookups. Called from simulation.py."""
+    db = get_db()
+    import time as _t
+    await db.match_results.insert_one({
+        "winner_id":   winner_id if not is_draw else None,
+        "loser_id":    loser_id  if not is_draw else None,
+        "player_a_id": winner_id,
+        "player_a_name": winner_name,
+        "player_b_id": loser_id,
+        "player_b_name": loser_name,
+        "is_draw":     is_draw,
+        "mode":        mode,
+        "chat_id":     chat_id,
+        "played_at":   _t.time(),
+    })
+
+async def get_h2h_stats(user_a_id: int, user_b_id: int) -> dict:
+    """
+    Returns combined H2H stats between two users across all modes.
+    {total, a_wins, b_wins, draws}
+    """
+    db = get_db()
+    docs = await db.match_results.find({
+        "$or": [
+            {"player_a_id": user_a_id, "player_b_id": user_b_id},
+            {"player_a_id": user_b_id, "player_b_id": user_a_id},
+        ]
+    }).to_list(None)
+
+    a_wins = sum(1 for d in docs if d.get("winner_id") == user_a_id)
+    b_wins = sum(1 for d in docs if d.get("winner_id") == user_b_id)
+    draws  = sum(1 for d in docs if d.get("is_draw"))
+    return {"total": len(docs), "a_wins": a_wins, "b_wins": b_wins, "draws": draws}
