@@ -203,6 +203,10 @@ async def post_init(application):
                 _log.warning(f"Trade cleanup error: {e}")
             await _aio.sleep(120)     # then every 2 minutes
     asyncio.create_task(_trade_cleanup_loop())
+    # Periodic rate-gate state cleanup (prevents unbounded memory growth)
+    from utils.rate_limit import cleanup_chat_rate_state
+    asyncio.create_task(cleanup_chat_rate_state())
+
 
 async def _startup_recovery(bot):
     """On every bot start, scan for stuck matches and:
@@ -550,16 +554,16 @@ if __name__ == '__main__':
         .token(BOT_TOKEN)
         .rate_limiter(AIORateLimiter(
             max_retries=3,
-            overall_max_rate=28,     # Telegram allows ~30/sec globally; stay safely under
+            overall_max_rate=25,     # Global: 25/sec safely under Telegram's 30/sec hard limit
             overall_time_period=1,
-            group_max_rate=18,       # Telegram allows ~20/min per group; stay safely under
+            group_max_rate=14,       # Per-chat: 14/min (debouncer gate handles the real enforcement)
             group_time_period=60,
         ))
-
         .job_queue(None)
+        .connect_timeout(10)         # Fail fast on network issues, don't hang forever
         .read_timeout(30)
         .write_timeout(30)
-        .connection_pool_size(1024)
+        .connection_pool_size(256)   # 1024 is excessive for a single-process bot; 256 is plenty
         .post_init(post_init)
         .build()
     )
@@ -687,11 +691,13 @@ if __name__ == '__main__':
     from handlers.cards import (
         handle_pack, handle_inventory, handle_mycards, handle_viewcard,
         handle_trade_card, handle_quest,
+        handle_ggive, handle_h2h,
         cb_pack_sport, cb_pack_tier, cb_pack_confirm, cb_pack_back,
         cb_inv_packs, cb_inv_open,
         cb_mc_page,
         cb_vc_fmt, cb_vc_fav, cb_vc_unfav, cb_vc_sell, cb_vc_sell_ok,
         cb_tr_page, cb_tr_offer, cb_tr_pick, cb_tr_confirm, cb_tr_decline, cb_tr_cancel,
+        cb_tr_tpage,
         cb_quest_claim,
     )
     # Commands
@@ -701,6 +707,8 @@ if __name__ == '__main__':
     application.add_handler(CommandHandler('viewcard',   handle_viewcard))
     application.add_handler(CommandHandler('trade_card', handle_trade_card))
     application.add_handler(CommandHandler('quest',      handle_quest))
+    application.add_handler(CommandHandler('ggive',      handle_ggive))
+    application.add_handler(CommandHandler('h2h',        handle_h2h))
 
     # Standings / Leaderboard
     from handlers.standings import handle_standings, handle_standings_callback
@@ -734,6 +742,7 @@ if __name__ == '__main__':
     application.add_handler(CallbackQueryHandler(cb_tr_confirm,   pattern=r"^tr_confirm\|"))
     application.add_handler(CallbackQueryHandler(cb_tr_decline,   pattern=r"^tr_decline\|"))
     application.add_handler(CallbackQueryHandler(cb_tr_cancel,    pattern=r"^tr_cancel\|"))
+    application.add_handler(CallbackQueryHandler(cb_tr_tpage,     pattern=r"^tr_tpage\|"))
     application.add_handler(CallbackQueryHandler(cb_quest_claim,  pattern=r"^quest_claim\|"))
 
     # Catch-all callback (must be LAST)
