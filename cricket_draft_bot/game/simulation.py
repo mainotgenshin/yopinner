@@ -207,7 +207,7 @@ async def run_simulation(match: Match) -> str:
 
     # PERSIST RESULTS
     try:
-        from database import update_user_stats
+        from database import update_user_stats, record_match_result
 
         async def _award_card_coins(user_id: int, result: str) -> None:
             """Silently award card coins after a match. Never raises."""
@@ -218,7 +218,13 @@ async def run_simulation(match: Match) -> str:
             except Exception as _ce:
                 logger.warning(f"Card coin award failed for {user_id}: {_ce}")
 
-        # Write stats + award card coins for both players concurrently
+        is_draw = (res_a == "D")
+        winner_id   = match.team_a.owner_id   if res_a == "W" else match.team_b.owner_id
+        winner_name = match.team_a.owner_name if res_a == "W" else match.team_b.owner_name
+        loser_id    = match.team_b.owner_id   if res_a == "W" else match.team_a.owner_id
+        loser_name  = match.team_b.owner_name if res_a == "W" else match.team_a.owner_name
+
+        # Write stats + award card coins + record H2H result — all concurrently
         await asyncio.gather(
             update_user_stats(match.team_a.owner_id, match.team_a.owner_name, res_a,
                               mode=match.mode, chat_id=match.chat_id),
@@ -226,6 +232,8 @@ async def run_simulation(match: Match) -> str:
                               mode=match.mode, chat_id=match.chat_id),
             _award_card_coins(match.team_a.owner_id, res_a),
             _award_card_coins(match.team_b.owner_id, res_b),
+            record_match_result(winner_id, winner_name, loser_id, loser_name,
+                                is_draw, match.mode, match.chat_id),
         )
 
     except Exception as e:
