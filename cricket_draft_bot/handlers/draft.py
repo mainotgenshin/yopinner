@@ -577,15 +577,20 @@ async def handle_assign(update: Update, context: ContextTypes.DEFAULT_TYPE, matc
 
     # Switch Turn — save=False avoids double MongoDB write; update_draft_message persists state
     await switch_turn(match, save=False)
-    
+
+    # ── CRITICAL: reset AFK BEFORE the Telegram API call ──────────────────
+    # If Telegram rate-limits us for 10-18s, the outgoing player's AFK task
+    # would fire, load the old turn from DB (not saved yet), and forfeit them
+    # unjustly. Resetting here cancels the old task and fire-and-forget saves
+    # the new turn to DB immediately — so any concurrent AFK check sees the
+    # updated turn and exits cleanly.
+    _reset_afk_timer(match, context.bot, match.chat_id)
+
     # Update Board for Next Turn (Restore Draw Button and Banner)
     board_text = format_draft_board(match)
     keyboard = [[InlineKeyboardButton("🎲 Draw Player", callback_data=f"draw_{match.match_id}")]]
-    
     banner = await get_banner_for_match(match)
     await update_draft_message(update, context, match, board_text, keyboard, media=banner)
-    # Reset AFK timer AFTER UI is queued — ensures next player sees Draw button before clock starts
-    _reset_afk_timer(match, context.bot, match.chat_id)
 
 
 async def handle_redraw(update: Update, context: ContextTypes.DEFAULT_TYPE, match: Match):
@@ -603,15 +608,15 @@ async def handle_redraw(update: Update, context: ContextTypes.DEFAULT_TYPE, matc
         
         # Switch Turn
         await switch_turn(match)
-        
+
+        # Reset AFK before slow API call (same race condition fix as handle_assign)
+        _reset_afk_timer(match, context.bot, match.chat_id)
+
         # Update Board (Restore Banner)
         board_text = format_draft_board(match)
         keyboard = [[InlineKeyboardButton("🎲 Draw Player", callback_data=f"draw_{match.match_id}")]]
-        
         banner = await get_banner_for_match(match)
         await update_draft_message(update, context, match, f"{board_text}\n\n⏩ {esc(current_team.owner_name)} Skipped! Turn Consumed.", keyboard, media=banner)
-        # Reset AFK timer AFTER UI is queued — ensures next player sees Draw button before clock starts
-        _reset_afk_timer(match, context.bot, match.chat_id)
         
     else:
         try:
@@ -754,17 +759,15 @@ async def handle_replace_exec(update: Update, context: ContextTypes.DEFAULT_TYPE
     await switch_turn(match, save=False)
     await save_match_state(match)
     
+    # Reset AFK before slow API call (same race condition fix as handle_assign)
+    _reset_afk_timer(match, context.bot, match.chat_id)
+    
     # Update Board
     board_text = format_draft_board(match)
     keyboard = [[InlineKeyboardButton("🎲 Draw Player", callback_data=f"draw_{match.match_id}")]]
     
-
-    
-    
     banner = await get_banner_for_match(match)
     await update_draft_message(update, context, match, f"{board_text}\n\n♻️ {esc(current_team.owner_name)} replaced {esc(old_player.name)} with {esc(new_player.name)}!", keyboard, media=banner)
-    # Reset AFK timer AFTER UI is queued — ensures next player sees Draw button before clock starts
-    _reset_afk_timer(match, context.bot, match.chat_id)
 
 async def handle_replace_cancel(update: Update, context: ContextTypes.DEFAULT_TYPE, match: Match):
     # Just go back to draw view
