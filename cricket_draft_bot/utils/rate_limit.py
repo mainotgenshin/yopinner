@@ -77,7 +77,8 @@ class MessageDebouncer:
     - Only cancel_updates() (called on match end) actually cancels a task.
     """
 
-    def __init__(self, delay: float = 1.5):
+    def __init__(self, delay: float = 0.8):
+
         self.delay      = delay
         self.tasks:      dict = {}
         self.last_state: dict = {}
@@ -119,9 +120,11 @@ class MessageDebouncer:
         if key in self.tasks and not self.tasks[key].done():
             return  # running task will pick up the latest _pending state
 
-        # Adaptive delay: +1s per extra concurrent match in this chat
+        # Adaptive delay: +0.3s per extra concurrent match in this chat
+        # (was +1.0s — the per-chat rate gate is the real safety net, not the debounce delay)
         concurrent      = _count_active_in_chat(self.tasks, match.chat_id)
-        effective_delay = self.delay + max(0, concurrent - 1) * 1.0
+        effective_delay = self.delay + max(0, concurrent - 1) * 0.3
+
 
         self.tasks[key] = asyncio.create_task(
             self._execute_update(key, match, bot, parse_mode, effective_delay)
@@ -161,8 +164,9 @@ class MessageDebouncer:
                     return
                 if key in self._pending:
                     concurrent  = _count_active_in_chat(self.tasks, match.chat_id)
-                    inter_delay = 0.8 + max(0, concurrent - 1) * 0.5
+                    inter_delay = 0.3 + max(0, concurrent - 1) * 0.1
                     await asyncio.sleep(inter_delay)
+
         except asyncio.CancelledError:
             pass
         except Exception as e:
@@ -258,4 +262,5 @@ class MessageDebouncer:
 
 
 # Global singleton used by all draft handlers
-debouncer = MessageDebouncer(delay=1.5)
+debouncer = MessageDebouncer(delay=0.8)
+
