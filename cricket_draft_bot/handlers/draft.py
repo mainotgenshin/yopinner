@@ -25,6 +25,13 @@ CACHED_BANNERS = {}
 # Concurrency Control
 PROCESSING_LOCKS = set()
 
+# Per-user click cooldown — prevents button spam on draft actions.
+# If the same user clicks again within _CLICK_COOLDOWN seconds, they get
+# an instant toast and the action is discarded (zero DB/API cost).
+_USER_CLICK_TIMES: dict = {}  # user_id -> float (asyncio event loop time)
+_CLICK_COOLDOWN = 2.5         # seconds minimum between draft button clicks
+
+
 # ── AFK Forfeit System ──────────────────────────────────────────────────
 AFK_TASKS: dict = {}  # match_id -> asyncio.Task
 AFK_TIMEOUT = 300    # 5 minutes
@@ -152,12 +159,21 @@ def start_forfeit_timer_on_startup(match: Match, bot):
 async def handle_draft_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     data = query.data
-    
+
+    # ── Per-user click cooldown ───────────────────────────────────────────────
+    # Cheapest possible guard: one dict lookup, zero DB/API cost.
+    # Prevents the same user spamming buttons and wasting rate-limit quota.
+    _user_id = query.from_user.id
+    _now = asyncio.get_event_loop().time()
+    if _now - _USER_CLICK_TIMES.get(_user_id, 0) < _CLICK_COOLDOWN:
+        await query.answer("⏳ Please wait before clicking again.", show_alert=False)
+        return
+    _USER_CLICK_TIMES[_user_id] = _now
+    # ─────────────────────────────────────────────────────────────────────────
+
     parts = data.split('_')
     action = parts[0]
-    
 
-    
     # Parsing ID logic — use | as separator between match_id and slot
     # to safely handle slot names with spaces (e.g. "All Rounder", "High Flyer")
     # Backward-compat: old matches before the | fix still send _ separator
@@ -190,16 +206,15 @@ async def handle_draft_callback(update: Update, context: ContextTypes.DEFAULT_TY
     else:
         # draw / redraw
         match_id = "_".join(parts[1:])
-        
 
-    
     # Locking
     if match_id in PROCESSING_LOCKS:
-        logger.warning(f"DEBUG: Locked request ignored for {match_id}")
+        logger.info(f"Locked request ignored for {match_id}")
         await query.answer("⏳ Processing previous action...", show_alert=False)
         return
-        
+
     PROCESSING_LOCKS.add(match_id)
+
 
     async def safe_answer(text, alert=True):
         try:
@@ -210,7 +225,8 @@ async def handle_draft_callback(update: Update, context: ContextTypes.DEFAULT_TY
     try:
         match = await load_match_state(match_id)
         if not match:
-            logger.error(f"DEBUG: Match not found! ID: {match_id}")
+            logger.error(f"Match not found: {match_id}")
+
             await safe_answer("⚠️ Match ended or expired (Admin reset or maintenance).", alert=True)
             return
             
@@ -312,9 +328,8 @@ async def update_draft_message(update: Update, context: ContextTypes.DEFAULT_TYP
                     await _bg_save(m)
             except Exception:
                 pass
-        import asyncio
         asyncio.create_task(_bg_pin())
-        
+
         # Start abandon timeout
         async def _abandon_timeout(bot, chat_id, msg_id, match_id, delay=1800):
             await asyncio.sleep(delay)
@@ -333,6 +348,7 @@ async def update_draft_message(update: Update, context: ContextTypes.DEFAULT_TYP
         asyncio.create_task(_abandon_timeout(context.bot, match.chat_id, msg.message_id, match.match_id))
         await save_match_state(match)
         return
+
 
     # 2. Synchronous Edit
     if synchronous:
@@ -368,9 +384,9 @@ async def handle_draw(update: Update, context: ContextTypes.DEFAULT_TYPE, match:
     if match.pending_player_id:
         p_data = await get_player(match.pending_player_id)
         if p_data:
-            # logger.info(f"DEBUG: Draw Request Idempotency...")
             player = p_data
-    
+
+
     if not player:
         player = await draw_player_for_turn(match)
         
@@ -382,8 +398,8 @@ async def handle_draw(update: Update, context: ContextTypes.DEFAULT_TYPE, match:
         
     match.pending_player_id = player['player_id']
     # Background the DB save — user doesn't need to wait for it.
-    import asyncio as _aio
-    _aio.create_task(save_match_state(match))
+    asyncio.create_task(save_match_state(match))
+
     # NOTE: AFK timer is reset AFTER update_draft_message below,
     # ensuring the player sees the assign buttons before the 10-min clock starts.
     
@@ -519,14 +535,14 @@ async def handle_assign(update: Update, context: ContextTypes.DEFAULT_TYPE, matc
             if not m or m.state != "READY_CHECK":
                 return  # Already simulated or cancelled
             try:
-                import time as _t
                 m.state = "SIMULATING"
                 m.team_a.is_ready = True
                 m.team_b.is_ready = True
                 await _save(m)
                 result_text = await run_simulation(m)  # async, returns str
                 m.state = "FINISHED"
-                m.finished_at = _t.time()
+                m.finished_at = time.time()
+
                 await _save(m)
                 debouncer.cancel_updates(chat_id, m.draft_message_id)
                 msg = f"⏰ *Auto-Ready triggered (5min timeout)*\n\n{result_text}"
