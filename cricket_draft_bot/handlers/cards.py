@@ -399,7 +399,15 @@ async def cb_vc_fmt(update: Update, context: ContextTypes.DEFAULT_TYPE):
     cards = await get_user_cards(int(owner_id))
     card = next((c for c in cards if c["player_id"] == player_id and c["format"] == fmt), None)
     if not card:
-        await query.edit_message_text("❌ Card not found in your collection."); return
+        try:
+            await query.edit_message_caption("❌ Card not found in your collection.")
+        except Exception:
+            try:
+                await query.edit_message_text("❌ Card not found in your collection.")
+            except Exception:
+                pass
+        return
+
     await _show_card_detail(query, int(owner_id), card, edit=True)
 
 async def _show_card_detail(msg_or_query, owner_id: int, card: dict, edit: bool):
