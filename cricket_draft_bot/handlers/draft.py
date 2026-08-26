@@ -31,6 +31,18 @@ PROCESSING_LOCKS = set()
 _USER_CLICK_TIMES: dict = {}  # user_id -> float (asyncio event loop time)
 _CLICK_COOLDOWN = 2.5         # seconds minimum between draft button clicks
 
+# ── Background Unpin Queue (Option 3 Peak Optimization) ───────────────────
+# Finished matches queue their draft boards here instead of calling unpin_chat_message
+# immediately. The background maintenance loop unpins them during idle intervals,
+# preventing unpin requests from stealing rate-limit quota from active matches.
+PENDING_UNPINS: set = set()  # set of (chat_id, message_id) tuples
+
+def queue_unpin(chat_id: int, message_id: int) -> None:
+    """Queue a message to be unpinned silently in the background during idle moments."""
+    if chat_id and message_id:
+        PENDING_UNPINS.add((int(chat_id), int(message_id)))
+
+
 
 # ── AFK Forfeit System ──────────────────────────────────────────────────
 AFK_TASKS: dict = {}  # match_id -> asyncio.Task
@@ -97,17 +109,15 @@ async def _afk_forfeit(match_id: str, expected_turn: int, bot, chat_id: int):
                 await bot.send_message(chat_id=chat_id, text=msg, parse_mode="Markdown")
         except Exception:
             pass
-        # Cleanup pinned board and DB record
-        try:
-            if getattr(match, 'pinned_message_id', None):
-                await bot.unpin_chat_message(chat_id=chat_id, message_id=match.pinned_message_id)
-        except Exception:
-            pass
+        # Queue pinned board for background unpin (zero quota collision)
+        if getattr(match, 'pinned_message_id', None):
+            queue_unpin(chat_id, match.pinned_message_id)
         try:
             db = get_db()
             await db.matches.delete_one({"match_id": match_id})
         except Exception:
             pass
+
     except Exception as e:
         logger.error(f"_afk_forfeit error for {match_id}: {e}")
     finally:
@@ -330,24 +340,9 @@ async def update_draft_message(update: Update, context: ContextTypes.DEFAULT_TYP
                 pass
         asyncio.create_task(_bg_pin())
 
-        # Start abandon timeout
-        async def _abandon_timeout(bot, chat_id, msg_id, match_id, delay=1800):
-            await asyncio.sleep(delay)
-            from game.state import load_match_state
-            from utils.rate_limit import debouncer
-            m = await load_match_state(match_id)
-            if not m or m.state in ["DRAFTING", "READY_CHECK"]:
-                try:
-                    debouncer.cancel_updates(chat_id, msg_id)
-                    await bot.unpin_chat_message(chat_id=chat_id, message_id=msg_id)
-                    if m:
-                        from database import get_db
-                        await get_db().matches.delete_one({"match_id": match_id})
-                except Exception:
-                    pass
-        asyncio.create_task(_abandon_timeout(context.bot, match.chat_id, msg.message_id, match.match_id))
         await save_match_state(match)
         return
+
 
 
     # 2. Synchronous Edit
@@ -555,16 +550,14 @@ async def handle_assign(update: Update, context: ContextTypes.DEFAULT_TYPE, matc
                         pass
                 pinned = getattr(m, 'pinned_message_id', None)
                 if pinned:
-                    try:
-                        await bot.unpin_chat_message(chat_id=chat_id, message_id=pinned)
-                    except Exception:
-                        pass
+                    queue_unpin(chat_id, pinned)
                 try:
                     from database import get_db
                     await get_db().matches.delete_one({"match_id": match_id})
                     evict_match_cache(match_id)
                 except Exception:
                     pass
+
             except Exception as e:
                 logger.error(f"Auto-ready live failed for {match_id}: {e}")
 
