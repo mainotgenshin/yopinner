@@ -712,7 +712,10 @@ def _get_card_image(player_doc: dict, fmt: str) -> Optional[str]:
     elif fmt == "wwe":
         return player_doc.get("wwe_image_url") or player_doc.get("image_file_id")
     elif fmt == "fifa":
-        return player_doc.get("fifa_image_url") or player_doc.get("image_file_id")
+        # image_file_id = manually updated real photo (takes priority)
+        # fifa_image_url = original card art (fallback for non-updated players)
+        return player_doc.get("image_file_id") or player_doc.get("fifa_image_url")
+
     return player_doc.get("image_file_id")
 
 async def get_user_card(user_id: int, player_id: str, fmt: str) -> Optional[dict]:
@@ -982,6 +985,23 @@ def _invalidate_card_pool_cache():
     """Call after /add_card or /update_card to refresh pool."""
     _card_pool_cache.clear()
     _card_pool_cache_time.clear()
+
+async def warmup_card_pools() -> None:
+    """
+    Pre-fetch all card pools into RAM cache.
+    Call on startup and periodically (every ~4 min) so players never
+    experience a cold-cache DB scan when drawing from a pack or starting a draft.
+    Silently swallows errors — this is a background optimisation, not critical path.
+    """
+    import logging as _log
+    _logger = _log.getLogger(__name__)
+    for sport in ("cricket", "football", "wwe"):
+        try:
+            pool = await _build_card_pool(sport)
+            _logger.debug(f"Card pool warmed: {sport} ({len(pool)} cards)")
+        except Exception as e:
+            _logger.warning(f"Card pool warmup failed for {sport}: {e}")
+
 
 async def draw_pack_cards(pack_type: str, sport: str, count: int = 3) -> list:
     """
