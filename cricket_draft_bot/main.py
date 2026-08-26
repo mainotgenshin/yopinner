@@ -184,16 +184,22 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await handle_check_callback(update, context)
 
 async def post_init(application):
-    from database import init_db, get_db
+    from database import init_db, get_db, warmup_card_pools
     await init_db()
+    # Pre-warm card pools into memory on startup (0ms cold cache for users)
+    try:
+        await warmup_card_pools()
+    except Exception as _we:
+        logging.getLogger(__name__).warning(f"Initial card pool warmup error: {_we}")
+
     # Startup recovery: clean up stuck matches and restart timers
     await _startup_recovery(application.bot)
-    # Periodic cleanup: expire abandoned trades every 2 minutes (plain asyncio, no APScheduler needed)
+
+    # Periodic cleanup: expire abandoned trades every 2 minutes
     async def _trade_cleanup_loop():
-        import asyncio as _aio
         from database import expire_old_trades
         _log = logging.getLogger(__name__)
-        await _aio.sleep(60)          # first run after 60s
+        await asyncio.sleep(60)          # first run after 60s
         while True:
             try:
                 count = await expire_old_trades()
@@ -201,11 +207,44 @@ async def post_init(application):
                     _log.info(f"Expired {count} stale trade(s).")
             except Exception as e:
                 _log.warning(f"Trade cleanup error: {e}")
-            await _aio.sleep(120)     # then every 2 minutes
+            await asyncio.sleep(120)     # then every 2 minutes
     asyncio.create_task(_trade_cleanup_loop())
+
+    # Background Maintenance Loop (Option 3 unpin batching + pool refresh)
+    async def _background_maintenance_loop():
+        from handlers.draft import PENDING_UNPINS
+        _log = logging.getLogger(__name__)
+        _warmup_tick = 0
+        await asyncio.sleep(45)  # initial delay after startup
+        while True:
+            try:
+                # 1. Process pending unpins during quiet intervals (Option 3)
+                if PENDING_UNPINS:
+                    to_unpin = list(PENDING_UNPINS)
+                    PENDING_UNPINS.clear()
+                    for chat_id, msg_id in to_unpin:
+                        try:
+                            await application.bot.unpin_chat_message(chat_id=chat_id, message_id=msg_id)
+                            await asyncio.sleep(0.5)  # gentle spacing
+                        except Exception:
+                            pass
+
+                # 2. Pre-warm card pools every ~4 minutes (keeps RAM cache hot)
+                _warmup_tick += 1
+                if _warmup_tick >= 4:
+                    _warmup_tick = 0
+                    await warmup_card_pools()
+
+            except Exception as e:
+                _log.warning(f"Maintenance loop error: {e}")
+            await asyncio.sleep(60)
+
+    asyncio.create_task(_background_maintenance_loop())
+
     # Periodic rate-gate state cleanup (prevents unbounded memory growth)
     from utils.rate_limit import cleanup_chat_rate_state
     asyncio.create_task(cleanup_chat_rate_state())
+
 
 
 async def _startup_recovery(bot):
@@ -259,8 +298,9 @@ async def _startup_recovery(bot):
         if age >= ABANDON_LIMIT:
             # Match is stale — clean it up
             try:
+                from handlers.draft import queue_unpin
                 if pinned_id:
-                    await bot.unpin_chat_message(chat_id=chat_id, message_id=pinned_id)
+                    queue_unpin(chat_id, pinned_id)
             except Exception:
                 pass
             try:
@@ -275,22 +315,7 @@ async def _startup_recovery(bot):
             restarted += 1
 
         else:
-            # Still young — restart the abandon timeout with remaining time
-            remaining = max(30, ABANDON_LIMIT - age)
-            async def _delayed_unpin(b, c_id, p_id, m_id, delay):
-                await asyncio.sleep(delay)
-                from game.state import load_match_state
-                m = await load_match_state(m_id)
-                if not m or m.state in ["DRAFTING", "READY_CHECK"]:
-                    try: await b.unpin_chat_message(chat_id=c_id, message_id=p_id)
-                    except: pass
-                    try:
-                        from database import get_db as _gdb
-                        await _gdb().matches.delete_one({"match_id": m_id})
-                    except: pass
-            asyncio.create_task(_delayed_unpin(bot, chat_id, pinned_id, match_id, remaining))
-            
-            # Restart AFK forfeit timer if in drafting phase
+            # Match is active — restart AFK forfeit timer if in drafting phase
             if state == "DRAFTING":
                 async def _startup_afk_recovery(m_id, b):
                     try:
@@ -307,8 +332,8 @@ async def _startup_recovery(bot):
                 # when there are 30+ concurrent matches.
                 asyncio.create_task(_refresh_draft_ui(bot, match_id, delay=_drafting_idx * 1.5))
                 _drafting_idx += 1
-
     logger.info(f"Startup recovery done: {cleaned} cleaned, {restarted} auto-simulating.")
+
 
     # ── Expire stale challenges (survived bot restart) ──────────────────
     try:
@@ -413,13 +438,12 @@ async def _auto_simulate(bot, match_id: str):
             parse_mode="Markdown"
         )
 
-        # Unpin draft board
+        # Queue draft board for background unpin (Option 3: zero quota collision)
         pinned_id = getattr(match, 'pinned_message_id', None)
         if pinned_id:
-            try:
-                await bot.unpin_chat_message(chat_id=match.chat_id, message_id=pinned_id)
-            except Exception:
-                pass
+            from handlers.draft import queue_unpin
+            queue_unpin(match.chat_id, pinned_id)
+
 
         # Update user stats
         from database import update_user_stats
