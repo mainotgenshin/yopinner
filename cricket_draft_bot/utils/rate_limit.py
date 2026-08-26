@@ -8,10 +8,11 @@ logger = logging.getLogger(__name__)
 
 # ── Per-chat sliding-window rate gate ────────────────────────────────────────
 # Telegram limit: ~20 edits per chat per minute.
-# We target 13/min (35% headroom) so multiple concurrent matches in the same
-# group stay comfortably under the limit even under spiky load.
-_CHAT_MAX_CALLS = 13
+# We target 16/min (4 edit safety buffer) — maximum possible speed while
+# keeping guaranteed protection from Telegram's hard rate limit.
+_CHAT_MAX_CALLS = 16
 _CHAT_WINDOW    = 60.0   # rolling window in seconds
+
 
 _chat_call_times: dict = {}   # chat_id_str -> [float timestamps]
 _chat_locks:      dict = {}   # chat_id_str -> asyncio.Lock
@@ -77,7 +78,7 @@ class MessageDebouncer:
     - Only cancel_updates() (called on match end) actually cancels a task.
     """
 
-    def __init__(self, delay: float = 0.8):
+    def __init__(self, delay: float = 0.5):
 
         self.delay      = delay
         self.tasks:      dict = {}
@@ -120,10 +121,11 @@ class MessageDebouncer:
         if key in self.tasks and not self.tasks[key].done():
             return  # running task will pick up the latest _pending state
 
-        # Adaptive delay: +0.3s per extra concurrent match in this chat
-        # (was +1.0s — the per-chat rate gate is the real safety net, not the debounce delay)
+        # Adaptive delay: +0.15s per extra concurrent match (max safe tuning)
+        # The rate gate (16/min) is the real safety net — debounce just batches double-clicks.
         concurrent      = _count_active_in_chat(self.tasks, match.chat_id)
-        effective_delay = self.delay + max(0, concurrent - 1) * 0.3
+        effective_delay = self.delay + max(0, concurrent - 1) * 0.15
+
 
 
         self.tasks[key] = asyncio.create_task(
@@ -262,5 +264,6 @@ class MessageDebouncer:
 
 
 # Global singleton used by all draft handlers
-debouncer = MessageDebouncer(delay=0.8)
+debouncer = MessageDebouncer(delay=0.5)
+
 
