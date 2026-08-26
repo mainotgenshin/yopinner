@@ -883,26 +883,5 @@ async def handle_join(update: Update, context: ContextTypes.DEFAULT_TYPE):
             pass
     asyncio.create_task(_bg_pin())
 
-    # Start 30-min abandon timeout (always, regardless of pin success)
-    _chat_id = update.effective_chat.id
-    _match_id = match.match_id
-    _bot = context.bot
 
-    async def _abandon_timeout_live(bot, chat_id, msg_id, match_id, delay=1800):
-        await asyncio.sleep(delay)
-        from game.state import load_match_state as _load
-        m = await _load(match_id)
-        if not m or m.state in ("DRAFTING", "READY_CHECK"):
-            try:
-                await bot.unpin_chat_message(chat_id=chat_id, message_id=msg_id)
-            except Exception:
-                pass
-            if m:
-                try:
-                    from database import get_db
-                    await get_db().matches.delete_one({"match_id": match_id})
-                except Exception:
-                    pass
-
-    asyncio.create_task(_abandon_timeout_live(_bot, _chat_id, pinned_msg_id, _match_id))
 
