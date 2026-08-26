@@ -88,25 +88,15 @@ async def handle_profile(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     # Show favorite card image if available
     try:
-        from database import get_fav_card, get_user_cards, get_player
+        from database import get_fav_card, get_user_cards, get_player, _get_card_image
         fav = await get_fav_card(user_id)
         if fav:
-            # Get the card image
+            # Get the card image (uses centralized priority: real photo first, card url fallback)
             player_doc = await get_player(fav["player_id"])
             if player_doc:
                 fmt = fav["format"]
-                if fmt == "ipl":
-                    image = player_doc.get("ipl_image_file_id") or player_doc.get("image_file_id")
-                elif fmt == "odi":
-                    image = player_doc.get("odi_image_file_id") or player_doc.get("image_file_id")
-                elif fmt == "test":
-                    image = player_doc.get("test_image_url") or player_doc.get("image_file_id")
-                elif fmt == "wwe":
-                    image = player_doc.get("wwe_image_url") or player_doc.get("image_file_id")
-                elif fmt == "fifa":
-                    image = player_doc.get("fifa_image_url") or player_doc.get("image_file_id")
-                else:
-                    image = player_doc.get("image_file_id")
+                image = _get_card_image(player_doc, fmt)
+
                 
                 if image:
                     card_data = player_doc.get("cards", {}).get(fmt, {})
