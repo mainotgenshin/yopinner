@@ -205,38 +205,39 @@ async def run_simulation(match: Match) -> str:
 
     match.state = "FINISHED"
 
-    # PERSIST RESULTS
-    try:
-        from database import update_user_stats, record_match_result
+    # PERSIST RESULTS (Background Task - Instant Result Delivery)
+    async def _persist_results_bg():
+        try:
+            from database import update_user_stats, record_match_result, add_card_coins
 
-        async def _award_card_coins(user_id: int, result: str) -> None:
-            """Silently award card coins after a match. Never raises."""
-            try:
-                from database import add_card_coins
-                coins = _CARD_COIN_REWARDS.get(result, 10)
-                await add_card_coins(user_id, coins)
-            except Exception as _ce:
-                logger.warning(f"Card coin award failed for {user_id}: {_ce}")
+            async def _award_card_coins(user_id: int, result: str) -> None:
+                """Silently award card coins after a match. Never raises."""
+                try:
+                    coins = _CARD_COIN_REWARDS.get(result, 10)
+                    await add_card_coins(user_id, coins)
+                except Exception as _ce:
+                    logger.warning(f"Card coin award failed for {user_id}: {_ce}")
 
-        is_draw = (res_a == "D")
-        winner_id   = match.team_a.owner_id   if res_a == "W" else match.team_b.owner_id
-        winner_name = match.team_a.owner_name if res_a == "W" else match.team_b.owner_name
-        loser_id    = match.team_b.owner_id   if res_a == "W" else match.team_a.owner_id
-        loser_name  = match.team_b.owner_name if res_a == "W" else match.team_a.owner_name
+            is_draw = (res_a == "D")
+            winner_id   = match.team_a.owner_id   if res_a == "W" else match.team_b.owner_id
+            winner_name = match.team_a.owner_name if res_a == "W" else match.team_b.owner_name
+            loser_id    = match.team_b.owner_id   if res_a == "W" else match.team_a.owner_id
+            loser_name  = match.team_b.owner_name if res_a == "W" else match.team_a.owner_name
 
-        # Write stats + award card coins + record H2H result — all concurrently
-        await asyncio.gather(
-            update_user_stats(match.team_a.owner_id, match.team_a.owner_name, res_a,
-                              mode=match.mode, chat_id=match.chat_id),
-            update_user_stats(match.team_b.owner_id, match.team_b.owner_name, res_b,
-                              mode=match.mode, chat_id=match.chat_id),
-            _award_card_coins(match.team_a.owner_id, res_a),
-            _award_card_coins(match.team_b.owner_id, res_b),
-            record_match_result(winner_id, winner_name, loser_id, loser_name,
-                                is_draw, match.mode, match.chat_id),
-        )
+            # Write stats + award card coins + record H2H result concurrently in background
+            await asyncio.gather(
+                update_user_stats(match.team_a.owner_id, match.team_a.owner_name, res_a,
+                                  mode=match.mode, chat_id=match.chat_id),
+                update_user_stats(match.team_b.owner_id, match.team_b.owner_name, res_b,
+                                  mode=match.mode, chat_id=match.chat_id),
+                _award_card_coins(match.team_a.owner_id, res_a),
+                _award_card_coins(match.team_b.owner_id, res_b),
+                record_match_result(winner_id, winner_name, loser_id, loser_name,
+                                    is_draw, match.mode, match.chat_id),
+            )
+        except Exception as e:
+            logger.error(f"Failed to persist user stats in background: {e}")
 
-    except Exception as e:
-        logger.error(f"Failed to persist user stats: {e}")
+    asyncio.create_task(_persist_results_bg())
 
     return "\n".join(details)
