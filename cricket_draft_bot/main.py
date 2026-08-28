@@ -444,16 +444,8 @@ async def _auto_simulate(bot, match_id: str):
             from handlers.draft import queue_unpin
             queue_unpin(match.chat_id, pinned_id)
 
-
-        # Update user stats
-        from database import update_user_stats
-        result_a = "W" if match.team_a.score > match.team_b.score else ("D" if match.team_a.score == match.team_b.score else "L")
-        result_b = "W" if match.team_b.score > match.team_a.score else ("D" if match.team_a.score == match.team_b.score else "L")
-        mode = match.mode
-        await update_user_stats(match.team_a.owner_id, result_a, mode=mode, chat_id=match.chat_id)
-        await update_user_stats(match.team_b.owner_id, result_b, mode=mode, chat_id=match.chat_id)
-
     except Exception as e:
+
         logger.error(f"Auto-simulate failed for {match_id}: {e}")
 
 
