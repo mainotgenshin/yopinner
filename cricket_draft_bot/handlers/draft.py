@@ -764,12 +764,12 @@ async def handle_replace_exec(update: Update, context: ContextTypes.DEFAULT_TYPE
     
     match.pending_player_id = None
     
-    # Switch Turn — caller will save via update_draft_message path
+    # Switch Turn — save=False avoids double write; _reset_afk_timer persists state in background
     await switch_turn(match, save=False)
-    await save_match_state(match)
     
     # Reset AFK before slow API call (same race condition fix as handle_assign)
     _reset_afk_timer(match, context.bot, match.chat_id)
+
     
     # Update Board
     board_text = format_draft_board(match)
