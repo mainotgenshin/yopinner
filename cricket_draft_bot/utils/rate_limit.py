@@ -20,23 +20,34 @@ _chat_locks:      dict = {}   # chat_id_str -> asyncio.Lock
 
 async def _acquire_chat_slot(chat_id: int) -> None:
     """
-    Sliding-window rate gate (per chat, serialised via asyncio.Lock).
-    Prevents exceeding _CHAT_MAX_CALLS to this chat in any 60-second window.
-    Lock is held only to check + record the timestamp; the API call runs
-    OUTSIDE the lock so other tasks can queue in concurrently.
+    Non-blocking sliding-window rate gate.
+    Prevents exceeding _CHAT_MAX_CALLS in any 60-second window.
+    Crucial: Lock is ONLY held for microseconds to check/prune timestamps.
+    Any required wait happens OUTSIDE the lock so other matches in the same
+    chat are never blocked from checking and scheduling in parallel.
     """
     key = str(chat_id)
     if key not in _chat_locks:
         _chat_locks[key] = asyncio.Lock()
-    async with _chat_locks[key]:
-        now = asyncio.get_event_loop().time()
-        times = _chat_call_times.setdefault(key, [])
-        _chat_call_times[key] = times = [t for t in times if now - t < _CHAT_WINDOW]
-        if len(times) >= _CHAT_MAX_CALLS:
-            wait = _CHAT_WINDOW - (now - times[0]) + 0.3
-            logger.debug(f"Per-chat rate gate: holding {wait:.1f}s for chat {chat_id}")
+
+    while True:
+        wait = 0.0
+        async with _chat_locks[key]:
+            now = asyncio.get_event_loop().time()
+            times = _chat_call_times.setdefault(key, [])
+            _chat_call_times[key] = times = [t for t in times if now - t < _CHAT_WINDOW]
+
+            if len(times) < _CHAT_MAX_CALLS:
+                _chat_call_times[key].append(now)
+                return
+            else:
+                # Oldest call in window needs to expire before we can claim a slot
+                wait = _CHAT_WINDOW - (now - times[0]) + 0.05
+
+        # Sleep OUTSIDE the lock so other tasks in this chat aren't blocked!
+        if wait > 0:
             await asyncio.sleep(wait)
-        _chat_call_times[key].append(asyncio.get_event_loop().time())
+
 
 
 def _count_active_in_chat(tasks: dict, chat_id: int) -> int:
