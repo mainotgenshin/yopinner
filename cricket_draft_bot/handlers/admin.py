@@ -1523,30 +1523,45 @@ async def remove_player_wwe(update, context):
 
 
 async def update_image_wwe(update, context):
-    """/update_imagewwe Name URL"""
+    """/update_imagewwe Name URL (or send photo with caption /update_imagewwe Name)"""
     if not await check_admin(update): return
-    text = update.message.text.replace("/update_imagewwe", "").strip()
-    parts = text.rsplit(" ", 1)
-    if len(parts) < 2:
-        await update.message.reply_text("Usage: /update_imagewwe Name URL")
-        return
-    name, url = parts[0].strip(), parts[1].strip()
-    from database import get_player_by_name_and_sport, save_player
+    text = (update.message.caption or update.message.text or "").replace("/update_imagewwe", "").strip()
+    photo_fid = None
+    url = None
+    if update.message.photo:
+        photo_fid = update.message.photo[-1].file_id
+        name = text
+    else:
+        parts = text.rsplit(" ", 1)
+        if len(parts) < 2:
+            await update.message.reply_text("Usage: /update_imagewwe Name URL (or attach photo with caption)")
+            return
+        name, url = parts[0].strip(), parts[1].strip()
+        try:
+            msg = await context.bot.send_photo(
+                chat_id=update.effective_chat.id,
+                photo=url, caption=f"Updated image: {name}"
+            )
+            photo_fid = msg.photo[-1].file_id
+        except Exception as e:
+            await update.message.reply_text(f"❌ Failed to load image: {e}")
+            return
+
+    from database import get_player_by_name_and_sport, save_player, _invalidate_card_pool_cache
     p = await get_player_by_name_and_sport(name, "wwe")
     if not p:
         await update.message.reply_text(f"❌ WWE superstar not found: {name}")
         return
-    try:
-        msg = await context.bot.send_photo(
-            chat_id=update.effective_chat.id,
-            photo=url, caption=f"Updated image: {p['name']}"
-        )
-        p["image_file_id"]  = msg.photo[-1].file_id
-        p["wwe_image_url"]  = url
-        await save_player(p)
-        await update.message.reply_text(f"✅ Image updated for {esc(p['name'])}.", parse_mode="Markdown")
-    except Exception as e:
-        await update.message.reply_text(f"❌ Failed: {e}")
+
+    if photo_fid:
+        p["image_file_id"] = photo_fid
+    if url:
+        p["wwe_image_url"] = url
+        p["image_url"] = url
+    await save_player(p)
+    _invalidate_card_pool_cache()
+    await update.message.reply_text(f"✅ WWE image & Web URL updated for {esc(p['name'])}.", parse_mode="Markdown")
+
 
 
 # ═══════════════════════════════════════════════════════════════════
@@ -2062,16 +2077,23 @@ async def update_image_command(update, context):
         fid = msg.photo[-1].file_id
         if target_format == "ipl":
             p["ipl_image_file_id"] = fid
+            p["ipl_image_url"] = url
+            p["image_url"] = url
         elif target_format == "test":
             p["test_image_url"] = url
+            p["image_url"] = url
         else:
             p["image_file_id"] = fid
+            p["odi_image_file_id"] = fid
+            p["odi_image_url"] = url
+            p["image_url"] = url
         await save_player(p)
-
-
-        await update.message.reply_text(f"✅ Image updated for *{esc(p['name'])}*.", parse_mode="Markdown")
+        from database import _invalidate_card_pool_cache
+        _invalidate_card_pool_cache()
+        await update.message.reply_text(f"✅ {target_format.upper()} image & Web URL updated for *{esc(p['name'])}*.", parse_mode="Markdown")
     except Exception as e:
         await update.message.reply_text(f"❌ Failed: {e}")
+
 
 
 async def enable_ipl_command(update, context):
@@ -2186,6 +2208,7 @@ async def update_image_fifa(update, context):
     if not await check_admin(update): return
     text = (update.message.caption or update.message.text or "").replace("/update_imagefifa", "").strip()
     photo_fid = None
+    url = None
     if update.message.photo:
         photo_fid = update.message.photo[-1].file_id
     name = text
@@ -2207,12 +2230,16 @@ async def update_image_fifa(update, context):
         return
     if photo_fid:
         p["image_file_id"] = photo_fid
+        if url:
+            p["fifa_image_url"] = url
+            p["image_url"] = url
         await save_player(p)
-        await update.message.reply_text(f"✅ Updated FIFA image for *{esc(p['name'])}*.", parse_mode="Markdown")
-
-
+        from database import _invalidate_card_pool_cache
+        _invalidate_card_pool_cache()
+        await update.message.reply_text(f"✅ Updated FIFA image & Web URL for *{esc(p['name'])}*.", parse_mode="Markdown")
     else:
         await update.message.reply_text("❌ No photo found. Attach a photo or provide URL.")
+
 
 
 async def remove_player_fifa(update, context):
