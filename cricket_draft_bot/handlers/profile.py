@@ -146,12 +146,12 @@ async def handle_profile(update: Update, context: ContextTypes.DEFAULT_TYPE):
                         pass  # Fall through to photo fallback
 
                 if image_fid:
-                    full_caption = body_md + fav_line_md
+                    full_caption = body_html + fav_line_html
                     try:
                         await update.effective_message.reply_photo(
                             photo=image_fid,
                             caption=full_caption,
-                            parse_mode="Markdown"
+                            parse_mode="HTML"
                         )
                         return
                     except Exception:
@@ -160,17 +160,18 @@ async def handle_profile(update: Update, context: ContextTypes.DEFAULT_TYPE):
         pass  # Never break profile due to card system errors
 
     try:
-        await update.effective_message.reply_text(body_md, parse_mode="Markdown")
+        await update.effective_message.reply_text(body_html, parse_mode="HTML")
     except Exception:
         # Original message deleted (e.g. bot restarted) — send without reply
         try:
             await context.bot.send_message(
                 chat_id=update.effective_chat.id,
-                text=body_md,
-                parse_mode="Markdown"
+                text=body_html,
+                parse_mode="HTML"
             )
         except Exception:
             pass
+
 
 
 
