@@ -123,16 +123,20 @@ async def handle_ready(update: Update, context: ContextTypes.DEFAULT_TYPE, match
             asyncio.create_task(_bg_unpin(context.bot, match.chat_id, pinned_id))
     else:
         # Update message to show who is ready, keeping the full board visible
+        import html as _html
         from handlers.draft import format_draft_board
+        from utils.banners import get_banner_for_match
         a_status = "✅" if match.team_a.is_ready else "⏳"
         b_status = "✅" if match.team_b.is_ready else "⏳"
         board = format_draft_board(match, include_turn=False)
+        name_a_safe = _html.escape(match.team_a.owner_name or "Player 1")
+        name_b_safe = _html.escape(match.team_b.owner_name or "Player 2")
 
-        text = (
+        ready_text = (
             f"{board}\n\n"
-            f"✅ *Draft Complete!*\n\n"
-            f"{esc(match.team_a.owner_name)}: {a_status}\n"
-            f"{esc(match.team_b.owner_name)}: {b_status}\n\n"
+            f"✅ <b>Draft Complete!</b>\n\n"
+            f"{name_a_safe}: {a_status}\n"
+            f"{name_b_safe}: {b_status}\n\n"
             f"Waiting for both..."
         )
         
@@ -148,12 +152,15 @@ async def handle_ready(update: Update, context: ContextTypes.DEFAULT_TYPE, match
             swap_url = f"https://t.me/{bot_uname}?start=swap_{match.match_id}"
             keyboard.append([InlineKeyboardButton("🔀 Swap Positions (1 Left)", url=swap_url)])
         
-        # Avoid editing if same content
-        if query.message.caption != text.replace('*', '') and query.message.text != text.replace('*', ''): 
-             try:
-                 if query.message.photo:
-                    await query.message.edit_caption(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="Markdown")
-                 else:
-                    await query.message.edit_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="Markdown")
-             except:
-                 pass
+        banner = await get_banner_for_match(match)
+        media_is_url = bool(banner and str(banner).startswith("http"))
+        href_text = f'<a href="{banner}">&#8205;</a>' + ready_text if media_is_url else ready_text
+
+        try:
+            if query.message.photo:
+                await query.message.edit_caption(ready_text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="HTML")
+            else:
+                await query.message.edit_text(href_text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="HTML", disable_web_page_preview=False)
+        except Exception:
+            pass
+
