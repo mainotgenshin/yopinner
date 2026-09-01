@@ -237,16 +237,19 @@ async def handle_swap_pick2(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     # Silently refresh the group message to remove the Swap button for this user
     try:
+        import html as _html
         from handlers.draft import format_draft_board
         from utils.banners import get_banner_for_match
 
         board_text = format_draft_board(match, include_turn=False)
         a_status = "✅" if match.team_a.is_ready else "⏳"
         b_status = "✅" if match.team_b.is_ready else "⏳"
+        name_a_safe = _html.escape(match.team_a.owner_name or "Player 1")
+        name_b_safe = _html.escape(match.team_b.owner_name or "Player 2")
         ready_text = (
-            f"{board_text}\n\n✅ *Draft Complete!*\n\n"
-            f"{esc(match.team_a.owner_name)}: {a_status}\n"
-            f"{esc(match.team_b.owner_name)}: {b_status}\n\n"
+            f"{board_text}\n\n✅ <b>Draft Complete!</b>\n\n"
+            f"{name_a_safe}: {a_status}\n"
+            f"{name_b_safe}: {b_status}\n\n"
             f"Waiting for both..."
         )
 
@@ -261,14 +264,33 @@ async def handle_swap_pick2(update: Update, context: ContextTypes.DEFAULT_TYPE):
             keyboard.append([InlineKeyboardButton("🔀 Swap Positions (1 Left)", url=swap_url)])
 
         banner = await get_banner_for_match(match)
+        media_is_url = bool(banner and str(banner).startswith("http"))
+        href_text = f'<a href="{banner}">&#8205;</a>' + ready_text if media_is_url else ready_text
 
-        await context.bot.edit_message_caption(
-            chat_id=match.chat_id,
-            message_id=match.draft_message_id,
-            caption=ready_text,
-            reply_markup=InlineKeyboardMarkup(keyboard),
-            parse_mode="Markdown"
-        )
+        if media_is_url:
+            try:
+                await context.bot.edit_message_text(
+                    chat_id=match.chat_id,
+                    message_id=match.draft_message_id,
+                    text=href_text,
+                    reply_markup=InlineKeyboardMarkup(keyboard),
+                    parse_mode="HTML",
+                    disable_web_page_preview=False
+                )
+            except Exception:
+                pass
+        else:
+            try:
+                await context.bot.edit_message_caption(
+                    chat_id=match.chat_id,
+                    message_id=match.draft_message_id,
+                    caption=ready_text,
+                    reply_markup=InlineKeyboardMarkup(keyboard),
+                    parse_mode="HTML"
+                )
+            except Exception:
+                pass
+
     except Exception as e:
         logger.warning(f"Could not refresh group message after swap: {e}")
 
