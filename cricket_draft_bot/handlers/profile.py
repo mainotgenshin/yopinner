@@ -88,27 +88,46 @@ async def handle_profile(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     # Show favorite card image if available
     try:
-        from database import get_fav_card, get_user_cards, get_player, _get_card_image
+        from database import get_fav_card, get_player, _get_card_image, _get_card_image_url
         fav = await get_fav_card(user_id)
         if fav:
-            # Get the card image (uses centralized priority: real photo first, card url fallback)
             player_doc = await get_player(fav["player_id"])
             if player_doc:
                 fmt = fav["format"]
-                image = _get_card_image(player_doc, fmt)
+                image_url = _get_card_image_url(player_doc, fmt)  # web URL for href
+                image_fid = _get_card_image(player_doc, fmt)      # file_id fallback
 
-                
-                if image:
-                    card_data = player_doc.get("cards", {}).get(fmt, {})
-                    fmt_labels = {"ipl": "IPL", "odi": "ODI", "test": "Test", "wwe": "WWE", "fifa": "FIFA"}
-                    RARITY_EMOJI_MAP = {"common": "⚪", "rare": "🔵", "epic": "🟣", "legend": "🟡"}
-                    rarity = card_data.get("rarity", "")
-                    ovr    = card_data.get("ovr", "")
-                    fav_line = f"\n\n⭐ *Fav Card:* {player_doc['name']} ({fmt_labels.get(fmt, fmt)}) {RARITY_EMOJI_MAP.get(rarity, '')} OVR {ovr}"
+                card_data = player_doc.get("cards", {}).get(fmt, {})
+                fmt_labels = {"ipl": "IPL", "odi": "ODI", "test": "Test", "wwe": "WWE", "fifa": "FIFA"}
+                RARITY_EMOJI_MAP = {"common": "⚪", "rare": "🔵", "epic": "🟣", "legend": "🟡"}
+                rarity = card_data.get("rarity", "")
+                ovr    = card_data.get("ovr", "")
+                fav_line = f"\n\n⭐ Fav Card: {player_doc['name']} ({fmt_labels.get(fmt, fmt)}) {RARITY_EMOJI_MAP.get(rarity, '')} OVR {ovr}"
+
+                if image_url:
+                    # Fast href approach — lightweight text message, image renders as preview
+                    text_html = (
+                        text
+                        .replace("*", "")          # strip Markdown bold markers
+                        .replace("`", "")
+                    )
+                    fav_line_plain = f"\n\n⭐ Fav Card: {player_doc['name']} ({fmt_labels.get(fmt, fmt)}) {RARITY_EMOJI_MAP.get(rarity, '')} OVR {ovr}"
+                    href_text = f'<a href="{image_url}">\u200b</a>' + text + fav_line_plain
+                    try:
+                        await update.effective_message.reply_text(
+                            href_text,
+                            parse_mode="HTML",
+                            disable_web_page_preview=False
+                        )
+                        return
+                    except Exception:
+                        pass  # Fall through to photo fallback
+
+                if image_fid:
                     full_caption = text + fav_line
                     try:
                         await update.effective_message.reply_photo(
-                            photo=image,
+                            photo=image_fid,
                             caption=full_caption,
                             parse_mode="Markdown"
                         )
@@ -117,7 +136,7 @@ async def handle_profile(update: Update, context: ContextTypes.DEFAULT_TYPE):
                         pass  # Fall through to text-only
     except Exception:
         pass  # Never break profile due to card system errors
-    
+
     try:
         await update.effective_message.reply_text(text, parse_mode="Markdown")
     except Exception:
