@@ -442,42 +442,35 @@ async def handle_draw(update: Update, context: ContextTypes.DEFAULT_TYPE, match:
     if footer_row:
         keyboard.append(footer_row)
     
-    # Get Player Image — reuse already-fetched player data (no duplicate DB call)
+    # Get Player Image — use web URL first (for href), fall back to file_id
     p_data = player
-    
-    # Image Key Logic
+
     if match.mode == "FIFA":
-        img_key = 'fifa_image_url' 
-        # Prefer file_id if available (updated manually)
-        if p_data.get('image_file_id'):
-            img_key = 'image_file_id'
+        media = (p_data.get("image_url") or p_data.get("fifa_image_url") or
+                 p_data.get("image_file_id") or DRAFT_BANNER_FIFA)
         default_banner = DRAFT_BANNER_FIFA
     elif "WWE" in match.mode:
-        img_key = 'wwe_image_url'
-        if p_data.get('image_file_id'):
-            img_key = 'image_file_id'
+        media = (p_data.get("wwe_image_url") or p_data.get("image_url") or
+                 p_data.get("image_file_id") or DRAFT_BANNER_WWE)
         default_banner = DRAFT_BANNER_WWE
     elif match.mode == "Test":
-        img_key = 'test_image_url'
-        if not p_data.get(img_key):
-            img_key = 'image_file_id'
+        media = (p_data.get("test_image_url") or p_data.get("image_url") or
+                 p_data.get("image_file_id") or DRAFT_BANNER_TEST)
         default_banner = DRAFT_BANNER_TEST
-    else:
-        img_key = 'ipl_image_file_id' if "IPL" in match.mode else 'image_file_id'
-        # Fallback to normal image if IPL image missing
-        if "IPL" in match.mode and not p_data.get(img_key):
-            img_key = 'image_file_id'
-        if "IPL" in match.mode:
-            default_banner = DRAFT_BANNER_IPL
-        else:
-            default_banner = DRAFT_BANNER_ODI
-    
-    media = p_data.get(img_key) or default_banner
-    
+    elif "IPL" in match.mode:
+        media = (p_data.get("ipl_image_url") or p_data.get("image_url") or
+                 p_data.get("ipl_image_file_id") or p_data.get("image_file_id") or DRAFT_BANNER_IPL)
+        default_banner = DRAFT_BANNER_IPL
+    else:  # ODI / International
+        media = (p_data.get("odi_image_url") or p_data.get("image_url") or
+                 p_data.get("odi_image_file_id") or p_data.get("image_file_id") or DRAFT_BANNER_ODI)
+        default_banner = DRAFT_BANNER_ODI
+
     # Update the single message to show the card
     await update_draft_message(update, context, match, card_caption, keyboard, media=media)
-    # Reset AFK timer AFTER UI is queued — player has 10 min to assign
+    # Reset AFK timer AFTER UI is queued — player has 5 min to assign
     _reset_afk_timer(match, context.bot, match.chat_id)
+
 
 
 async def handle_assign(update: Update, context: ContextTypes.DEFAULT_TYPE, match: Match, player_id: str, slot: str):
@@ -673,52 +666,34 @@ async def handle_replace_start(update: Update, context: ContextTypes.DEFAULT_TYP
              current_p = current_team.slots.get(pos)
              btn_text = f"🔴 {pos}: {current_p.name}"
              row.append(InlineKeyboardButton(btn_text, callback_data=f"replace_exec_{match.match_id}|{pos}"))
-             
-        if len(row) == 1: # 1 per row for readability since names can be long
+
+        if len(row) == 1:  # 1 per row for readability since names can be long
              keyboard.append(row)
              row = []
     if row: keyboard.append(row)
-    
+
     # Cancel Button
     keyboard.append([InlineKeyboardButton("🔙 Cancel", callback_data=f"replace_cancel_{match.match_id}")])
-    
-    # Reuse media (banner or player card)
-    # We should probably show the player card of the NEW player to keep context
-    
-    if "IPL" in match.mode:
-        img_key = 'ipl_image_file_id'
-        if not player.get(img_key): img_key = 'image_file_id'
-    elif match.mode == "FIFA":
-        img_key = 'fifa_image_url'
-        # Prefer file_id if manually updated
-        if player.get('image_file_id'):
-            img_key = 'image_file_id'
-    elif "WWE" in match.mode:
-        img_key = 'wwe_image_url'
-        if player.get('image_file_id'):
-            img_key = 'image_file_id'
-    elif match.mode == "Test":
-        img_key = 'test_image_url'
-        if not player.get(img_key):
-            img_key = 'image_file_id'
-    else:
-        img_key = 'image_file_id'
-        
 
-        
-    if "IPL" in match.mode:
-        default_banner = DRAFT_BANNER_IPL
-    elif match.mode == "FIFA":
-        default_banner = DRAFT_BANNER_FIFA
+    # Get player image — URL first (href-ready), fall back to file_id
+    if match.mode == "FIFA":
+        media = (player.get("image_url") or player.get("fifa_image_url") or
+                 player.get("image_file_id") or DRAFT_BANNER_FIFA)
     elif "WWE" in match.mode:
-        default_banner = DRAFT_BANNER_WWE
+        media = (player.get("wwe_image_url") or player.get("image_url") or
+                 player.get("image_file_id") or DRAFT_BANNER_WWE)
     elif match.mode == "Test":
-        default_banner = DRAFT_BANNER_TEST
-    else:  # ODI
-        default_banner = DRAFT_BANNER_ODI
-    media = player.get(img_key) or default_banner
-    
+        media = (player.get("test_image_url") or player.get("image_url") or
+                 player.get("image_file_id") or DRAFT_BANNER_TEST)
+    elif "IPL" in match.mode:
+        media = (player.get("ipl_image_url") or player.get("image_url") or
+                 player.get("ipl_image_file_id") or player.get("image_file_id") or DRAFT_BANNER_IPL)
+    else:  # ODI / International
+        media = (player.get("odi_image_url") or player.get("image_url") or
+                 player.get("odi_image_file_id") or player.get("image_file_id") or DRAFT_BANNER_ODI)
+
     await update_draft_message(update, context, match, card_caption, keyboard, media=media)
+
 
 async def handle_replace_exec(update: Update, context: ContextTypes.DEFAULT_TYPE, match: Match, slot: str):
     current_team = match.team_a if match.team_a.owner_id == match.current_turn else match.team_b
