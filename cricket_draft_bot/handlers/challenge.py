@@ -209,25 +209,28 @@ async def challenge_ipl(update: Update, context: ContextTypes.DEFAULT_TYPE):
     name = html.escape(update.effective_user.first_name)
     caption = f"🏏 <b>IPL Challenge!</b>\nUser: {name}\nMode: IPL\nWaiting for opponent... <i>(expires in 2 min)</i>"
     banner = await get_banner_for_mode("ipl")
+    href_text = f'<a href="{banner}">&#8205;</a>' + caption if banner and str(banner).startswith("http") else caption
     msg = None
     try:
-        msg = await context.bot.send_photo(
-            chat_id=chat_id, photo=banner, caption=caption,
-            reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="HTML"
+        msg = await context.bot.send_message(
+            chat_id=chat_id, text=href_text,
+            reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="HTML",
+            disable_web_page_preview=False
         )
     except ChatMigrated as e:
         chat_id = e.migrate_to_chat_id
         try:
-            msg = await context.bot.send_photo(
-                chat_id=chat_id, photo=banner, caption=caption,
-                reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="HTML"
+            msg = await context.bot.send_message(
+                chat_id=chat_id, text=href_text,
+                reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="HTML",
+                disable_web_page_preview=False
             )
         except Exception:
             pass
     except Exception:
         try:
-            msg = await context.bot.send_message(
-                chat_id=chat_id, text=caption + "\n<i>(Enable media permissions to see banners)</i>",
+            msg = await context.bot.send_photo(
+                chat_id=chat_id, photo=banner, caption=caption,
                 reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="HTML"
             )
         except Exception:
@@ -256,25 +259,28 @@ async def challenge_odi(update: Update, context: ContextTypes.DEFAULT_TYPE):
     name = html.escape(update.effective_user.first_name)
     caption = f"\U0001f3cf <b>ODI Challenge!</b>\nUser: {name}\nMode: ODI\nWaiting for opponent... <i>(expires in 2 min)</i>"
     banner = await get_banner_for_mode("odi")
+    href_text = f'<a href="{banner}">&#8205;</a>' + caption if banner and str(banner).startswith("http") else caption
     msg = None
     try:
-        msg = await context.bot.send_photo(
-            chat_id=chat_id, photo=banner, caption=caption,
-            reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="HTML"
+        msg = await context.bot.send_message(
+            chat_id=chat_id, text=href_text,
+            reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="HTML",
+            disable_web_page_preview=False
         )
     except ChatMigrated as e:
         chat_id = e.migrate_to_chat_id
         try:
-            msg = await context.bot.send_photo(
-                chat_id=chat_id, photo=banner, caption=caption,
-                reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="HTML"
+            msg = await context.bot.send_message(
+                chat_id=chat_id, text=href_text,
+                reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="HTML",
+                disable_web_page_preview=False
             )
         except Exception:
             pass
     except Exception:
         try:
-            msg = await context.bot.send_message(
-                chat_id=chat_id, text=caption + "\n<i>(Enable media permissions to see banners)</i>",
+            msg = await context.bot.send_photo(
+                chat_id=chat_id, photo=banner, caption=caption,
                 reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="HTML"
             )
         except Exception:
@@ -306,25 +312,28 @@ async def challenge_fifa(update: Update, context: ContextTypes.DEFAULT_TYPE):
     name = html.escape(update.effective_user.first_name)
     caption = f"⚽ <b>FIFA Challenge!</b>\nUser: {name}\nMode: FIFA\nWaiting for opponent... <i>(expires in 2 min)</i>"
     banner = await get_banner_for_mode("fifa")
+    href_text = f'<a href="{banner}">&#8205;</a>' + caption if banner and str(banner).startswith("http") else caption
     msg = None
     try:
-        msg = await context.bot.send_photo(
-            chat_id=chat_id, photo=banner, caption=caption,
-            reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="HTML"
+        msg = await context.bot.send_message(
+            chat_id=chat_id, text=href_text,
+            reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="HTML",
+            disable_web_page_preview=False
         )
     except ChatMigrated as e:
         chat_id = e.migrate_to_chat_id
         try:
-            msg = await context.bot.send_photo(
-                chat_id=chat_id, photo=banner, caption=caption,
-                reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="HTML"
+            msg = await context.bot.send_message(
+                chat_id=chat_id, text=href_text,
+                reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="HTML",
+                disable_web_page_preview=False
             )
         except Exception:
             pass
     except Exception:
         try:
-            msg = await context.bot.send_message(
-                chat_id=chat_id, text=caption + "\n<i>(Enable media permissions to see banners)</i>",
+            msg = await context.bot.send_photo(
+                chat_id=chat_id, photo=banner, caption=caption,
                 reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="HTML"
             )
         except Exception:
@@ -337,6 +346,7 @@ async def challenge_fifa(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await save_pending_challenge(owner_id, chat_id, msg.message_id, "FIFA")
     except Exception:
         pass
+
 
 
 async def send_wwe_gender_selector(update: Update, context: ContextTypes.DEFAULT_TYPE, owner_id: int):
@@ -464,19 +474,33 @@ async def challenge_wwe_start(update: Update, context: ContextTypes.DEFAULT_TYPE
         
     sent_msg = None
     try:
-        sent_msg = await context.bot.send_photo(
-            chat_id=chat_id, photo=banner, caption=msg_text,
-            reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="Markdown"
-        )
+        if banner and str(banner).startswith("http"):
+            challenger_html = html.escape(challenger_name)
+            if target_user:
+                target_html = html.escape(target_user.first_name)
+                wwe_caption = f"🤼 <b>{mode} Challenge!</b>\nFrom: {challenger_html}\nTo: {target_html}\n\nWaiting for {target_html} to accept..."
+            else:
+                wwe_caption = f"🤼 <b>{mode} Challenge!</b>\nUser: {challenger_html}\nWaiting for opponent... <i>(expires in 2 min)</i>"
+            sent_msg = await context.bot.send_message(
+                chat_id=chat_id, text=f'<a href="{banner}">&#8205;</a>' + wwe_caption,
+                reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="HTML",
+                disable_web_page_preview=False
+            )
+        else:
+            sent_msg = await context.bot.send_photo(
+                chat_id=chat_id, photo=banner, caption=msg_text,
+                reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="Markdown"
+            )
     except Exception:
         try:
             sent_msg = await context.bot.send_message(
                 chat_id=chat_id,
-                text=msg_text + "\n*(Enable media permissions in this chat to see banners)*",
+                text=msg_text,
                 reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="Markdown"
             )
         except Exception:
             return
+
             
     if not sent_msg:
         return
@@ -515,25 +539,28 @@ async def challenge_test(update: Update, context: ContextTypes.DEFAULT_TYPE):
     name = html.escape(update.effective_user.first_name)
     caption = f"\U0001f3cf <b>Test Challenge!</b>\nUser: {name}\nMode: Test\nWaiting for opponent... <i>(expires in 2 min)</i>"
     banner = await get_banner_for_mode("test")
+    href_text = f'<a href="{banner}">&#8205;</a>' + caption if banner and str(banner).startswith("http") else caption
     msg = None
     try:
-        msg = await context.bot.send_photo(
-            chat_id=chat_id, photo=banner, caption=caption,
-            reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="HTML"
+        msg = await context.bot.send_message(
+            chat_id=chat_id, text=href_text,
+            reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="HTML",
+            disable_web_page_preview=False
         )
     except ChatMigrated as e:
         chat_id = e.migrate_to_chat_id
         try:
-            msg = await context.bot.send_photo(
-                chat_id=chat_id, photo=banner, caption=caption,
-                reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="HTML"
+            msg = await context.bot.send_message(
+                chat_id=chat_id, text=href_text,
+                reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="HTML",
+                disable_web_page_preview=False
             )
         except Exception:
             pass
     except Exception:
         try:
-            msg = await context.bot.send_message(
-                chat_id=chat_id, text=caption + "\n<i>(Enable media permissions to see banners)</i>",
+            msg = await context.bot.send_photo(
+                chat_id=chat_id, photo=banner, caption=caption,
                 reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="HTML"
             )
         except Exception:
@@ -546,6 +573,7 @@ async def challenge_test(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await save_pending_challenge(owner_id, chat_id, msg.message_id, "Test")
     except Exception:
         pass
+
 
 
 async def challenge_unified(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -641,18 +669,32 @@ async def challenge_unified(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id  = update.effective_chat.id
     sent_msg = None
     try:
-        sent_msg = await update.effective_message.reply_photo(
-            photo=banner, caption=msg_text,
-            reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="Markdown"
-        )
+        if banner and str(banner).startswith("http"):
+            challenger_html = html.escape(update.effective_user.first_name)
+            if target_user:
+                target_html = html.escape(target_user.first_name)
+                ch_caption = f"🏏 <b>{real_mode} Challenge!</b>\nFrom: {challenger_html}\nTo: {target_html}\n\nWaiting for {target_html} to accept..."
+            else:
+                ch_caption = f"🏏 <b>{real_mode} Challenge!</b>\nUser: {challenger_html}\nWaiting for opponent..."
+            sent_msg = await update.effective_message.reply_text(
+                f'<a href="{banner}">&#8205;</a>' + ch_caption,
+                reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="HTML",
+                disable_web_page_preview=False
+            )
+        else:
+            sent_msg = await update.effective_message.reply_photo(
+                photo=banner, caption=msg_text,
+                reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="Markdown"
+            )
     except Exception:
         try:
             sent_msg = await update.effective_message.reply_text(
-                f"{msg_text}\n*(Enable media permissions in this chat to see banners)*",
+                msg_text,
                 reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="Markdown"
             )
         except Exception:
             return
+
 
     if not sent_msg:
         return
