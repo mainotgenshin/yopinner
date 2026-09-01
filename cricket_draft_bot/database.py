@@ -725,11 +725,11 @@ def _get_card_image(player_doc: dict, fmt: str) -> Optional[str]:
                 player_doc.get("image_url") or
                 player_doc.get("image_file_id"))
     elif fmt == "fifa":
-        return (player_doc.get("fifa_image_url") or
-                player_doc.get("image_url") or
-                player_doc.get("image_file_id"))
+        # Custom updated image (image_file_id) takes priority over default EA FC base card (fifa_image_url)
+        return (player_doc.get("image_file_id") or
+                player_doc.get("fifa_image_url") or
+                player_doc.get("image_url"))
     return player_doc.get("image_url") or player_doc.get("image_file_id")
-
 
 def _get_card_image_url(player_doc: dict, fmt: str) -> Optional[str]:
     """Get direct web URL for a player-format card (for href preview).
@@ -744,10 +744,14 @@ def _get_card_image_url(player_doc: dict, fmt: str) -> Optional[str]:
     elif fmt == "wwe":
         url = player_doc.get("wwe_image_url") or player_doc.get("image_url")
     elif fmt == "fifa":
+        # If user updated with a custom photo (image_file_id), prioritize it over base EA card URL
+        if player_doc.get("image_file_id"):
+            return None
         url = player_doc.get("fifa_image_url") or player_doc.get("image_url")
     else:
         url = player_doc.get("image_url")
     return url if url and url.startswith("http") else None
+
 
 
 async def get_user_card(user_id: int, player_id: str, fmt: str) -> Optional[dict]:
