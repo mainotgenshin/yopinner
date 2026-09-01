@@ -193,20 +193,31 @@ class MessageDebouncer:
     ) -> bool:
         try:
             await _acquire_chat_slot(chat_id)   # per-chat rate gate
+            media_is_url = bool(media and str(media).startswith("http"))
+            href_text = f'<a href="{media}">&#8205;</a>' + text if media_is_url else text
+
             for attempt in range(3):
                 try:
-                    if media:
+                    if media_is_url:
+                        await bot.edit_message_text(
+                            chat_id=chat_id, message_id=message_id,
+                            text=href_text, reply_markup=reply_markup,
+                            parse_mode="HTML", disable_web_page_preview=False
+                        )
+                        return True
+                    elif media:
                         await bot.edit_message_media(
                             chat_id=chat_id, message_id=message_id,
                             media=InputMediaPhoto(media=media, caption=text, parse_mode=parse_mode),
                             reply_markup=reply_markup,
                         )
+                        return True
                     else:
-                        await bot.edit_message_caption(
+                        await bot.edit_message_text(
                             chat_id=chat_id, message_id=message_id,
-                            caption=text, reply_markup=reply_markup, parse_mode=parse_mode,
+                            text=text, reply_markup=reply_markup, parse_mode=parse_mode,
                         )
-                    return True
+                        return True
                 except RetryAfter as e:
                     wait_time = e.retry_after + 1
                     logger.warning(f"RetryAfter on chat {chat_id}: waiting {wait_time}s (attempt {attempt+1}/3)")
@@ -215,11 +226,29 @@ class MessageDebouncer:
                     err = str(e).lower()
                     if "message is not modified" in err:
                         return True
+                    if "there is no text" in err or "only edit the caption" in err:
+                        # Message is a photo message in Telegram — edit its media/caption
+                        try:
+                            if media:
+                                await bot.edit_message_media(
+                                    chat_id=chat_id, message_id=message_id,
+                                    media=InputMediaPhoto(media=media, caption=text, parse_mode=parse_mode),
+                                    reply_markup=reply_markup,
+                                )
+                            else:
+                                await bot.edit_message_caption(
+                                    chat_id=chat_id, message_id=message_id,
+                                    caption=text, reply_markup=reply_markup, parse_mode=parse_mode,
+                                )
+                            return True
+                        except Exception:
+                            return False
                     if "there is no caption" in err or "not a media message" in err:
                         try:
                             await bot.edit_message_text(
                                 chat_id=chat_id, message_id=message_id,
-                                text=text, reply_markup=reply_markup, parse_mode=parse_mode,
+                                text=href_text, reply_markup=reply_markup, parse_mode="HTML",
+                                disable_web_page_preview=False
                             )
                             return True
                         except Exception:
@@ -244,7 +273,18 @@ class MessageDebouncer:
         except Exception:
             pass
         msg = None
-        if media:
+        media_is_url = bool(media and str(media).startswith("http"))
+        if media_is_url:
+            href_text = f'<a href="{media}">&#8205;</a>' + caption
+            try:
+                msg = await bot.send_message(
+                    chat_id=match.chat_id, text=href_text,
+                    reply_markup=reply_markup, parse_mode="HTML",
+                    disable_web_page_preview=False
+                )
+            except Exception:
+                pass
+        elif media:
             try:
                 msg = await bot.send_photo(
                     chat_id=match.chat_id, photo=media, caption=caption,
@@ -256,7 +296,7 @@ class MessageDebouncer:
             try:
                 msg = await bot.send_message(
                     chat_id=match.chat_id, text=caption,
-                    reply_markup=reply_markup, parse_mode=parse_mode,
+                    reply_markup=reply_markup, parse_mode="HTML",
                 )
             except Exception as e:
                 logger.error(f"Failed to recreate draft message (all fallbacks exhausted): {e}")
@@ -272,6 +312,7 @@ class MessageDebouncer:
             except Exception:
                 pass
             await save_match_state(match)
+
 
 
 # Global singleton used by all draft handlers
