@@ -2046,10 +2046,19 @@ async def update_image_command(update, context):
     """/update_image Name [format=ipl|odi|test] URL"""
     if not await check_admin(update): return
     import re
-    text = update.message.text.replace("/update_image", "").strip()
+
+    msg = update.message or (update.callback_query.message if update.callback_query else None)
+    if not msg:
+        return
+
+    raw_text = msg.caption or msg.text or ""
+    text = raw_text.replace("/update_image", "").strip()
+    # Strip any @botname suffix
+    text = re.sub(r"^@\S+\s*", "", text).strip()
+
     parts = text.rsplit(" ", 1)
     if len(parts) < 2:
-        await update.message.reply_text("Usage: /update_image Name [format=ipl|odi|test] URL")
+        await msg.reply_text("Usage: /update_image Name [format=ipl|odi|test] URL")
         return
     rest, url = parts[0].strip(), parts[1].strip()
 
@@ -2070,11 +2079,11 @@ async def update_image_command(update, context):
     from database import get_player_by_name, save_player
     p = await get_player_by_name(name)
     if not p:
-        await update.message.reply_text("Player not found.")
+        await msg.reply_text("Player not found.")
         return
     try:
-        msg = await context.bot.send_photo(chat_id=update.effective_chat.id, photo=url, caption=f"Updated {target_format.upper()} image for {p['name']}")
-        fid = msg.photo[-1].file_id
+        sent = await context.bot.send_photo(chat_id=update.effective_chat.id, photo=url, caption=f"Updated {target_format.upper()} image for {p['name']}")
+        fid = sent.photo[-1].file_id
         if target_format == "ipl":
             p["ipl_image_file_id"] = fid
             p["ipl_image_url"] = url
@@ -2090,9 +2099,10 @@ async def update_image_command(update, context):
         await save_player(p)
         from database import _invalidate_card_pool_cache
         _invalidate_card_pool_cache()
-        await update.message.reply_text(f"✅ {target_format.upper()} image & Web URL updated for *{esc(p['name'])}*.", parse_mode="Markdown")
+        await msg.reply_text(f"✅ {target_format.upper()} image & Web URL updated for *{esc(p['name'])}*.", parse_mode="Markdown")
     except Exception as e:
-        await update.message.reply_text(f"❌ Failed: {e}")
+        await msg.reply_text(f"❌ Failed: {e}")
+
 
 
 
