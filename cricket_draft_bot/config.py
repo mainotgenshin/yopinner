@@ -1,11 +1,13 @@
 # config.py
 import os
-from dotenv import load_dotenv
-
-# Load environment variables
-load_dotenv()
+try:
+    from dotenv import load_dotenv
+    load_dotenv()
+except ImportError:
+    pass
 
 # Bot Token - User must set this env var or replace string
+
 BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 
 # Owner IDs (Integer IDs)
