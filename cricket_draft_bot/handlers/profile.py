@@ -60,18 +60,44 @@ async def handle_profile(update: Update, context: ContextTypes.DEFAULT_TYPE):
     streak_emoji = "🔥" if current_streak >= 3 else "⚡" if current_streak >= 1 else "💤"
 
     # Get global rank (lightweight count query, reuses standings cache)
+    rank = None
     try:
         from handlers.standings import _get_user_rank
         rank, _ = await _get_user_rank(user_id, "overall")
-        rank_line = f"🏆 Global Rank: *#{rank}*\n"
     except Exception:
-        rank_line = ""
+        pass
 
-    text = (
+    import html
+    name_html = html.escape(name or "Player")
+    rank_line_html = f"🏆 Global Rank: <b>#{rank}</b>\n" if rank else ""
+    rank_line_md   = f"🏆 Global Rank: *#{rank}*\n" if rank else ""
+
+    # Clean HTML version (for href text preview)
+    body_html = (
+        "━━━━━━━━━━━━━━━━━━\n"
+        f"    👤 <b>{name_html}</b>\n"
+        "━━━━━━━━━━━━━━━━━━\n"
+        f"{rank_line_html}"
+        f"📅 Joined: <code>{joined_str}</code>\n"
+        "━━━━━━━━━━━━━━━━━━\n"
+        f"🔘 matches : <code>{total_matches}</code>\n"
+        f"🟢 wins    : <code>{wins}</code>\n"
+        f"🔴 losses  : <code>{losses}</code>\n"
+        f"⚪ draws   : <code>{draws}</code>\n"
+        f"📊 win %   : <code>{win_rate:.1f}%</code>\n\n"
+        f"{streak_emoji} <b>Win Streak</b>\n"
+        f"Current: <code>{current_streak}</code> | Best: <code>{best_streak}</code>\n\n"
+        "📈 <b>Recent Matches</b>\n"
+        f"{recent_str}\n"
+        "━━━━━━━━━━━━━━━━━━"
+    )
+
+    # Markdown version (for photo caption or text fallback)
+    body_md = (
         "━━━━━━━━━━━━━━━━━━\n"
         f"    👤 *{esc(name)}*\n"
         "━━━━━━━━━━━━━━━━━━\n"
-        f"{rank_line}"
+        f"{rank_line_md}"
         f"📅 Joined: `{joined_str}`\n"
         "━━━━━━━━━━━━━━━━━━\n"
         f"🔘 matches : `{total_matches}`\n"
@@ -102,17 +128,13 @@ async def handle_profile(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 RARITY_EMOJI_MAP = {"common": "⚪", "rare": "🔵", "epic": "🟣", "legend": "🟡"}
                 rarity = card_data.get("rarity", "")
                 ovr    = card_data.get("ovr", "")
-                fav_line = f"\n\n⭐ Fav Card: {player_doc['name']} ({fmt_labels.get(fmt, fmt)}) {RARITY_EMOJI_MAP.get(rarity, '')} OVR {ovr}"
+                p_name_safe = html.escape(player_doc.get("name", "Unknown"))
+                fav_line_html = f"\n\n⭐ <b>Fav Card:</b> {p_name_safe} ({fmt_labels.get(fmt, fmt)}) {RARITY_EMOJI_MAP.get(rarity, '')} OVR {ovr}"
+                fav_line_md   = f"\n\n⭐ *Fav Card:* {esc(player_doc.get('name', 'Unknown'))} ({fmt_labels.get(fmt, fmt)}) {RARITY_EMOJI_MAP.get(rarity, '')} OVR {ovr}"
 
                 if image_url:
-                    # Fast href approach — lightweight text message, image renders as preview
-                    text_html = (
-                        text
-                        .replace("*", "")          # strip Markdown bold markers
-                        .replace("`", "")
-                    )
-                    fav_line_plain = f"\n\n⭐ Fav Card: {player_doc['name']} ({fmt_labels.get(fmt, fmt)}) {RARITY_EMOJI_MAP.get(rarity, '')} OVR {ovr}"
-                    href_text = f'<a href="{image_url}">\u200b</a>' + text + fav_line_plain
+                    # Fast href approach: zero-width joiner entity &#8205; + clean HTML
+                    href_text = f'<a href="{image_url}">&#8205;</a>' + body_html + fav_line_html
                     try:
                         await update.effective_message.reply_text(
                             href_text,
@@ -124,7 +146,7 @@ async def handle_profile(update: Update, context: ContextTypes.DEFAULT_TYPE):
                         pass  # Fall through to photo fallback
 
                 if image_fid:
-                    full_caption = text + fav_line
+                    full_caption = body_md + fav_line_md
                     try:
                         await update.effective_message.reply_photo(
                             photo=image_fid,
@@ -138,16 +160,17 @@ async def handle_profile(update: Update, context: ContextTypes.DEFAULT_TYPE):
         pass  # Never break profile due to card system errors
 
     try:
-        await update.effective_message.reply_text(text, parse_mode="Markdown")
+        await update.effective_message.reply_text(body_md, parse_mode="Markdown")
     except Exception:
         # Original message deleted (e.g. bot restarted) — send without reply
         try:
             await context.bot.send_message(
                 chat_id=update.effective_chat.id,
-                text=text,
+                text=body_md,
                 parse_mode="Markdown"
             )
         except Exception:
             pass
+
 
 
