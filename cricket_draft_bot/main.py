@@ -25,6 +25,8 @@ from handlers.admin import add_player, map_api, remove_player, get_player_stats,
 from handlers.challenge import challenge_ipl, challenge_odi, challenge_test, challenge_fifa, challenge_wwe, handle_join, handle_mode_pick_callback
 from handlers.draft import handle_draft_callback
 from handlers.ready import handle_ready
+from handlers.bbet import handle_bbet
+
 
 logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
@@ -234,6 +236,32 @@ async def post_init(application):
                 if _warmup_tick >= 4:
                     _warmup_tick = 0
                     await warmup_card_pools()
+
+                # 3. Auto-sweep matches stuck for > 30 minutes
+                import time as _time
+                _now = _time.time()
+                from database import get_db as _get_db
+                _db = _get_db()
+                stale_cursor = _db.matches.find({"created_at": {"$lt": _now - 1800}})
+                async for stale in stale_cursor:
+                    mid     = stale.get("match_id", "")
+                    chat_id = stale.get("chat_id")
+                    pin_id  = stale.get("pinned_message_id") or stale.get("board_message_id")
+                    if mid:
+                        try:
+                            from game.state import evict_match_cache
+                            evict_match_cache(mid)
+                            await _db.matches.delete_one({"match_id": mid})
+                            if chat_id and pin_id:
+                                try:
+                                    await application.bot.unpin_chat_message(
+                                        chat_id=chat_id, message_id=pin_id
+                                    )
+                                except Exception:
+                                    pass
+                            _log.info(f"Auto-swept stale match {mid} (>30 min old)")
+                        except Exception as _se:
+                            _log.warning(f"Auto-sweep error for {mid}: {_se}")
 
             except Exception as e:
                 _log.warning(f"Maintenance loop error: {e}")
@@ -726,6 +754,10 @@ if __name__ == '__main__':
     application.add_handler(CommandHandler('quest',      handle_quest))
     application.add_handler(CommandHandler('ggive',      handle_ggive))
     application.add_handler(CommandHandler('h2h',        handle_h2h))
+
+    # Coin Flip Bet
+    application.add_handler(CommandHandler('bbet', handle_bbet))
+
 
     # Standings / Leaderboard
     from handlers.standings import handle_standings, handle_standings_callback
