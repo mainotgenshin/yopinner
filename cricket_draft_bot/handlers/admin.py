@@ -111,14 +111,17 @@ async def add_player(update: Update, context: ContextTypes.DEFAULT_TYPE):
         player = {
             "player_id": player_id,
             "name": name,
-            "roles": roles, # Intl / Default Roles
-            "image_file_id": image_file_id,
-            "ipl_roles": list(roles), # Seed IPL roles same as Intl initially? Or empty? User: "append every stats/roles... to ipl"
+            "roles": roles,
+            "image_url": image_url,          # original web URL (for href preview)
+            "image_file_id": image_file_id,  # Telegram file_id (backup / fallback)
+            "ipl_image_url": image_url,      # same image used for IPL by default
             "ipl_image_file_id": image_file_id,
+            "ipl_roles": list(roles),
             "api_reference": {},
-            "stats": {} 
+            "stats": {}
         }
         await save_player(player)
+
         
         from telegram import InlineKeyboardButton, InlineKeyboardMarkup
         keyboard = [[InlineKeyboardButton("🎲 Generate Stats (ODI)", callback_data=f"gen_odi_{player_id}")]]
@@ -610,6 +613,14 @@ async def get_player_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"🔒 Submission:   {w('submission')}"
             f"{cat_wwe}"
         )
+        img_url = p.get('wwe_image_url') or p.get('image_url')
+        if img_url and str(img_url).startswith('http'):
+            try:
+                href_text = f'<a href="{img_url}">\u200b</a>' + msg
+                await update.message.reply_text(href_text, parse_mode="HTML", disable_web_page_preview=False)
+                return
+            except Exception:
+                pass
         img = p.get('image_file_id') or p.get('wwe_image_url')
         if img:
             try:
@@ -641,6 +652,14 @@ async def get_player_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"🛡 CB: {f('CB')}  LB: {f('LB')}  RB: {f('RB')}"
             f"{cat_fifa}"
         )
+        img_url = p.get('fifa_image_url') or p.get('image_url')
+        if img_url and str(img_url).startswith('http'):
+            try:
+                href_text = f'<a href="{img_url}">\u200b</a>' + msg
+                await update.message.reply_text(href_text, parse_mode="HTML", disable_web_page_preview=False)
+                return
+            except Exception:
+                pass
         sent = False
         for img_key in ('image_file_id', 'fifa_image_url'):
             if p.get(img_key) and not sent:
@@ -654,6 +673,7 @@ async def get_player_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if not sent:
             await update.message.reply_text(msg, parse_mode="Markdown")
         return
+
 
     # ── Cricket ───────────────────────────────────────────────────────────────
     roles      = p.get('roles', [])
@@ -720,6 +740,15 @@ async def get_player_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
         btn_row.append(InlineKeyboardButton("🧪 Test Stats", callback_data=f"view_test_{p['player_id']}"))
     kb = InlineKeyboardMarkup([btn_row])
 
+    img_url = p.get('odi_image_url') or p.get('image_url') or p.get('ipl_image_url')
+    if img_url and str(img_url).startswith('http'):
+        try:
+            href_text = f'<a href="{img_url}">\u200b</a>' + msg
+            await update.message.reply_text(href_text, reply_markup=kb, parse_mode="HTML", disable_web_page_preview=False)
+            return
+        except Exception:
+            pass
+
     if p.get('image_file_id'):
         try:
             await update.message.reply_photo(
@@ -731,6 +760,7 @@ async def get_player_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
             logger.error(f"Photo send failed for {p['name']}: {e}")
     # Fallback: plain HTML — never crashes on special chars
     await update.message.reply_text(msg, reply_markup=kb, parse_mode="HTML")
+
 
 
 
@@ -2037,6 +2067,8 @@ async def update_image_command(update, context):
         else:
             p["image_file_id"] = fid
         await save_player(p)
+
+
         await update.message.reply_text(f"✅ Image updated for *{esc(p['name'])}*.", parse_mode="Markdown")
     except Exception as e:
         await update.message.reply_text(f"❌ Failed: {e}")
@@ -2177,6 +2209,8 @@ async def update_image_fifa(update, context):
         p["image_file_id"] = photo_fid
         await save_player(p)
         await update.message.reply_text(f"✅ Updated FIFA image for *{esc(p['name'])}*.", parse_mode="Markdown")
+
+
     else:
         await update.message.reply_text("❌ No photo found. Attach a photo or provide URL.")
 
