@@ -428,8 +428,10 @@ async def _show_card_detail(msg_or_query, owner_id: int, card: dict, edit: bool)
     fav_label = "💔 Remove Fav" if is_fav else "❤️ Set as Fav"
     fav_cb = f"vc_unfav|{owner_id}|{card['player_id']}|{card['format']}" if is_fav else f"vc_fav|{owner_id}|{card['player_id']}|{card['format']}"
     fav_warning = ""
+    fav_warning_html = ""
     if is_fav and is_last_copy:
         fav_warning = "\n\n⭐ *Fav Card* — Remove fav to sell or trade this card."
+        fav_warning_html = "\n\n⭐ <b>Fav Card</b> — Remove fav to sell or trade this card."
     text = (
         f"🃏 *{esc(card['name'])}*\n"
         f"━━━━━━━━━━━━━━━━━━\n"
@@ -449,15 +451,17 @@ async def _show_card_detail(msg_or_query, owner_id: int, card: dict, edit: bool)
     # Determine if image is a web URL (usable for href preview) or a file_id
     image_is_url = bool(image and str(image).startswith("http"))
 
+    import html
+    name_html = html.escape(card.get("name", "Card"))
     # Build HTML-compatible text (href requires HTML parse mode)
     text_html = (
-        f"🃏 <b>{card['name']}</b>\n"
+        f"🃏 <b>{name_html}</b>\n"
         f"━━━━━━━━━━━━━━━━━━\n"
         f"📋 Format: <b>{f_label}</b>\n"
         f"{r_emoji} Rarity: <b>{card['rarity'].title()}</b>\n"
         f"⭐ OVR: <b>{card['ovr']}</b>\n"
         f"📦 Owned: <b>{card['quantity']}×</b>"
-        f"{fav_warning}\n"
+        f"{fav_warning_html}\n"
         f"━━━━━━━━━━━━━━━━━━"
     )
 
@@ -465,7 +469,7 @@ async def _show_card_detail(msg_or_query, owner_id: int, card: dict, edit: bool)
         is_photo = bool(getattr(msg_or_query, 'message', None) and msg_or_query.message.photo)
         if image_is_url:
             # href approach: edit existing message to text with hidden image preview
-            href_text = f'<a href="{image}">\u200b</a>' + text_html
+            href_text = f'<a href="{image}">&#8205;</a>' + text_html
             try:
                 if is_photo:
                     # Convert photo message to text message via send + delete pattern
@@ -494,7 +498,7 @@ async def _show_card_detail(msg_or_query, owner_id: int, card: dict, edit: bool)
             await msg_or_query.edit_message_text(text, reply_markup=kb, parse_mode="Markdown")
     else:
         if image_is_url:
-            href_text = f'<a href="{image}">\u200b</a>' + text_html
+            href_text = f'<a href="{image}">&#8205;</a>' + text_html
             try:
                 await msg_or_query.reply_text(
                     href_text, reply_markup=kb, parse_mode="HTML",
@@ -502,6 +506,7 @@ async def _show_card_detail(msg_or_query, owner_id: int, card: dict, edit: bool)
                 )
             except Exception:
                 await msg_or_query.reply_text(text, reply_markup=kb, parse_mode="Markdown")
+
         elif image:
             try:
                 await msg_or_query.reply_photo(photo=image, caption=text, reply_markup=kb, parse_mode="Markdown")
