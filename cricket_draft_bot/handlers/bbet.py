@@ -3,7 +3,7 @@
 /bbet head|tail <amount>  — Coin flip gambling command.
 Rules:
   - Min bet: 1 coin | Max bet: 1,000 coins
-  - 5 attempts per user per day (resets at midnight UTC)
+  - 20 attempts per user per day (resets at midnight UTC)
   - Win: double the bet (net +amount). Lose: lose the bet.
 """
 import random
@@ -17,13 +17,13 @@ logger = logging.getLogger(__name__)
 
 BBET_MAX   = 1000
 BBET_MIN   = 1
-BBET_DAILY = 5
+BBET_DAILY = 20
+
 
 
 async def _get_coins(user_id: int) -> int:
-    db = get_db()
-    doc = await db.users.find_one({"user_id": user_id}, {"coins": 1})
-    return int(doc.get("coins", 0)) if doc else 0
+    from database import get_card_coins
+    return await get_card_coins(user_id)
 
 
 async def _get_bbet_state(user_id: int):
@@ -42,11 +42,12 @@ async def _record_bbet(user_id: int, delta: int, new_count: int, today: str) -> 
     db = get_db()
     result = await db.users.find_one_and_update(
         {"user_id": user_id},
-        {"$inc": {"coins": delta}, "$set": {"bbet_today_count": new_count, "bbet_today_date": today}},
+        {"$inc": {"card_coins": delta}, "$set": {"bbet_today_count": new_count, "bbet_today_date": today}},
         upsert=True,
         return_document=True
     )
-    return int(result.get("coins", 0))
+    return int(result.get("card_coins", 0))
+
 
 
 async def handle_bbet(update: Update, context: ContextTypes.DEFAULT_TYPE):
