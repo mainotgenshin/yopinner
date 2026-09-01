@@ -446,9 +446,10 @@ async def handle_draw(update: Update, context: ContextTypes.DEFAULT_TYPE, match:
     p_data = player
 
     if match.mode == "FIFA":
-        media = (p_data.get("fifa_image_url") or p_data.get("image_url") or
-                 p_data.get("image_file_id") or DRAFT_BANNER_FIFA)
+        media = (p_data.get("image_file_id") or p_data.get("fifa_image_url") or
+                 p_data.get("image_url") or DRAFT_BANNER_FIFA)
         default_banner = DRAFT_BANNER_FIFA
+
 
     elif "WWE" in match.mode:
         media = (p_data.get("wwe_image_url") or p_data.get("image_url") or
@@ -678,8 +679,9 @@ async def handle_replace_start(update: Update, context: ContextTypes.DEFAULT_TYP
 
     # Get player image — URL first (href-ready), fall back to file_id
     if match.mode == "FIFA":
-        media = (player.get("fifa_image_url") or player.get("image_url") or
-                 player.get("image_file_id") or DRAFT_BANNER_FIFA)
+        media = (player.get("image_file_id") or player.get("fifa_image_url") or
+                 player.get("image_url") or DRAFT_BANNER_FIFA)
+
 
     elif "WWE" in match.mode:
         media = (player.get("wwe_image_url") or player.get("image_url") or
