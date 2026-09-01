@@ -315,10 +315,14 @@ async def _show_mycards(message_or_query, owner_id: int, viewer_id: int, sport_f
         text = "\n".join(lines)
     # Navigation + filter buttons
     nav = []
+    if total_pages > 5 and page > 0:
+        nav.append(InlineKeyboardButton("⏪ -5", callback_data=f"mc_page|{owner_id}|{sport_filter or 'all'}|{max(0, page-5)}"))
     if page > 0:
         nav.append(InlineKeyboardButton("◀️", callback_data=f"mc_page|{owner_id}|{sport_filter or 'all'}|{page-1}"))
     if page < total_pages - 1:
         nav.append(InlineKeyboardButton("▶️", callback_data=f"mc_page|{owner_id}|{sport_filter or 'all'}|{page+1}"))
+    if total_pages > 5 and page < total_pages - 1:
+        nav.append(InlineKeyboardButton("+5 ⏩", callback_data=f"mc_page|{owner_id}|{sport_filter or 'all'}|{min(total_pages-1, page+5)}"))
     filters = [
         InlineKeyboardButton("All",     callback_data=f"mc_page|{owner_id}|all|0"),
         InlineKeyboardButton("🏏",      callback_data=f"mc_page|{owner_id}|cricket|0"),
@@ -326,6 +330,7 @@ async def _show_mycards(message_or_query, owner_id: int, viewer_id: int, sport_f
         InlineKeyboardButton("🤼",      callback_data=f"mc_page|{owner_id}|wwe|0"),
     ]
     kb = InlineKeyboardMarkup([filters] + ([nav] if nav else []))
+
     if edit:
         await message_or_query.edit_message_text(text, reply_markup=kb, parse_mode="Markdown")
     else:
@@ -439,14 +444,44 @@ async def _show_card_detail(msg_or_query, owner_id: int, card: dict, edit: bool)
         [InlineKeyboardButton(fav_label, callback_data=fav_cb)],
         [InlineKeyboardButton(f"💰 Sell for {sell_val}🪙", callback_data=f"vc_sell|{owner_id}|{card['player_id']}|{card['format']}|{sell_val}")],
     ])
-    image = card.get("image")
+    image = card.get("image")  # may be a URL or a file_id
+
+    # Determine if image is a web URL (usable for href preview) or a file_id
+    image_is_url = bool(image and str(image).startswith("http"))
+
+    # Build HTML-compatible text (href requires HTML parse mode)
+    text_html = (
+        f"🃏 <b>{card['name']}</b>\n"
+        f"━━━━━━━━━━━━━━━━━━\n"
+        f"📋 Format: <b>{f_label}</b>\n"
+        f"{r_emoji} Rarity: <b>{card['rarity'].title()}</b>\n"
+        f"⭐ OVR: <b>{card['ovr']}</b>\n"
+        f"📦 Owned: <b>{card['quantity']}×</b>"
+        f"{fav_warning}\n"
+        f"━━━━━━━━━━━━━━━━━━"
+    )
+
     if edit:
         is_photo = bool(getattr(msg_or_query, 'message', None) and msg_or_query.message.photo)
-        if is_photo:
+        if image_is_url:
+            # href approach: edit existing message to text with hidden image preview
+            href_text = f'<a href="{image}">\u200b</a>' + text_html
+            try:
+                if is_photo:
+                    # Convert photo message to text message via send + delete pattern
+                    # (edit_message_media still works but is slow — we use text edit for speed)
+                    await msg_or_query.edit_message_caption(caption=text, reply_markup=kb, parse_mode="Markdown")
+                else:
+                    await msg_or_query.edit_message_text(
+                        href_text, reply_markup=kb, parse_mode="HTML",
+                        disable_web_page_preview=False
+                    )
+            except Exception:
+                # Fallback: plain text
+                await msg_or_query.edit_message_text(text, reply_markup=kb, parse_mode="Markdown")
+        elif is_photo:
             await msg_or_query.edit_message_caption(caption=text, reply_markup=kb, parse_mode="Markdown")
         elif image:
-            # Original message was text (format picker) but card has an image —
-            # convert to photo via edit_message_media so the image actually appears
             from telegram import InputMediaPhoto
             try:
                 await msg_or_query.edit_message_media(
@@ -458,13 +493,23 @@ async def _show_card_detail(msg_or_query, owner_id: int, card: dict, edit: bool)
         else:
             await msg_or_query.edit_message_text(text, reply_markup=kb, parse_mode="Markdown")
     else:
-        if image:
+        if image_is_url:
+            href_text = f'<a href="{image}">\u200b</a>' + text_html
+            try:
+                await msg_or_query.reply_text(
+                    href_text, reply_markup=kb, parse_mode="HTML",
+                    disable_web_page_preview=False
+                )
+            except Exception:
+                await msg_or_query.reply_text(text, reply_markup=kb, parse_mode="Markdown")
+        elif image:
             try:
                 await msg_or_query.reply_photo(photo=image, caption=text, reply_markup=kb, parse_mode="Markdown")
             except Exception:
                 await msg_or_query.reply_text(text, reply_markup=kb, parse_mode="Markdown")
         else:
             await msg_or_query.reply_text(text, reply_markup=kb, parse_mode="Markdown")
+
 
 async def cb_vc_fav(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -513,7 +558,10 @@ async def cb_vc_sell(update: Update, context: ContextTypes.DEFAULT_TYPE):
     cards = await get_user_cards(int(owner_id))
     card = next((c for c in cards if c["player_id"] == player_id and c["format"] == fmt), None)
     if not card:
-        await query.answer(); await query.edit_message_text("❌ Card not found."); return
+        if query.message and query.message.photo:
+            await query.answer(); await query.edit_message_caption(caption="❌ Card not found."); return
+        else:
+            await query.answer(); await query.edit_message_text("❌ Card not found."); return
     # Check fav BEFORE answering (query can only be answered once)
     fav = await get_fav_card(int(owner_id))
     is_fav = fav and fav.get("player_id") == player_id and fav.get("format") == fmt
@@ -643,12 +691,17 @@ async def _show_trade_picker(msg_or_q, initiator_id: int, target_id: int, target
         for c in page_cards
     ]
     nav = []
+    if total_pages > 5 and page > 0:
+        nav.append(InlineKeyboardButton("⏪ -5", callback_data=f"tr_page|{initiator_id}|{target_id}|{max(0, page-5)}"))
     if page > 0:
         nav.append(InlineKeyboardButton("◀️", callback_data=f"tr_page|{initiator_id}|{target_id}|{page-1}"))
     if page < total_pages - 1:
         nav.append(InlineKeyboardButton("▶️", callback_data=f"tr_page|{initiator_id}|{target_id}|{page+1}"))
+    if total_pages > 5 and page < total_pages - 1:
+        nav.append(InlineKeyboardButton("+5 ⏩", callback_data=f"tr_page|{initiator_id}|{target_id}|{min(total_pages-1, page+5)}"))
     if nav:
         buttons.append(nav)
+
     buttons.append([InlineKeyboardButton("❌ Cancel", callback_data=f"tr_cancel|{initiator_id}")])
     kb = InlineKeyboardMarkup(buttons)
     if edit:
@@ -754,12 +807,17 @@ async def _show_target_picker(query, trade_id: str, target_id: str, cards: list,
         for c in page_cards
     ]
     nav = []
+    if total_pages > 5 and page > 0:
+        nav.append(InlineKeyboardButton("⏪ -5", callback_data=f"tr_tpage|{target_id}|{trade_id}|{max(0, page-5)}"))
     if page > 0:
         nav.append(InlineKeyboardButton("◀️", callback_data=f"tr_tpage|{target_id}|{trade_id}|{page-1}"))
     if page < total_pages - 1:
         nav.append(InlineKeyboardButton("▶️", callback_data=f"tr_tpage|{target_id}|{trade_id}|{page+1}"))
+    if total_pages > 5 and page < total_pages - 1:
+        nav.append(InlineKeyboardButton("+5 ⏩", callback_data=f"tr_tpage|{target_id}|{trade_id}|{min(total_pages-1, page+5)}"))
     if nav:
         pick_buttons.append(nav)
+
     pick_buttons.append([InlineKeyboardButton("❌ Decline", callback_data=f"tr_decline|{target_id}|{trade_id}")])
     page_note = f" (Page {page+1}/{total_pages})" if total_pages > 1 else ""
     await query.edit_message_text(
