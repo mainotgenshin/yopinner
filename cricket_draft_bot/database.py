@@ -725,10 +725,11 @@ def _get_card_image(player_doc: dict, fmt: str) -> Optional[str]:
                 player_doc.get("image_url") or
                 player_doc.get("image_file_id"))
     elif fmt == "fifa":
-        return (player_doc.get("image_file_id") or
-                player_doc.get("fifa_image_url") or
-                player_doc.get("image_url"))
+        return (player_doc.get("fifa_image_url") or
+                player_doc.get("image_url") or
+                player_doc.get("image_file_id"))
     return player_doc.get("image_url") or player_doc.get("image_file_id")
+
 
 def _get_card_image_url(player_doc: dict, fmt: str) -> Optional[str]:
     """Get direct web URL for a player-format card (for href preview).
@@ -992,9 +993,11 @@ async def _build_card_pool(sport: str) -> list:
         return []
 
     async for p in db.players.find(query, {"player_id": 1, "name": 1, "cards": 1,
+                                            "ipl_image_url": 1, "odi_image_url": 1, "image_url": 1,
                                             "ipl_image_file_id": 1, "image_file_id": 1,
                                             "wwe_image_url": 1, "fifa_image_url": 1,
                                             "test_image_url": 1}):
+
         for fmt in formats:
             card_data = p.get("cards", {}).get(fmt)
             if not card_data:
