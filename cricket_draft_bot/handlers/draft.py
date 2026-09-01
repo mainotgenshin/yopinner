@@ -670,10 +670,20 @@ async def handle_replace_start(update: Update, context: ContextTypes.DEFAULT_TYP
             await update.callback_query.answer("No player drawn!", show_alert=True)
         except: pass
         return
-        
+
+    # Get Player Data
+    player = await get_player(match.pending_player_id)
+    if not player:
+        try:
+            await update.callback_query.answer("Player data not found!", show_alert=True)
+        except: pass
+        return
+
+
     import html as _html
     p_name_safe = _html.escape(player.get('name', 'Player'))
     card_caption = f"♻️ <b>Replacing Player</b>\nNew Player: <b>{p_name_safe}</b>\n\nSelect a position to replace:"
+
 
     
     keyboard = []
