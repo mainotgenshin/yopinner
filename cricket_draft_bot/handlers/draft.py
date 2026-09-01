@@ -284,22 +284,25 @@ async def handle_draft_callback(update: Update, context: ContextTypes.DEFAULT_TY
 
 def format_draft_board(match: Match, include_turn: bool = True) -> str:
     """Creates the text for the draft board (Static UI Rule 1)."""
+    import html as _html
     def format_team(team):
-        lines = [f"🔵 {esc(team.owner_name)}" if team == match.team_a else f"🔴 {esc(team.owner_name)}"]
+        name_clean = _html.escape(team.owner_name or "Player")
+        lines = [f"🔵 <b>{name_clean}</b>" if team == match.team_a else f"🔴 <b>{name_clean}</b>"]
         for slot, player in team.slots.items():
-            val = esc(player.name) if player else ". . ."
+            val = _html.escape(player.name) if player else ". . ."
             lines.append(f"• {slot}: {val}")
         return "\n".join(lines)
 
-    board = f"🏁 *Drafting Phase*\n\n"
+    board = f"🏁 <b>Drafting Phase</b>\n\n"
     board += format_team(match.team_a) + "\n\n"
     board += format_team(match.team_b)
 
     if include_turn:
         current_name = match.team_a.owner_name if match.current_turn == match.team_a.owner_id else match.team_b.owner_name
-        board += f"\n\n🎯 *Turn:* {esc(current_name)}"
+        board += f"\n\n🎯 <b>Turn:</b> {_html.escape(current_name or 'Player')}"
 
     return board
+
 
 import asyncio
 from telegram.error import RetryAfter
@@ -317,10 +320,24 @@ async def update_draft_message(update: Update, context: ContextTypes.DEFAULT_TYP
     
     # 1. Initial Creation (Synchronous)
     if not match.draft_message_id:
-        if media:
-             msg = await context.bot.send_photo(chat_id=match.chat_id, photo=media, caption=caption, reply_markup=reply_markup, parse_mode="Markdown")
+        media_is_url = bool(media and str(media).startswith("http"))
+        if media_is_url:
+            href_text = f'<a href="{media}">&#8205;</a>' + caption
+            msg = await context.bot.send_message(
+                chat_id=match.chat_id, text=href_text,
+                reply_markup=reply_markup, parse_mode="HTML",
+                disable_web_page_preview=False
+            )
+        elif media:
+            msg = await context.bot.send_photo(
+                chat_id=match.chat_id, photo=media, caption=caption,
+                reply_markup=reply_markup, parse_mode="Markdown"
+            )
         else:
-             msg = await context.bot.send_message(chat_id=match.chat_id, text=caption, reply_markup=reply_markup, parse_mode="Markdown")
+            msg = await context.bot.send_message(
+                chat_id=match.chat_id, text=caption,
+                reply_markup=reply_markup, parse_mode="HTML"
+            )
         
         match.draft_message_id = msg.message_id
         # Auto-pin the draft board in background
@@ -343,12 +360,21 @@ async def update_draft_message(update: Update, context: ContextTypes.DEFAULT_TYP
         await save_match_state(match)
         return
 
-
-
     # 2. Synchronous Edit
     if synchronous:
+        media_is_url = bool(media and str(media).startswith("http"))
         try:
-            if media:
+            if media_is_url:
+                href_text = f'<a href="{media}">&#8205;</a>' + caption
+                await context.bot.edit_message_text(
+                    chat_id=match.chat_id,
+                    message_id=match.draft_message_id,
+                    text=href_text,
+                    reply_markup=reply_markup,
+                    parse_mode="HTML",
+                    disable_web_page_preview=False
+                )
+            elif media:
                 await context.bot.edit_message_media(
                     chat_id=match.chat_id,
                     message_id=match.draft_message_id,
@@ -356,20 +382,21 @@ async def update_draft_message(update: Update, context: ContextTypes.DEFAULT_TYP
                     reply_markup=reply_markup
                 )
             else:
-                await context.bot.edit_message_caption(
+                await context.bot.edit_message_text(
                     chat_id=match.chat_id,
                     message_id=match.draft_message_id,
-                    caption=caption,
+                    text=caption,
                     reply_markup=reply_markup,
-                    parse_mode="Markdown"
+                    parse_mode="HTML"
                 )
         except Exception as e:
             logger.warning(f"Synchronous draft board edit failed: {e}. Falling back to recreation...")
-            await debouncer._recreate_message(match, context.bot, caption, reply_markup, media, "Markdown")
+            await debouncer._recreate_message(match, context.bot, caption, reply_markup, media, "HTML")
         return
 
     # 3. Batched Editing (Asynchronous)
-    await debouncer.schedule_update(match, context.bot, caption, reply_markup, media=media, parse_mode="Markdown")
+    await debouncer.schedule_update(match, context.bot, caption, reply_markup, media=media, parse_mode="HTML")
+
 
 
 
@@ -400,12 +427,11 @@ async def handle_draw(update: Update, context: ContextTypes.DEFAULT_TYPE, match:
     
     current_team = match.team_a if match.team_a.owner_id == match.current_turn else match.team_b
     
-    # UI: Show Player Card in the same message
-    # Rule 2: Strict Caption Format
-    # ✨ ⚔️ <CurrentPlayerName>'s turn
-    # Pulled: <Cricketer Name>
-    # Assign a position:
-    card_caption = f"✨ ⚔️ {esc(current_team.owner_name)}'s turn\nPulled: {esc(player['name'])}\nAssign a position:"
+    import html as _html
+    owner_safe = _html.escape(current_team.owner_name or "Player")
+    p_name_safe = _html.escape(player.get('name', 'Player'))
+    card_caption = f"✨ ⚔️ <b>{owner_safe}'s turn</b>\nPulled: <b>{p_name_safe}</b>\nAssign a position:"
+
     
     # Buttons for Card
     keyboard = []
@@ -576,7 +602,7 @@ async def handle_assign(update: Update, context: ContextTypes.DEFAULT_TYPE, matc
             swap_url = f"https://t.me/{bot_uname}?start=swap_{match.match_id}"
             keyboard.append([InlineKeyboardButton("🔀 Swap Positions (1 Left)", url=swap_url)])
         banner = await get_banner_for_match(match)
-        await update_draft_message(update, context, match, f"{format_draft_board(match, include_turn=False)}\n\n✅ *Draft Complete!* Waiting for Ready...", keyboard, media=banner)
+        await update_draft_message(update, context, match, f"{format_draft_board(match, include_turn=False)}\n\n✅ <b>Draft Complete!</b> Waiting for Ready...", keyboard, media=banner)
         return
 
     # Switch Turn — save=False avoids double MongoDB write; update_draft_message persists state
@@ -620,7 +646,10 @@ async def handle_redraw(update: Update, context: ContextTypes.DEFAULT_TYPE, matc
         board_text = format_draft_board(match)
         keyboard = [[InlineKeyboardButton("🎲 Draw Player", callback_data=f"draw_{match.match_id}")]]
         banner = await get_banner_for_match(match)
-        await update_draft_message(update, context, match, f"{board_text}\n\n⏩ {esc(current_team.owner_name)} Skipped! Turn Consumed.", keyboard, media=banner)
+        import html as _html
+        name_safe = _html.escape(current_team.owner_name or "Player")
+        await update_draft_message(update, context, match, f"{board_text}\n\n⏩ <b>{name_safe} Skipped!</b> Turn Consumed.", keyboard, media=banner)
+
         
     else:
         try:
@@ -642,11 +671,10 @@ async def handle_replace_start(update: Update, context: ContextTypes.DEFAULT_TYP
         except: pass
         return
         
-    # Get Player Data
-    player = await get_player(match.pending_player_id)
-    
-    # UI: Show Filled Slots to Replace
-    card_caption = f"♻️ *Replacing Player*\nNew Player: {esc(player['name'])}\n\nSelect a position to replace:"
+    import html as _html
+    p_name_safe = _html.escape(player.get('name', 'Player'))
+    card_caption = f"♻️ <b>Replacing Player</b>\nNew Player: <b>{p_name_safe}</b>\n\nSelect a position to replace:"
+
     
     keyboard = []
     
