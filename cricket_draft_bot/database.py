@@ -702,21 +702,52 @@ async def get_user_cards(user_id: int, sport_filter: str = None) -> list:
     return result
 
 def _get_card_image(player_doc: dict, fmt: str) -> Optional[str]:
-    """Get best available image for a player-format card."""
+    """Get best available image for a player-format card.
+    Priority: format-specific URL -> format-specific file_id -> generic file_id.
+    Returns a URL string (http) or a Telegram file_id string.
+    """
     if fmt == "ipl":
-        return player_doc.get("ipl_image_file_id") or player_doc.get("image_file_id")
+        return (player_doc.get("ipl_image_url") or
+                player_doc.get("image_url") or
+                player_doc.get("ipl_image_file_id") or
+                player_doc.get("image_file_id"))
     elif fmt == "odi":
-        return player_doc.get("odi_image_file_id") or player_doc.get("image_file_id")
+        return (player_doc.get("odi_image_url") or
+                player_doc.get("image_url") or
+                player_doc.get("odi_image_file_id") or
+                player_doc.get("image_file_id"))
     elif fmt == "test":
-        return player_doc.get("test_image_url") or player_doc.get("image_file_id")
+        return (player_doc.get("test_image_url") or
+                player_doc.get("image_url") or
+                player_doc.get("image_file_id"))
     elif fmt == "wwe":
-        return player_doc.get("wwe_image_url") or player_doc.get("image_file_id")
+        return (player_doc.get("wwe_image_url") or
+                player_doc.get("image_url") or
+                player_doc.get("image_file_id"))
     elif fmt == "fifa":
-        # image_file_id = manually updated real photo (takes priority)
-        # fifa_image_url = original card art (fallback for non-updated players)
-        return player_doc.get("image_file_id") or player_doc.get("fifa_image_url")
+        return (player_doc.get("image_file_id") or
+                player_doc.get("fifa_image_url") or
+                player_doc.get("image_url"))
+    return player_doc.get("image_url") or player_doc.get("image_file_id")
 
-    return player_doc.get("image_file_id")
+def _get_card_image_url(player_doc: dict, fmt: str) -> Optional[str]:
+    """Get direct web URL for a player-format card (for href preview).
+    Returns an http URL if available, otherwise None (caller should fall back to file_id).
+    """
+    if fmt == "ipl":
+        url = player_doc.get("ipl_image_url") or player_doc.get("image_url")
+    elif fmt == "odi":
+        url = player_doc.get("odi_image_url") or player_doc.get("image_url")
+    elif fmt == "test":
+        url = player_doc.get("test_image_url") or player_doc.get("image_url")
+    elif fmt == "wwe":
+        url = player_doc.get("wwe_image_url") or player_doc.get("image_url")
+    elif fmt == "fifa":
+        url = player_doc.get("fifa_image_url") or player_doc.get("image_url")
+    else:
+        url = player_doc.get("image_url")
+    return url if url and url.startswith("http") else None
+
 
 async def get_user_card(user_id: int, player_id: str, fmt: str) -> Optional[dict]:
     """Get a single user card entry or None."""
