@@ -366,21 +366,49 @@ async def update_draft_message(update: Update, context: ContextTypes.DEFAULT_TYP
         try:
             if media_is_url:
                 href_text = f'<a href="{media}">&#8205;</a>' + caption
-                await context.bot.edit_message_text(
-                    chat_id=match.chat_id,
-                    message_id=match.draft_message_id,
-                    text=href_text,
-                    reply_markup=reply_markup,
-                    parse_mode="HTML",
-                    disable_web_page_preview=False
-                )
+                try:
+                    await context.bot.edit_message_text(
+                        chat_id=match.chat_id,
+                        message_id=match.draft_message_id,
+                        text=href_text,
+                        reply_markup=reply_markup,
+                        parse_mode="HTML",
+                        disable_web_page_preview=False
+                    )
+                except Exception as e:
+                    err = str(e).lower()
+                    if "there is no text" in err or "only edit the caption" in err:
+                        # It's a photo message — fall back to edit_message_caption
+                        await context.bot.edit_message_caption(
+                            chat_id=match.chat_id,
+                            message_id=match.draft_message_id,
+                            caption=caption,
+                            reply_markup=reply_markup,
+                            parse_mode="HTML"
+                        )
+                    else:
+                        raise
             elif media:
-                await context.bot.edit_message_media(
-                    chat_id=match.chat_id,
-                    message_id=match.draft_message_id,
-                    media=InputMediaPhoto(media=media, caption=caption, parse_mode="Markdown"),
-                    reply_markup=reply_markup
-                )
+                try:
+                    await context.bot.edit_message_media(
+                        chat_id=match.chat_id,
+                        message_id=match.draft_message_id,
+                        media=InputMediaPhoto(media=media, caption=caption, parse_mode="HTML"),
+                        reply_markup=reply_markup
+                    )
+                except Exception as e:
+                    err = str(e).lower()
+                    if "there is no caption" in err or "not a media message" in err:
+                        # It's a text message — edit as text
+                        await context.bot.edit_message_text(
+                            chat_id=match.chat_id,
+                            message_id=match.draft_message_id,
+                            text=caption,
+                            reply_markup=reply_markup,
+                            parse_mode="HTML"
+                        )
+                    else:
+                        raise
             else:
                 await context.bot.edit_message_text(
                     chat_id=match.chat_id,
@@ -393,6 +421,7 @@ async def update_draft_message(update: Update, context: ContextTypes.DEFAULT_TYP
             logger.warning(f"Synchronous draft board edit failed: {e}. Falling back to recreation...")
             await debouncer._recreate_message(match, context.bot, caption, reply_markup, media, "HTML")
         return
+
 
     # 3. Batched Editing (Asynchronous)
     await debouncer.schedule_update(match, context.bot, caption, reply_markup, media=media, parse_mode="HTML")
@@ -472,10 +501,13 @@ async def handle_draw(update: Update, context: ContextTypes.DEFAULT_TYPE, match:
     p_data = player
 
     if match.mode == "FIFA":
-        media = (p_data.get("image_file_id") or p_data.get("fifa_image_url") or
-                 p_data.get("image_url") or DRAFT_BANNER_FIFA)
+        custom_url = p_data.get("fifa_image_url") or p_data.get("image_url")
+        if custom_url and str(custom_url).startswith("http") and "ratings-images-prod.pulse.ea.com" not in str(custom_url):
+            media = custom_url
+        else:
+            media = (p_data.get("image_file_id") or p_data.get("fifa_image_url") or
+                     p_data.get("image_url") or DRAFT_BANNER_FIFA)
         default_banner = DRAFT_BANNER_FIFA
-
 
     elif "WWE" in match.mode:
         media = (p_data.get("wwe_image_url") or p_data.get("image_url") or
@@ -496,6 +528,7 @@ async def handle_draw(update: Update, context: ContextTypes.DEFAULT_TYPE, match:
 
     # Update the single message to show the card
     await update_draft_message(update, context, match, card_caption, keyboard, media=media)
+
     # Reset AFK timer AFTER UI is queued — player has 5 min to assign
     _reset_afk_timer(match, context.bot, match.chat_id)
 
@@ -717,10 +750,12 @@ async def handle_replace_start(update: Update, context: ContextTypes.DEFAULT_TYP
 
     # Get player image — URL first (href-ready), fall back to file_id
     if match.mode == "FIFA":
-        media = (player.get("image_file_id") or player.get("fifa_image_url") or
-                 player.get("image_url") or DRAFT_BANNER_FIFA)
-
-
+        custom_url = player.get("fifa_image_url") or player.get("image_url")
+        if custom_url and str(custom_url).startswith("http") and "ratings-images-prod.pulse.ea.com" not in str(custom_url):
+            media = custom_url
+        else:
+            media = (player.get("image_file_id") or player.get("fifa_image_url") or
+                     player.get("image_url") or DRAFT_BANNER_FIFA)
     elif "WWE" in match.mode:
         media = (player.get("wwe_image_url") or player.get("image_url") or
                  player.get("image_file_id") or DRAFT_BANNER_WWE)
@@ -734,7 +769,11 @@ async def handle_replace_start(update: Update, context: ContextTypes.DEFAULT_TYP
         media = (player.get("odi_image_url") or player.get("image_url") or
                  player.get("odi_image_file_id") or player.get("image_file_id") or DRAFT_BANNER_ODI)
 
-    await update_draft_message(update, context, match, card_caption, keyboard, media=media)
+    # Always synchronous=True for replace so the image always appears immediately
+    # (debouncer dedup would strip repeated media; replace must always show the player card)
+    await update_draft_message(update, context, match, card_caption, keyboard, media=media, synchronous=True)
+
+
 
 
 async def handle_replace_exec(update: Update, context: ContextTypes.DEFAULT_TYPE, match: Match, slot: str):
