@@ -426,9 +426,12 @@ async def update_draft_message(update: Update, context: ContextTypes.DEFAULT_TYP
                     parse_mode="HTML"
                 )
         except Exception as e:
+            if "message is not modified" in str(e).lower():
+                return
             logger.warning(f"Synchronous draft board edit failed: {e}. Falling back to recreation...")
             await debouncer._recreate_message(match, context.bot, caption, reply_markup, media, "HTML")
         return
+
 
 
     # 3. Batched Editing (Asynchronous)
