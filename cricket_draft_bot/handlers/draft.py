@@ -242,20 +242,22 @@ async def handle_draft_callback(update: Update, context: ContextTypes.DEFAULT_TY
         match = await load_match_state(match_id)
         if not match:
             logger.error(f"Match not found: {match_id}")
-
             await safe_answer("⚠️ Match ended or expired (Admin reset or maintenance).", alert=True)
             return
             
         # Check turn — cast both to int to guard against str/int type mismatch from MongoDB
-        if int(query.from_user.id) != int(match.current_turn):
+        # Cancel is always exempt: the player who clicked replace is always the current turn player,
+        # and cancel must respond even if a tiny race condition flips the turn field.
+        if not _is_cancel and int(query.from_user.id) != int(match.current_turn):
             await safe_answer("Turn passed! Board updating...", alert=True)
             return
 
-        # Turn is correct — answer immediately to stop spinner
+        # Turn is correct (or cancel exempt) — answer immediately to stop spinner
         try:
             await query.answer()
         except Exception:
             pass
+
     
         if action == "draw":
             await handle_draw(update, context, match)
