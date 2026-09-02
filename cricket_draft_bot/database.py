@@ -784,8 +784,9 @@ async def remove_card_from_user(user_id: int, player_id: str, fmt: str) -> int:
         return_document=True
     )
     if result is None:
-        return 0
+        return -1
     new_qty = result["quantity"]
+
     if new_qty <= 0:
         await db.user_cards.delete_one({"user_id": user_id, "player_id": player_id, "format": fmt})
         return 0
