@@ -2559,3 +2559,52 @@ async def handle_add_packall(update: Update, context: ContextTypes.DEFAULT_TYPE)
         f"✅ Gifted *{PACK_EMOJI[tier]} {tier.title()} {SPORT_LABEL[sport]} Pack* to *{count}* users!",
         parse_mode='Markdown'
     )
+
+# ── /ban & /unban ─────────────────────────────────────────────────────────────
+async def handle_ban_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """/ban <user_id> [reason] — Ban a user from the bot. Admin only."""
+    user = update.effective_user
+    from database import is_admin
+    if not await is_admin(user.id):
+        await update.effective_message.reply_text("⛔ Admin only.")
+        return
+    args = context.args
+    if not args:
+        await update.effective_message.reply_text("Usage: `/ban <user_id> [reason]`", parse_mode="Markdown")
+        return
+    try:
+        target_id = int(args[0])
+    except ValueError:
+        await update.effective_message.reply_text("❌ Invalid user ID.")
+        return
+    reason = " ".join(args[1:]) if len(args) > 1 else "Banned by admin"
+    from database import ban_user
+    await ban_user(target_id, reason)
+    await update.effective_message.reply_text(
+        f"🚫 User <code>{target_id}</code> has been <b>banned</b>.\nReason: {reason}",
+        parse_mode="HTML"
+    )
+
+async def handle_unban_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """/unban <user_id> — Unban a user. Admin only."""
+    user = update.effective_user
+    from database import is_admin
+    if not await is_admin(user.id):
+        await update.effective_message.reply_text("⛔ Admin only.")
+        return
+    args = context.args
+    if not args:
+        await update.effective_message.reply_text("Usage: `/unban <user_id>`", parse_mode="Markdown")
+        return
+    try:
+        target_id = int(args[0])
+    except ValueError:
+        await update.effective_message.reply_text("❌ Invalid user ID.")
+        return
+    from database import unban_user
+    await unban_user(target_id)
+    await update.effective_message.reply_text(
+        f"✅ User <code>{target_id}</code> has been <b>unbanned</b>.",
+        parse_mode="HTML"
+    )
+
