@@ -117,10 +117,22 @@ async def _check_match_limit(user_id: int, mode_of_reply) -> bool:
     If at limit (>=1), sends a descriptive message and returns False.
     mode_of_reply: an Update.message or a CallbackQuery object.
     """
-    from database import get_user_active_matches_info
+    from database import get_user_active_matches_info, is_user_banned
     from telegram.helpers import escape_markdown
     def _esc(t): return escape_markdown(str(t), version=1)
+
+    if await is_user_banned(user_id):
+        try:
+            if hasattr(mode_of_reply, 'answer'):
+                await mode_of_reply.answer("⛔ You are banned from using this bot.", show_alert=True)
+            elif hasattr(mode_of_reply, 'reply_text'):
+                await mode_of_reply.reply_text("⛔ You are banned from using this bot.")
+        except Exception:
+            pass
+        return False
+
     matches = await get_user_active_matches_info(user_id)
+
     if len(matches) < 1:
         return True
     # Build descriptive block message
@@ -782,7 +794,13 @@ async def handle_join(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.answer("⛔ You cannot play against yourself!", show_alert=True)
         return
 
+    from database import is_user_banned
+    if await is_user_banned(query.from_user.id):
+        await query.answer("⛔ You are banned from using this bot.", show_alert=True)
+        return
+
     # ─ Match limit checks — run both concurrently to save ~20ms serial latency ─
+
     from database import get_user_active_matches_info
     joiner_matches, owner_matches = await asyncio.gather(
         get_user_active_matches_info(query.from_user.id),
