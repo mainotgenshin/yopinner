@@ -220,13 +220,16 @@ async def handle_draft_callback(update: Update, context: ContextTypes.DEFAULT_TY
         # draw / redraw
         match_id = "_".join(parts[1:])
 
-    # Locking
-    if match_id in PROCESSING_LOCKS:
+    # Locking — cancel must ALWAYS bypass the lock so it responds instantly
+    _is_cancel = data.startswith("replace_cancel_")
+    if not _is_cancel and match_id in PROCESSING_LOCKS:
         logger.info(f"Locked request ignored for {match_id}")
         await query.answer("⏳ Processing previous action...", show_alert=False)
         return
 
-    PROCESSING_LOCKS.add(match_id)
+    if not _is_cancel:
+        PROCESSING_LOCKS.add(match_id)
+
 
 
     async def safe_answer(text, alert=True):
