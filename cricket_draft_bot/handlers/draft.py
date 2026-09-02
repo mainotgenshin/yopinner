@@ -29,7 +29,7 @@ PROCESSING_LOCKS = set()
 # If the same user clicks again within _CLICK_COOLDOWN seconds, they get
 # an instant toast and the action is discarded (zero DB/API cost).
 _USER_CLICK_TIMES: dict = {}  # user_id -> float (asyncio event loop time)
-_CLICK_COOLDOWN = 2.5         # seconds minimum between draft button clicks
+_CLICK_COOLDOWN = 1.0         # seconds minimum between draft button clicks (stops rapid double-taps without blocking responsive players)
 
 # ── Background Unpin Queue (Option 3 Peak Optimization) ───────────────────
 # Finished matches queue their draft boards here instead of calling unpin_chat_message
@@ -252,11 +252,13 @@ async def handle_draft_callback(update: Update, context: ContextTypes.DEFAULT_TY
             await safe_answer("Turn passed! Board updating...", alert=True)
             return
 
-        # Turn is correct (or cancel exempt) — answer immediately to stop spinner
-        try:
-            await query.answer()
-        except Exception:
-            pass
+        # Turn is correct — answer immediately to stop spinner (cancel answers with its own toast)
+        if not _is_cancel:
+            try:
+                await query.answer()
+            except Exception:
+                pass
+
 
     
         if action == "draw":
