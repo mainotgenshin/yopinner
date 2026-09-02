@@ -719,13 +719,17 @@ async def get_player_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
     card_cat_md = "\n".join(cat_lines_md)
     card_cat_html = "\n".join(cat_lines_html)
 
+    import html as _html
+    name_clean = _html.escape(p.get('name', 'Player'))
+    roles_clean = _html.escape(', '.join(roles))
     msg = (
-        f"📊 <b>{p['name']}</b>\n"
+        f"📊 <b>{name_clean}</b>\n"
         f"<i>ODI Stats</i>\n"
         f"{intl_display}\n\n"
-        f"Roles: {', '.join(roles)}"
+        f"Roles: {roles_clean}"
         f"{card_cat_html}"
     )
+
     # Also build a Markdown version for photo caption (player names in captions are safe)
     md_msg = (
         f"📊 *{esc(p['name'])}*\n"
@@ -765,7 +769,8 @@ async def get_player_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def handle_view_ipl_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    from telegram import InlineKeyboardButton, InlineKeyboardMarkup
+    from telegram import InlineKeyboardButton, InlineKeyboardMarkup, InputMediaPhoto
+    import html as _html
     query = update.callback_query
     player_id = query.data.split('_', 2)[2] # view_ipl_ID
     
@@ -781,9 +786,6 @@ async def handle_view_ipl_callback(update: Update, context: ContextTypes.DEFAULT
         await query.answer("No IPL Stats available", show_alert=True)
         return
 
-    # Check IPL Image
-    ipl_img = p.get('ipl_image_file_id', p.get('image_file_id'))
-    
     # Check IPL Roles
     ipl_roles = p.get('ipl_roles', p.get('roles', []))
     
@@ -791,50 +793,69 @@ async def handle_view_ipl_callback(update: Update, context: ContextTypes.DEFAULT
     def format_stats_local(data):
         if isinstance(data, int): return str(data)
         parts = []
-        # ... Reuse formatting logic or duplicate ...
-        # (Since previous helper was inside function, I'll allow simple duplication or improved shared helper later)
-        # Just quick format for IPL view:
-        parts.append(f"🧠 Cap: {data.get('leadership')}")
-        parts.append(f"🏏 Top: {data.get('batting_power')}")
-        parts.append(f"🛡️ Mid: {data.get('batting_control')}")
-        if "DEFENCE" in [r.upper() for r in ipl_roles]: parts.append(f"🧱 Def: {data.get('batting_defence')}")
-        if "WK" in [r.upper() for r in ipl_roles]: parts.append(f"🧤 WK: {data.get('wicket_keeping')}")
-        parts.append(f"💥 Fin: {data.get('finishing')}")
-        parts.append(f"⚡ Pace: {data.get('bowling_pace')}")
-        parts.append(f"🌀 Spin: {data.get('bowling_spin')}")
-        parts.append(f"✨ All: {data.get('all_round')}")
-        parts.append(f"👟 Field: {data.get('fielding')}")
+        parts.append(f"🧠 Cap: {data.get('leadership', 'N/A')}")
+        parts.append(f"🏏 Top: {data.get('batting_power', 'N/A')}")
+        parts.append(f"🛡️ Mid: {data.get('batting_control', 'N/A')}")
+        if "DEFENCE" in [r.upper() for r in ipl_roles]: parts.append(f"🧱 Def: {data.get('batting_defence', 'N/A')}")
+        if "WK" in [r.upper() for r in ipl_roles]: parts.append(f"🧤 WK: {data.get('wicket_keeping', 'N/A')}")
+        parts.append(f"💥 Fin: {data.get('finishing', 'N/A')}")
+        parts.append(f"⚡ Pace: {data.get('bowling_pace', 'N/A')}")
+        parts.append(f"🌀 Spin: {data.get('bowling_spin', 'N/A')}")
+        parts.append(f"✨ All: {data.get('all_round', 'N/A')}")
+        parts.append(f"👟 Field: {data.get('fielding', 'N/A')}")
         return "\n".join(parts)
 
     stats_display = format_stats_local(stats)
+    p_name_safe = _html.escape(p.get('name', 'Player'))
+    roles_safe = _html.escape(', '.join(ipl_roles))
     
-    caption = (
-        f"🇮🇳 *IPL Stats for {esc(p['name'])}*\n\n"
+    text_html = (
+        f"📊 <b>{p_name_safe}</b>\n"
+        f"<i>IPL Stats</i>\n"
         f"{stats_display}\n\n"
-        f"Roles: {', '.join(ipl_roles)}"
+        f"Roles: {roles_safe}"
     )
     
-    # Back button
+    # Navigation buttons
     keyboard = [[InlineKeyboardButton("🔙 Back to ODI", callback_data=f"view_odi_{player_id}")]]
+    if p.get('stats', {}).get('test'):
+        keyboard[0].append(InlineKeyboardButton("🧪 Test Stats", callback_data=f"view_test_{player_id}"))
     reply_markup = InlineKeyboardMarkup(keyboard)
     
-    from telegram import InputMediaPhoto
+    img_url = p.get('ipl_image_url') or p.get('image_url') or p.get('odi_image_url')
+    has_web_url = bool(img_url and str(img_url).startswith('http'))
+    is_photo = bool(query.message and query.message.photo)
+    
     try:
-        # Edit Message Media is tricky if type changes, but here photo->photo.
-        if ipl_img:
-            await query.message.edit_media(
-                media=InputMediaPhoto(media=ipl_img, caption=caption, parse_mode="Markdown"),
-                reply_markup=reply_markup
-            )
+        if not is_photo and has_web_url:
+            href_text = f'<a href="{img_url}">&#8205;</a>' + text_html
+            await query.edit_message_text(href_text, reply_markup=reply_markup, parse_mode="HTML", disable_web_page_preview=False)
+        elif is_photo:
+            fallback_img = p.get('ipl_image_file_id') or p.get('image_file_id') or img_url
+            if fallback_img:
+                await query.message.edit_media(
+                    media=InputMediaPhoto(media=fallback_img, caption=text_html, parse_mode="HTML"),
+                    reply_markup=reply_markup
+                )
+            else:
+                await query.edit_message_caption(caption=text_html, reply_markup=reply_markup, parse_mode="HTML")
         else:
-            await query.edit_message_caption(caption=caption, reply_markup=reply_markup, parse_mode="Markdown")
+            await query.edit_message_text(text_html, reply_markup=reply_markup, parse_mode="HTML")
     except Exception as e:
         logger.error(f"IPL View Edit Error: {e}")
-        await query.answer("Error switching view", show_alert=True)
+        try:
+            await query.edit_message_text(text_html, reply_markup=reply_markup, parse_mode="HTML")
+        except Exception:
+            pass
+    try:
+        await query.answer()
+    except Exception:
+        pass
 
 async def handle_view_odi_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Called when user clicks 'Back to ODI' from IPL/Test view."""
     from telegram import InlineKeyboardButton, InlineKeyboardMarkup, InputMediaPhoto
+    import html as _html
     query = update.callback_query
     player_id = query.data.split('_', 2)[2]
 
@@ -845,7 +866,6 @@ async def handle_view_odi_callback(update: Update, context: ContextTypes.DEFAULT
         return
 
     stats = p.get('stats', {}).get('odi', {})
-    intl_img = p.get('image_file_id')
     roles = p.get('roles', [])
     roles_up = [r.upper() for r in roles]
     has_wk  = "WK" in roles_up
@@ -873,10 +893,29 @@ async def handle_view_odi_callback(update: Update, context: ContextTypes.DEFAULT
         return "\n".join(parts)
 
     intl_display = format_stats(stats)
-    caption = (
-        f"📊 *{esc(p['name'])}*\n"
-        f"*ODI Stats*\n{intl_display}\n\n"
-        f"Roles: {esc(', '.join(roles))}"
+    p_name_safe = _html.escape(p.get('name', 'Player'))
+    roles_safe = _html.escape(', '.join(roles))
+
+    # Card Catalog info
+    cards = p.get('cards', {})
+    RARITY_EMOJI = {'common': '⚪', 'rare': '🔵', 'epic': '🟣', 'legend': '🟡'}
+    cat_lines = ["\n\n🃏 <b>Card Catalog:</b>"]
+    for label, fmt_key in [('IPL', 'ipl'), ('ODI', 'odi'), ('Test', 'test')]:
+        c_info = cards.get(fmt_key)
+        if c_info and 'ovr' in c_info:
+            r = c_info.get('rarity', 'common').lower()
+            emoji = RARITY_EMOJI.get(r, '⚪')
+            cat_lines.append(f"  {label}: OVR {c_info.get('ovr')} | {emoji} {r.title()}")
+        else:
+            cat_lines.append(f"  {label}: Not added yet")
+    card_cat_html = "\n".join(cat_lines)
+
+    text_html = (
+        f"📊 <b>{p_name_safe}</b>\n"
+        f"<i>ODI Stats</i>\n"
+        f"{intl_display}\n\n"
+        f"Roles: {roles_safe}"
+        f"{card_cat_html}"
     )
 
     btn_row = [InlineKeyboardButton("🏏 IPL Stats", callback_data=f"view_ipl_{player_id}")]
@@ -884,21 +923,41 @@ async def handle_view_odi_callback(update: Update, context: ContextTypes.DEFAULT
         btn_row.append(InlineKeyboardButton("🧪 Test Stats", callback_data=f"view_test_{player_id}"))
     kb = InlineKeyboardMarkup([btn_row])
 
+    img_url = p.get('odi_image_url') or p.get('image_url') or p.get('ipl_image_url')
+    has_web_url = bool(img_url and str(img_url).startswith('http'))
+    is_photo = bool(query.message and query.message.photo)
+
     try:
-        if intl_img:
-            await query.message.edit_media(
-                media=InputMediaPhoto(media=intl_img, caption=caption, parse_mode="Markdown"),
-                reply_markup=kb
-            )
+        if not is_photo and has_web_url:
+            href_text = f'<a href="{img_url}">&#8205;</a>' + text_html
+            await query.edit_message_text(href_text, reply_markup=kb, parse_mode="HTML", disable_web_page_preview=False)
+        elif is_photo:
+            fallback_img = p.get('image_file_id') or img_url
+            if fallback_img:
+                await query.message.edit_media(
+                    media=InputMediaPhoto(media=fallback_img, caption=text_html, parse_mode="HTML"),
+                    reply_markup=kb
+                )
+            else:
+                await query.edit_message_caption(caption=text_html, reply_markup=kb, parse_mode="HTML")
         else:
-            await query.edit_message_caption(caption=caption, reply_markup=kb, parse_mode="Markdown")
+            await query.edit_message_text(text_html, reply_markup=kb, parse_mode="HTML")
     except Exception as e:
         logger.warning(f"handle_view_odi_callback edit error: {e}")
+        try:
+            await query.edit_message_text(text_html, reply_markup=kb, parse_mode="HTML")
+        except Exception:
+            pass
+    try:
         await query.answer()
+    except Exception:
+        pass
 
 
 async def handle_view_test_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Called when user clicks 'Test Stats' button."""
+    from telegram import InlineKeyboardButton, InlineKeyboardMarkup, InputMediaPhoto
+    import html as _html
     query = update.callback_query
     player_id = query.data.split('_', 2)[2]  # view_test_ID
     from database import get_player
@@ -910,33 +969,61 @@ async def handle_view_test_callback(update: Update, context: ContextTypes.DEFAUL
     if not stats:
         await query.answer("No Test Stats available", show_alert=True)
         return
-    test_img = p.get('test_image_url') or p.get('image_file_id')
     test_roles = p.get('test_roles', p.get('roles', []))
     def fmt(data):
         if isinstance(data, int): return str(data)
         parts = []
-        parts.append(f"🧠 Cap: {data.get('leadership')}")
-        parts.append(f"🏏 Top: {data.get('batting_power')}")
-        parts.append(f"🛡️ Mid: {data.get('batting_control')}")
-        parts.append(f"🧱 Def: {data.get('batting_defence')}")
-        if "WK" in [r.upper() for r in test_roles]: parts.append(f"🧤 WK: {data.get('wicket_keeping')}")
-        parts.append(f"✨ All: {data.get('all_round')}")
-        parts.append(f"⚡ Pace: {data.get('bowling_pace')}")
-        parts.append(f"🌀 Spin: {data.get('bowling_spin')}")
-        parts.append(f"👟 Field: {data.get('fielding')}")
+        parts.append(f"🧠 Cap: {data.get('leadership', 'N/A')}")
+        parts.append(f"🏏 Top: {data.get('batting_power', 'N/A')}")
+        parts.append(f"🛡️ Mid: {data.get('batting_control', 'N/A')}")
+        parts.append(f"🧱 Def: {data.get('batting_defence', 'N/A')}")
+        if "WK" in [r.upper() for r in test_roles]: parts.append(f"🧤 WK: {data.get('wicket_keeping', 'N/A')}")
+        parts.append(f"✨ All: {data.get('all_round', 'N/A')}")
+        parts.append(f"⚡ Pace: {data.get('bowling_pace', 'N/A')}")
+        parts.append(f"🌀 Spin: {data.get('bowling_spin', 'N/A')}")
+        parts.append(f"👟 Field: {data.get('fielding', 'N/A')}")
         return '\n'.join(parts)
-    from telegram import InlineKeyboardButton, InlineKeyboardMarkup, InputMediaPhoto
+    
+    p_name_safe = _html.escape(p.get('name', 'Player'))
+    roles_safe = _html.escape(', '.join(test_roles))
+    text_html = (
+        f"🏏 <b>{p_name_safe}</b>\n"
+        f"<i>Test Stats</i>\n"
+        f"{fmt(stats)}\n\n"
+        f"Roles: {roles_safe}"
+    )
     keyboard = [[InlineKeyboardButton("🔙 Back to ODI", callback_data=f"view_odi_{player_id}")]]
+    if p.get('stats', {}).get('ipl'):
+        keyboard[0].insert(0, InlineKeyboardButton("🏏 IPL Stats", callback_data=f"view_ipl_{player_id}"))
     reply_markup = InlineKeyboardMarkup(keyboard)
-    caption = f"🏏 *Test Stats for {esc(p['name'])}*\n\n{fmt(stats)}\n\nRoles: {', '.join(test_roles)}"
+
+    img_url = p.get('test_image_url') or p.get('image_url') or p.get('odi_image_url')
+    has_web_url = bool(img_url and str(img_url).startswith('http'))
+    is_photo = bool(query.message and query.message.photo)
+
     try:
-        if test_img:
-            await query.message.edit_media(media=InputMediaPhoto(media=test_img, caption=caption, parse_mode='Markdown'), reply_markup=reply_markup)
+        if not is_photo and has_web_url:
+            href_text = f'<a href="{img_url}">&#8205;</a>' + text_html
+            await query.edit_message_text(href_text, reply_markup=reply_markup, parse_mode="HTML", disable_web_page_preview=False)
+        elif is_photo:
+            fallback_img = p.get('test_image_url') or p.get('image_file_id') or img_url
+            if fallback_img:
+                await query.message.edit_media(media=InputMediaPhoto(media=fallback_img, caption=text_html, parse_mode='HTML'), reply_markup=reply_markup)
+            else:
+                await query.message.edit_caption(caption=text_html, parse_mode='HTML', reply_markup=reply_markup)
         else:
-            await query.message.edit_caption(caption=caption, parse_mode='Markdown', reply_markup=reply_markup)
+            await query.edit_message_text(text_html, reply_markup=reply_markup, parse_mode="HTML")
     except Exception as e:
         logger.warning(f"handle_view_test_callback error: {e}")
-    await query.answer()
+        try:
+            await query.edit_message_text(text_html, reply_markup=reply_markup, parse_mode="HTML")
+        except Exception:
+            pass
+    try:
+        await query.answer()
+    except Exception:
+        pass
+
 
 
 
