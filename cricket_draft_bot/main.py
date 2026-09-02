@@ -44,7 +44,12 @@ def wrap_admin_logging(handler_func, action_name):
     logger = logging.getLogger(__name__)
 
     async def logged_handler(update, context):
+        if update.effective_user:
+            from database import is_user_banned
+            if await is_user_banned(update.effective_user.id):
+                return
         res = await handler_func(update, context)
+
         
         # Only log if log group is configured and sender is authenticated admin
         if ADMIN_LOG_GROUP_ID and update.effective_user and update.message and update.message.text:
@@ -133,7 +138,16 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Central router for callbacks."""
+    if update.effective_user:
+        from database import is_user_banned
+        if await is_user_banned(update.effective_user.id):
+            try:
+                await update.callback_query.answer("⛔ You are banned from using this bot.", show_alert=True)
+            except Exception:
+                pass
+            return
     data = update.callback_query.data
+
     if data.startswith("join_"):
         # "join_MODE" or "join_MODE_OWNERID"
         # challenge.py handled this? 
@@ -701,11 +715,14 @@ if __name__ == '__main__':
     application.add_handler(CommandHandler('banner', wrap_admin_logging(handle_banner, "Modify Banner overrides")))
 
     # Card Catalog Admin commands
-    from handlers.admin import handle_add_card, handle_update_card, handle_gift_coins, handle_add_packall
+    from handlers.admin import handle_add_card, handle_update_card, handle_gift_coins, handle_add_packall, handle_ban_command, handle_unban_command
     application.add_handler(CommandHandler('add_card',    wrap_admin_logging(handle_add_card,    "Add Card to Catalog")))
     application.add_handler(CommandHandler('update_card', wrap_admin_logging(handle_update_card, "Update Card OVR/Rarity")))
     application.add_handler(CommandHandler('gift',        wrap_admin_logging(handle_gift_coins,  "Gift Card Coins")))
     application.add_handler(CommandHandler('add_packall', wrap_admin_logging(handle_add_packall, "Gift Pack to All Users")))
+    application.add_handler(CommandHandler('ban',         wrap_admin_logging(handle_ban_command, "Ban User")))
+    application.add_handler(CommandHandler('unban',       wrap_admin_logging(handle_unban_command, "Unban User")))
+
 
     # Game
     from handlers.challenge import challenge_unified, challenge_ipl, challenge_odi, challenge_test, challenge_fifa
