@@ -596,39 +596,57 @@ async def cb_vc_sell(update: Update, context: ContextTypes.DEFAULT_TYPE):
     else:
         await query.edit_message_text(text, reply_markup=kb, parse_mode="Markdown")
 
+_PROCESSED_SELL_MESSAGES: set[str] = set()
+
 async def cb_vc_sell_ok(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Execute sell with anti-spam lock."""
+    """Execute sell with anti-spam lock and per-message duplicate suppression."""
     query = update.callback_query
     parts = query.data.split("|")
     _, owner_id, player_id, fmt, sell_val_str = parts
     user_id = query.from_user.id
     if str(user_id) != owner_id:
         await query.answer("⛔ Not your menu.", show_alert=True); return
+
+    msg_id = query.message.message_id if query.message else None
+    sell_key = f"{user_id}_{msg_id}"
+    if msg_id and sell_key in _PROCESSED_SELL_MESSAGES:
+        await query.answer("⚠️ Sale already processed!", show_alert=False)
+        return
+    if msg_id:
+        _PROCESSED_SELL_MESSAGES.add(sell_key)
+        if len(_PROCESSED_SELL_MESSAGES) > 3000:
+            _PROCESSED_SELL_MESSAGES.clear()
+
     lock = _get_lock(user_id)
     if lock.locked():
         await query.answer("⏳ Please wait a moment...", show_alert=False); return
     async with lock:
         from database import get_user_card, get_player, get_fav_card, remove_card_from_user, add_card_coins, increment_quest_progress
-        ucard = await get_user_card(user_id, player_id, fmt)
-        if not ucard or ucard.get("quantity", 0) < 1:
-            await query.answer("❌ Card not available to sell.", show_alert=True)
-            return
         fav = await get_fav_card(user_id)
         is_fav = fav and fav.get("player_id") == player_id and fav.get("format") == fmt
-        if is_fav and ucard.get("quantity", 0) <= 1:
-            await query.answer(
-                "⭐ This is your Fav Card!\n\nTap '💔 Remove Fav' in /viewcard first, then sell.",
-                show_alert=True
-            )
+        if is_fav:
+            ucard = await get_user_card(user_id, player_id, fmt)
+            if not ucard or ucard.get("quantity", 0) <= 1:
+                if msg_id:
+                    _PROCESSED_SELL_MESSAGES.discard(sell_key)
+                await query.answer(
+                    "⭐ This is your Fav Card!\n\nTap '💔 Remove Fav' in /viewcard first, then sell.",
+                    show_alert=True
+                )
+                return
+
+        # Atomically remove exactly 1 copy (returns remaining quantity, or -1 on failure)
+        remaining = await remove_card_from_user(user_id, player_id, fmt)
+        if remaining < 0:
+            await query.answer("❌ Card not available to sell.", show_alert=True)
             return
-        
+
         try:
             await query.answer()
         except Exception:
             pass
 
         sell_val = int(sell_val_str)
-        remaining = await remove_card_from_user(user_id, player_id, fmt)
         new_bal = await add_card_coins(user_id, sell_val)
         await increment_quest_progress(user_id, "cards_sold", 1)
         
@@ -651,6 +669,7 @@ async def cb_vc_sell_ok(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 await query.edit_message_text(success_text, parse_mode="HTML")
             except Exception:
                 pass
+
 
 
 # ─────────────────────────────────────────────────────────────────────────────
