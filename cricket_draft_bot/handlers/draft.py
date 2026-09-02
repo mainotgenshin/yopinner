@@ -437,7 +437,7 @@ async def update_draft_message(update: Update, context: ContextTypes.DEFAULT_TYP
 
 
 
-async def handle_draw(update: Update, context: ContextTypes.DEFAULT_TYPE, match: Match):
+async def handle_draw(update: Update, context: ContextTypes.DEFAULT_TYPE, match: Match, synchronous: bool = False):
     # Prevent double-draw if already pending
     player = None
     if match.pending_player_id:
@@ -535,7 +535,9 @@ async def handle_draw(update: Update, context: ContextTypes.DEFAULT_TYPE, match:
         default_banner = DRAFT_BANNER_ODI
 
     # Update the single message to show the card
-    await update_draft_message(update, context, match, card_caption, keyboard, media=media)
+    await update_draft_message(update, context, match, card_caption, keyboard, media=media, synchronous=synchronous)
+
+
 
     # Reset AFK timer AFTER UI is queued — player has 5 min to assign
     _reset_afk_timer(match, context.bot, match.chat_id)
@@ -848,6 +850,18 @@ async def handle_replace_cancel(update: Update, context: ContextTypes.DEFAULT_TY
         await update.callback_query.answer("↩️ Replace cancelled.", show_alert=False)
     except Exception:
         pass
-    # Re-render the drawn player's assign screen (pending_player_id is still set)
-    await handle_draw(update, context, match)
+
+    # CRITICAL: replace_start used synchronous=True which bypassed the debouncer.
+    # This means debouncer.last_state still holds the original draw-screen state.
+    # When handle_draw sends the same state again, dedup fires → nothing happens.
+    # Fix: wipe the cached last_state for this message so the debouncer is forced to re-send.
+    if match.draft_message_id:
+        key = f"{match.chat_id}_{match.draft_message_id}"
+        debouncer.last_state.pop(key, None)
+
+    # Re-render the drawn player's assign screen using synchronous=True to guarantee it appears
+    # (pending_player_id is still set — player is not lost)
+    await handle_draw(update, context, match, synchronous=True)
+
+
 
