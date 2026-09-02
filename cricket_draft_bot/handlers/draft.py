@@ -246,11 +246,10 @@ async def handle_draft_callback(update: Update, context: ContextTypes.DEFAULT_TY
             return
             
         # Check turn — cast both to int to guard against str/int type mismatch from MongoDB
-        # Cancel is always exempt: the player who clicked replace is always the current turn player,
-        # and cancel must respond even if a tiny race condition flips the turn field.
-        if not _is_cancel and int(query.from_user.id) != int(match.current_turn):
+        if int(query.from_user.id) != int(match.current_turn):
             await safe_answer("Turn passed! Board updating...", alert=True)
             return
+
 
         # Turn is correct — answer immediately to stop spinner (cancel answers with its own toast)
         if not _is_cancel:
