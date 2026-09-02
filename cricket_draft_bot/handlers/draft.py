@@ -173,13 +173,16 @@ async def handle_draft_callback(update: Update, context: ContextTypes.DEFAULT_TY
     # ── Per-user click cooldown ───────────────────────────────────────────────
     # Cheapest possible guard: one dict lookup, zero DB/API cost.
     # Prevents the same user spamming buttons and wasting rate-limit quota.
+    # Cancel and replace_start are exempt — they must always respond immediately.
     _user_id = query.from_user.id
     _now = asyncio.get_event_loop().time()
-    if _now - _USER_CLICK_TIMES.get(_user_id, 0) < _CLICK_COOLDOWN:
+    _is_exempt = (data.startswith("replace_cancel_") or data.startswith("replace_start_"))
+    if not _is_exempt and _now - _USER_CLICK_TIMES.get(_user_id, 0) < _CLICK_COOLDOWN:
         await query.answer("⏳ Please wait before clicking again.", show_alert=False)
         return
     _USER_CLICK_TIMES[_user_id] = _now
     # ─────────────────────────────────────────────────────────────────────────
+
 
     parts = data.split('_')
     action = parts[0]
@@ -835,5 +838,11 @@ async def handle_replace_exec(update: Update, context: ContextTypes.DEFAULT_TYPE
     await update_draft_message(update, context, match, f"{board_text}\n\n♻️ {esc(current_team.owner_name)} replaced {esc(old_player.name)} with {esc(new_player.name)}!", keyboard, media=banner)
 
 async def handle_replace_cancel(update: Update, context: ContextTypes.DEFAULT_TYPE, match: Match):
-    # Just go back to draw view
+    """Cancel replace: go back to the assign screen for the already-drawn player."""
+    try:
+        await update.callback_query.answer("↩️ Replace cancelled.", show_alert=False)
+    except Exception:
+        pass
+    # Re-render the drawn player's assign screen (pending_player_id is still set)
     await handle_draw(update, context, match)
+
