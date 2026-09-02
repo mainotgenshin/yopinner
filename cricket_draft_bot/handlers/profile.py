@@ -45,14 +45,15 @@ async def handle_profile(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # Format join date
     if joined_at:
         try:
-            import datetime
+            from datetime import datetime, timezone
             if isinstance(joined_at, (int, float)):
-                dt = datetime.datetime.utcfromtimestamp(joined_at)
+                dt = datetime.fromtimestamp(joined_at, tz=timezone.utc)
             else:
                 dt = joined_at
             joined_str = dt.strftime("%d %b %Y")
         except Exception:
             joined_str = "—"
+
     else:
         joined_str = "—"
 
