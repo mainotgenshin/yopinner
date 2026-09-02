@@ -1244,3 +1244,52 @@ async def get_h2h_stats(user_a_id: int, user_b_id: int) -> dict:
     b_wins = sum(1 for d in docs if d.get("winner_id") == user_b_id)
     draws  = sum(1 for d in docs if d.get("is_draw"))
     return {"total": len(docs), "a_wins": a_wins, "b_wins": b_wins, "draws": draws}
+
+
+# ── Ban / Unban System ───────────────────────────────────────────────────────
+
+_banned_users_cache: set = set()
+_banned_cache_loaded: bool = False
+
+async def is_user_banned(user_id: int) -> bool:
+    """Checks if a user is banned (cached in-memory for instant 0ms checks)."""
+    global _banned_cache_loaded, _banned_users_cache
+    if not _banned_cache_loaded:
+        try:
+            db = get_db()
+            cursor = db.banned_users.find({}, {"user_id": 1})
+            _banned_users_cache = {doc["user_id"] async for doc in cursor}
+            _banned_cache_loaded = True
+        except Exception:
+            pass
+    return user_id in _banned_users_cache
+
+async def ban_user(user_id: int, reason: str = "Banned by admin") -> bool:
+    """Bans a user by ID."""
+    global _banned_users_cache
+    db = get_db()
+    import time as _t
+    await db.banned_users.update_one(
+        {"user_id": user_id},
+        {"$set": {"user_id": user_id, "banned_at": _t.time(), "reason": reason}},
+        upsert=True
+    )
+    await db.users.update_one(
+        {"user_id": user_id},
+        {"$set": {"banned": True, "banned_at": _t.time(), "ban_reason": reason}}
+    )
+    _banned_users_cache.add(user_id)
+    return True
+
+async def unban_user(user_id: int) -> bool:
+    """Unbans a user by ID."""
+    global _banned_users_cache
+    db = get_db()
+    await db.banned_users.delete_one({"user_id": user_id})
+    await db.users.update_one(
+        {"user_id": user_id},
+        {"$set": {"banned": False}}
+    )
+    _banned_users_cache.discard(user_id)
+    return True
+
