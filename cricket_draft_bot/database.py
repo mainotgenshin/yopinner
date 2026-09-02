@@ -1252,7 +1252,10 @@ _banned_users_cache: set = set()
 _banned_cache_loaded: bool = False
 
 async def is_user_banned(user_id: int) -> bool:
-    """Checks if a user is banned (cached in-memory for instant 0ms checks)."""
+    """Checks if a user is banned (cached in-memory for instant 0ms checks). Owners are immune."""
+    from config import OWNER_IDS
+    if user_id in OWNER_IDS:
+        return False
     global _banned_cache_loaded, _banned_users_cache
     if not _banned_cache_loaded:
         try:
@@ -1262,12 +1265,21 @@ async def is_user_banned(user_id: int) -> bool:
             _banned_cache_loaded = True
         except Exception:
             pass
-    return user_id in _banned_users_cache
+    if user_id in _banned_users_cache:
+        if await is_admin(user_id):
+            return False
+        return True
+    return False
+
 
 async def ban_user(user_id: int, reason: str = "Banned by admin") -> bool:
-    """Bans a user by ID."""
+    """Bans a user by ID. Owners/admins cannot be banned."""
+    from config import OWNER_IDS
+    if user_id in OWNER_IDS:
+        return False
     global _banned_users_cache
     db = get_db()
+
     import time as _t
     await db.banned_users.update_one(
         {"user_id": user_id},
