@@ -18,7 +18,10 @@ def fixed_astimezone(timezone):
 apscheduler.util.astimezone = fixed_astimezone
 
 from telegram import Update
-from telegram.ext import ApplicationBuilder, ContextTypes, CommandHandler, CallbackQueryHandler, AIORateLimiter
+from telegram.ext import (
+    ApplicationBuilder, ContextTypes, CommandHandler, CallbackQueryHandler,
+    AIORateLimiter, TypeHandler, ApplicationHandlerStop
+)
 from config import BOT_TOKEN
 from database import init_db
 from handlers.admin import add_player, map_api, remove_player, get_player_stats, reset_matches
@@ -26,6 +29,26 @@ from handlers.challenge import challenge_ipl, challenge_odi, challenge_test, cha
 from handlers.draft import handle_draft_callback
 from handlers.ready import handle_ready
 from handlers.bbet import handle_bbet
+
+async def global_ban_filter(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Intercepts all updates from banned users before any command or callback can run."""
+    user = update.effective_user
+    if not user:
+        return
+    from database import is_user_banned
+    if await is_user_banned(user.id):
+        if update.callback_query:
+            try:
+                await update.callback_query.answer("⛔ You are banned from using this bot.", show_alert=True)
+            except Exception:
+                pass
+        elif update.effective_message and update.effective_message.text and update.effective_message.text.startswith('/'):
+            try:
+                await update.effective_message.reply_text("⛔ You are banned from using this bot.")
+            except Exception:
+                pass
+        raise ApplicationHandlerStop
+
 
 
 logging.basicConfig(
@@ -628,8 +651,10 @@ if __name__ == '__main__':
     )
 
     # Handlers
+    application.add_handler(TypeHandler(Update, global_ban_filter), group=-1)
     application.add_handler(CommandHandler('start', start))
     application.add_handler(CommandHandler('help', help_command))
+
 
     # Admin
     application.add_handler(CommandHandler('add_player', wrap_admin_logging(add_player, "Add/Update Player (Cricket)")))
@@ -720,8 +745,10 @@ if __name__ == '__main__':
     application.add_handler(CommandHandler('update_card', wrap_admin_logging(handle_update_card, "Update Card OVR/Rarity")))
     application.add_handler(CommandHandler('gift',        wrap_admin_logging(handle_gift_coins,  "Gift Card Coins")))
     application.add_handler(CommandHandler('add_packall', wrap_admin_logging(handle_add_packall, "Gift Pack to All Users")))
-    application.add_handler(CommandHandler('ban',         wrap_admin_logging(handle_ban_command, "Ban User")))
-    application.add_handler(CommandHandler('unban',       wrap_admin_logging(handle_unban_command, "Unban User")))
+    application.add_handler(CommandHandler('bban',        wrap_admin_logging(handle_ban_command, "Ban User")))
+    application.add_handler(CommandHandler('unbban',      wrap_admin_logging(handle_unban_command, "Unban User")))
+
+
 
 
     # Game
