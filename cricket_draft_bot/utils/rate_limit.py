@@ -89,7 +89,7 @@ class MessageDebouncer:
     - Only cancel_updates() (called on match end) actually cancels a task.
     """
 
-    def __init__(self, delay: float = 0.5):
+    def __init__(self, delay: float = 0.4):
 
         self.delay      = delay
         self.tasks:      dict = {}
@@ -132,10 +132,11 @@ class MessageDebouncer:
         if key in self.tasks and not self.tasks[key].done():
             return  # running task will pick up the latest _pending state
 
-        # Adaptive delay: +0.15s per extra concurrent match (max safe tuning)
-        # The rate gate (16/min) is the real safety net — debounce just batches double-clicks.
+        # Adaptive delay: 0.4s base for snappier single-match turns;
+        # +0.20s per extra concurrent match to protect shared chat quotas under multi-match load.
         concurrent      = _count_active_in_chat(self.tasks, match.chat_id)
-        effective_delay = self.delay + max(0, concurrent - 1) * 0.15
+        effective_delay = self.delay + max(0, concurrent - 1) * 0.20
+
 
 
 
