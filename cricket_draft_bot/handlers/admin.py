@@ -2560,9 +2560,9 @@ async def handle_add_packall(update: Update, context: ContextTypes.DEFAULT_TYPE)
         parse_mode='Markdown'
     )
 
-# ── /ban & /unban ─────────────────────────────────────────────────────────────
+# ── /bban & /unbban ───────────────────────────────────────────────────────────
 async def handle_ban_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """/ban <user_id> [reason] — Ban a user from the bot. Admin only."""
+    """/bban <user_id> [reason] — Ban a user from the bot. Admin only."""
     user = update.effective_user
     from database import is_admin
     if not await is_admin(user.id):
@@ -2570,23 +2570,28 @@ async def handle_ban_command(update: Update, context: ContextTypes.DEFAULT_TYPE)
         return
     args = context.args
     if not args:
-        await update.effective_message.reply_text("Usage: `/ban <user_id> [reason]`", parse_mode="Markdown")
+        await update.effective_message.reply_text("Usage: `/bban <user_id> [reason]`", parse_mode="Markdown")
         return
     try:
         target_id = int(args[0])
     except ValueError:
         await update.effective_message.reply_text("❌ Invalid user ID.")
         return
+    from database import is_admin
+    if await is_admin(target_id):
+        await update.effective_message.reply_text("❌ You cannot ban an Admin or Mod!")
+        return
     reason = " ".join(args[1:]) if len(args) > 1 else "Banned by admin"
     from database import ban_user
     await ban_user(target_id, reason)
+
     await update.effective_message.reply_text(
         f"🚫 User <code>{target_id}</code> has been <b>banned</b>.\nReason: {reason}",
         parse_mode="HTML"
     )
 
 async def handle_unban_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """/unban <user_id> — Unban a user. Admin only."""
+    """/unbban <user_id> — Unban a user. Admin only."""
     user = update.effective_user
     from database import is_admin
     if not await is_admin(user.id):
@@ -2594,8 +2599,9 @@ async def handle_unban_command(update: Update, context: ContextTypes.DEFAULT_TYP
         return
     args = context.args
     if not args:
-        await update.effective_message.reply_text("Usage: `/unban <user_id>`", parse_mode="Markdown")
+        await update.effective_message.reply_text("Usage: `/unbban <user_id>`", parse_mode="Markdown")
         return
+
     try:
         target_id = int(args[0])
     except ValueError:
