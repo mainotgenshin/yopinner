@@ -686,7 +686,12 @@ async def handle_trade_card(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if target.is_bot or target.id == user.id:
         await msg.reply_text("❌ You can't trade with a bot or yourself.")
         return
+    from database import is_user_banned
+    if await is_user_banned(target.id):
+        await msg.reply_text("❌ Target user is banned.")
+        return
     from database import get_user_active_trade, get_user_cards
+
     # Check if either user already has an active trade
     my_trade = await get_user_active_trade(user.id)
     if my_trade:
@@ -1137,6 +1142,11 @@ async def handle_ggive(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if target.is_bot or target.id == sender.id:
         await msg.reply_text("❌ You can't send coins to a bot or yourself.")
         return
+    from database import is_user_banned
+    if await is_user_banned(target.id):
+        await msg.reply_text("❌ Target user is banned.")
+        return
+
     args = context.args
     if not args or not args[0].isdigit():
         await msg.reply_text("💸 Usage: /ggive <amount>\nExample: /ggive 100")
