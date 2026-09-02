@@ -604,45 +604,54 @@ async def cb_vc_sell_ok(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = query.from_user.id
     if str(user_id) != owner_id:
         await query.answer("⛔ Not your menu.", show_alert=True); return
-    # DB-level cooldown
-    from database import try_acquire_action_cooldown
-    if not await try_acquire_action_cooldown(user_id, "card_sell", cooldown_seconds=5):
-        await query.answer("⏳ Please wait a moment...", show_alert=False); return
     lock = _get_lock(user_id)
     if lock.locked():
         await query.answer("⏳ Please wait a moment...", show_alert=False); return
     async with lock:
-        await query.answer()
-        from database import get_user_cards, get_fav_card, remove_card_from_user, add_card_coins, increment_quest_progress
-        cards = await get_user_cards(user_id)
-        card = next((c for c in cards if c["player_id"] == player_id and c["format"] == fmt), None)
-        if not card or card["quantity"] < 1:
-            err_text = "❌ Card not available to sell."
-            if query.message and query.message.photo:
-                await query.edit_message_caption(caption=err_text); return
-            else:
-                await query.edit_message_text(err_text); return
+        from database import get_user_card, get_player, get_fav_card, remove_card_from_user, add_card_coins, increment_quest_progress
+        ucard = await get_user_card(user_id, player_id, fmt)
+        if not ucard or ucard.get("quantity", 0) < 1:
+            await query.answer("❌ Card not available to sell.", show_alert=True)
+            return
         fav = await get_fav_card(user_id)
         is_fav = fav and fav.get("player_id") == player_id and fav.get("format") == fmt
-        if is_fav and card["quantity"] <= 1:
+        if is_fav and ucard.get("quantity", 0) <= 1:
             await query.answer(
                 "⭐ This is your Fav Card!\n\nTap '💔 Remove Fav' in /viewcard first, then sell.",
                 show_alert=True
             )
             return
+        
+        try:
+            await query.answer()
+        except Exception:
+            pass
+
         sell_val = int(sell_val_str)
         remaining = await remove_card_from_user(user_id, player_id, fmt)
         new_bal = await add_card_coins(user_id, sell_val)
         await increment_quest_progress(user_id, "cards_sold", 1)
+        
+        p_doc = await get_player(player_id)
+        p_name = p_doc.get("name", "Card") if p_doc else "Card"
         f_label = FORMAT_LABEL.get(fmt, fmt.upper())
+        import html as _html
+        name_safe = _html.escape(p_name)
         success_text = (
-            f"✅ Sold *{esc(card['name'])}* ({f_label}) for *{sell_val}🪙*!\n"
-            f"Balance: *{new_bal}🪙* | Remaining copies: *{remaining}×*"
+            f"✅ Sold <b>{name_safe}</b> ({f_label}) for <b>{sell_val}🪙</b>!\n"
+            f"Balance: <b>{new_bal}🪙</b> | Remaining copies: <b>{remaining}×</b>"
         )
         if query.message and query.message.photo:
-            await query.edit_message_caption(caption=success_text, parse_mode="Markdown")
+            try:
+                await query.edit_message_caption(caption=success_text, parse_mode="HTML")
+            except Exception:
+                pass
         else:
-            await query.edit_message_text(success_text, parse_mode="Markdown")
+            try:
+                await query.edit_message_text(success_text, parse_mode="HTML")
+            except Exception:
+                pass
+
 
 # ─────────────────────────────────────────────────────────────────────────────
 # /trade_card
