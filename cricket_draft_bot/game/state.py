@@ -114,7 +114,8 @@ async def save_match_state(match: Match):
         "draft_completed_at": getattr(match, 'draft_completed_at', 0.0),
         "trade_offer": getattr(match, 'trade_offer', None),
         "turn_deadline": getattr(match, 'turn_deadline', 0.0),
-        "terminate_votes": getattr(match, 'terminate_votes', [])
+        "terminate_votes": getattr(match, 'terminate_votes', []),
+        "terminate_requested_at": getattr(match, 'terminate_requested_at', 0.0)
     }
     _cache_put(match)  # Update in-memory cache immediately
     await save_match(match.match_id, match.chat_id, state_data)
@@ -171,6 +172,7 @@ async def load_match_state(match_id: str) -> Optional[Match]:
         draft_completed_at=data.get('draft_completed_at', 0.0),
         turn_deadline=data.get('turn_deadline', 0.0),
         terminate_votes=data.get('terminate_votes', []),
+        terminate_requested_at=data.get('terminate_requested_at', 0.0),
     )
     m.trade_offer = data.get('trade_offer')
 
