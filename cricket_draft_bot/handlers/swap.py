@@ -224,6 +224,11 @@ async def handle_swap_pick2(update: Update, context: ContextTypes.DEFAULT_TYPE):
     team.slots[p2_slot] = p1_obj
     team.swaps_used = 1
 
+    # Reset terminate votes on move (#1: Reset on Move)
+    if getattr(match, 'terminate_votes', None):
+        match.terminate_votes = []
+        match.terminate_requested_at = 0.0
+
     await save_match_state(match)
 
     # Build the "Go Back to Match" URL
