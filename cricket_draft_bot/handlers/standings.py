@@ -289,8 +289,16 @@ def _build_text(
     else:
         for i, doc in enumerate(rows, 1):
             wins = _wins_for_view(doc, view, chat_id)
-            name = esc(doc.get("name", "Player"))
-            is_you = doc.get("user_id") == user_id
+            raw_name = str(doc.get("name", "Player")).replace("[", "(").replace("]", ")")
+            name = esc(raw_name)
+            uid  = doc.get("user_id")
+            is_you = uid == user_id
+
+            # Clickable profile link — works even without @username
+            if uid:
+                name_link = f"[{name}](tg://user?id={uid})"
+            else:
+                name_link = name
 
             rank_sym = _rank_emoji(i)
             crown = " 👑" if i == 1 else ""
@@ -305,7 +313,7 @@ def _build_text(
             else:
                 change_str = ""
 
-            lines.append(f"{rank_sym} {name} — *{wins}* Wins{crown}{change_str}{you}")
+            lines.append(f"{rank_sym} {name_link} — *{wins}* Wins{crown}{change_str}{you}")
 
     lines.append(f"\n{separator}")
 
