@@ -22,6 +22,53 @@ _pending_challenges: dict = {}
 # Locks to prevent double-clicks/spam on the mode picker buttons
 MODE_PICK_LOCKS = set()
 
+_EMBED_LINK_TIP = (
+    "\n\n⚠️ <i>Image preview unavailable.</i> "
+    "To enable banner previews: grant <b>Admin</b> rights to the bot, "
+    "or go to <b>Group Settings → Permissions → Embed Links</b> and enable it."
+)
+
+async def _send_challenge_msg(bot, chat_id: int, href_text: str, caption: str,
+                              banner, keyboard) -> "telegram.Message | None":
+    """3-tier send: href-text → send_photo → plain text with notification."""
+    try:
+        return await bot.send_message(
+            chat_id=chat_id, text=href_text,
+            reply_markup=keyboard, parse_mode="HTML",
+            disable_web_page_preview=False
+        )
+    except ChatMigrated as e:
+        try:
+            return await bot.send_message(
+                chat_id=e.migrate_to_chat_id, text=href_text,
+                reply_markup=keyboard, parse_mode="HTML",
+                disable_web_page_preview=False
+            )
+        except Exception:
+            pass
+    except Exception:
+        pass
+
+    # Tier 2: send_photo
+    if banner:
+        try:
+            return await bot.send_photo(
+                chat_id=chat_id, photo=banner, caption=caption,
+                reply_markup=keyboard, parse_mode="HTML"
+            )
+        except Exception:
+            pass
+
+    # Tier 3: plain text with embed-link tip
+    try:
+        return await bot.send_message(
+            chat_id=chat_id,
+            text=caption + _EMBED_LINK_TIP,
+            reply_markup=keyboard, parse_mode="HTML"
+        )
+    except Exception:
+        return None
+
 
 def _is_stale_command(update) -> bool:
     """
@@ -169,6 +216,15 @@ async def challenge_handler(update: Update, context: ContextTypes.DEFAULT_TYPE, 
     if not update.message:
         return
 
+    # Block challenges in private/DM chats
+    if update.effective_chat.type == "private":
+        await update.message.reply_text(
+            "⚔️ Challenges can only be started in *group chats*!\n"
+            "Add me to a group and use /challenge there.",
+            parse_mode="Markdown"
+        )
+        return
+
     # Check mention
     if not update.message.mentions:
         await update.message.reply_text("⚠ Usage: /challenge_ipl @username")
@@ -209,6 +265,8 @@ async def challenge_handler(update: Update, context: ContextTypes.DEFAULT_TYPE, 
 
 async def challenge_ipl(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if _is_stale_command(update): return  # Drop replayed command from before bot restart
+    if update.effective_chat.type == "private":
+        await update.effective_message.reply_text("⚔️ Challenges can only be started in *group chats*!\nAdd me to a group and use /challenge there.", parse_mode="Markdown"); return
     from utils.banners import get_banner_for_mode
     owner_id = update.effective_user.id
     chat_id = update.effective_chat.id
@@ -246,7 +304,13 @@ async def challenge_ipl(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="HTML"
             )
         except Exception:
-            return
+            try:
+                msg = await context.bot.send_message(
+                    chat_id=chat_id, text=caption + _EMBED_LINK_TIP,
+                    reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="HTML"
+                )
+            except Exception:
+                return
     if not msg: return
     _ch_key = f"{owner_id}_IPL_{msg.message_id}"
     task = asyncio.create_task(_expire_challenge(_ch_key, owner_id, chat_id, msg.message_id, context.bot))
@@ -259,6 +323,8 @@ async def challenge_ipl(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def challenge_odi(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if _is_stale_command(update): return  # Drop replayed command from before bot restart
+    if update.effective_chat.type == "private":
+        await update.effective_message.reply_text("⚔️ Challenges can only be started in *group chats*!\nAdd me to a group and use /challenge there.", parse_mode="Markdown"); return
     from utils.banners import get_banner_for_mode
     owner_id = update.effective_user.id
     chat_id = update.effective_chat.id
@@ -296,7 +362,13 @@ async def challenge_odi(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="HTML"
             )
         except Exception:
-            return
+            try:
+                msg = await context.bot.send_message(
+                    chat_id=chat_id, text=caption + _EMBED_LINK_TIP,
+                    reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="HTML"
+                )
+            except Exception:
+                return
     if not msg: return
     _ch_key = f"{owner_id}_ODI_{msg.message_id}"
     task = asyncio.create_task(_expire_challenge(_ch_key, owner_id, chat_id, msg.message_id, context.bot))
@@ -312,6 +384,8 @@ challenge_intl = challenge_odi
 
 async def challenge_fifa(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if _is_stale_command(update): return  # Drop replayed command from before bot restart
+    if update.effective_chat.type == "private":
+        await update.effective_message.reply_text("⚔️ Challenges can only be started in *group chats*!\nAdd me to a group and use /challenge there.", parse_mode="Markdown"); return
     from utils.banners import get_banner_for_mode
     owner_id = update.effective_user.id
     chat_id = update.effective_chat.id
@@ -349,7 +423,13 @@ async def challenge_fifa(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="HTML"
             )
         except Exception:
-            return
+            try:
+                msg = await context.bot.send_message(
+                    chat_id=chat_id, text=caption + _EMBED_LINK_TIP,
+                    reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="HTML"
+                )
+            except Exception:
+                return
     if not msg: return
     _ch_key = f"{owner_id}_FIFA_{msg.message_id}"
     task = asyncio.create_task(_expire_challenge(_ch_key, owner_id, chat_id, msg.message_id, context.bot))
@@ -530,6 +610,8 @@ async def challenge_wwe_start(update: Update, context: ContextTypes.DEFAULT_TYPE
 
 async def challenge_wwe(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if _is_stale_command(update): return  # Drop replayed command from before bot restart
+    if update.effective_chat.type == "private":
+        await update.effective_message.reply_text("⚔️ Challenges can only be started in *group chats*!\nAdd me to a group and use /challenge there.", parse_mode="Markdown"); return
     owner_id = update.effective_user.id
     # ─ Match limit check
     _reply_obj = getattr(update, 'effective_message', None) or getattr(update, 'callback_query', None)
@@ -539,6 +621,8 @@ async def challenge_wwe(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def challenge_test(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if _is_stale_command(update): return  # Drop replayed command from before bot restart
+    if update.effective_chat.type == "private":
+        await update.effective_message.reply_text("⚔️ Challenges can only be started in *group chats*!\nAdd me to a group and use /challenge there.", parse_mode="Markdown"); return
     from utils.banners import get_banner_for_mode
     owner_id = update.effective_user.id
     chat_id = update.effective_chat.id
@@ -576,7 +660,13 @@ async def challenge_test(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="HTML"
             )
         except Exception:
-            return
+            try:
+                msg = await context.bot.send_message(
+                    chat_id=chat_id, text=caption + _EMBED_LINK_TIP,
+                    reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="HTML"
+                )
+            except Exception:
+                return
     if not msg: return
     _ch_key = f"{owner_id}_Test_{msg.message_id}"
     task = asyncio.create_task(_expire_challenge(_ch_key, owner_id, chat_id, msg.message_id, context.bot))
@@ -594,6 +684,8 @@ async def challenge_unified(update: Update, context: ContextTypes.DEFAULT_TYPE):
     With no args: shows mode picker buttons (IPL, ODI, Test, FIFA, WWE).
     """
     if _is_stale_command(update): return  # Drop replayed command from before bot restart
+    if update.effective_chat.type == "private":
+        await update.effective_message.reply_text("⚔️ Challenges can only be started in *group chats*!\nAdd me to a group and use /challenge there.", parse_mode="Markdown"); return
     owner_id = update.effective_user.id
     # ─ Match limit check for all /challenge entries (with or without args)
     if not await _check_match_limit(owner_id, update.effective_message):
@@ -905,7 +997,10 @@ async def handle_join(update: Update, context: ContextTypes.DEFAULT_TYPE):
     from utils.banners import get_banner_for_mode
 
     board_text = format_draft_board(match)
-    keyboard = [[InlineKeyboardButton("🎲 Draw Player", callback_data=f"draw_{match.match_id}")]]
+    keyboard = [
+        [InlineKeyboardButton("🎲 Draw Player", callback_data=f"draw_{match.match_id}")],
+        [InlineKeyboardButton("🏳️ Terminate 0/2", callback_data=f"terminate|{match.match_id}")]
+    ]
 
     if "IPL" in mode:
         banner = await get_banner_for_mode("ipl")
