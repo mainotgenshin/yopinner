@@ -1355,15 +1355,18 @@ async def handle_h2h(update: Update, context: ContextTypes.DEFAULT_TYPE):
         parse_mode="Markdown"
     )
 
-# ─────────────────────────────────────────────────────────────────────────────
+# # ─────────────────────────────────────────────────────────────────────────────
 # /multi_sell
 # ─────────────────────────────────────────────────────────────────────────────
+_PENDING_MULTI_SELLS: dict[str, dict] = {}
+
 async def handle_multi_sell(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """
     Sell multiple cards by their numbered position in /mycards (all mode).
+    Shows confirmation preview with cards count, coins payout, and Confirm/Cancel buttons.
     Usage:
-      /multi_sell 1-20   → sell cards numbered 1 through 20
-      /multi_sell 1 5 6  → sell cards at positions 1, 5, 6
+      /multi_sell 1-20   → preview selling cards numbered 1 through 20
+      /multi_sell 1 3 5  → preview selling cards at positions 1, 3, 5
     """
     user = update.effective_user
     args = context.args
@@ -1405,8 +1408,8 @@ async def handle_multi_sell(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.effective_message.reply_text("❌ No valid card numbers provided.")
         return
 
-    # Fetch the full sorted card list (same order as /mycards all mode)
-    from database import get_user_cards, get_fav_card, remove_card_from_user, add_card_coins
+    # Fetch current cards (same order as /mycards all mode)
+    from database import get_user_cards, get_fav_card
     rarity_order = {"legend": 0, "epic": 1, "rare": 2, "common": 3}
     all_cards = await get_user_cards(user.id, sport_filter=None)
     all_cards.sort(key=lambda c: (rarity_order.get(c["rarity"], 9), c["name"]))
@@ -1417,13 +1420,137 @@ async def handle_multi_sell(update: Update, context: ContextTypes.DEFAULT_TYPE):
     fav_key = (fav.get("player_id"), fav.get("format")) if fav else (None, None)
 
     total_coins = 0
-    sold_count = 0
+    cards_to_sell = []
     skipped_fav = 0
     skipped_missing = 0
+    rarity_counts: dict[str, int] = {}
 
-    lock = _get_lock(user.id)
+    for idx in sorted(indices):
+        pos = idx - 1  # 0-indexed
+        if pos < 0 or pos >= len(all_cards):
+            skipped_missing += 1
+            continue
+        card = all_cards[pos]
+        pid, fmt = card["player_id"], card["format"]
+        # Protect favorite card if last copy
+        if (pid, fmt) == fav_key and card.get("quantity", 1) <= 1:
+            skipped_fav += 1
+            continue
+        rarity = card.get("rarity", "common")
+        sell_val = SELL_VALUES.get(rarity, 25)
+        total_coins += sell_val
+        rarity_counts[rarity] = rarity_counts.get(rarity, 0) + 1
+        cards_to_sell.append(card)
+
+    if not cards_to_sell:
+        lines = [
+            "📦 *Multi-Sell Preview*",
+            "━━━━━━━━━━━━━━━━━━",
+            "❌ No valid cards to sell.",
+        ]
+        if skipped_fav:
+            lines.append(f"⭐ Skipped *{skipped_fav}* fav card(s) — remove fav first to sell.")
+        if skipped_missing:
+            lines.append(f"⚠️ Skipped *{skipped_missing}* invalid/missing position(s).")
+        await update.effective_message.reply_text("\n".join(lines), parse_mode="Markdown")
+        return
+
+    # Auto-prune sessions older than 5 minutes
+    now = time.time()
+    expired = [k for k, v in _PENDING_MULTI_SELLS.items() if now - v.get("created_at", 0) > 300]
+    for k in expired:
+        _PENDING_MULTI_SELLS.pop(k, None)
+
+    # Store pending session
+    sell_id = uuid.uuid4().hex[:8]
+    _PENDING_MULTI_SELLS[sell_id] = {
+        "user_id": user.id,
+        "indices": sorted(indices),
+        "created_at": now,
+    }
+
+    # Format preview message
+    lines = [
+        "📦 *Multi-Sell Confirmation*",
+        "━━━━━━━━━━━━━━━━━━",
+        f"🃏 Cards selected: *{len(cards_to_sell)}*",
+        f"💰 Total payout: *+{total_coins}🪙*",
+    ]
+    # Rarity breakdown
+    breakdown = []
+    for r in ["legend", "epic", "rare", "common"]:
+        cnt = rarity_counts.get(r, 0)
+        if cnt > 0:
+            r_emoji = RARITY_EMOJI.get(r, "⚪")
+            val = cnt * SELL_VALUES[r]
+            breakdown.append(f"{r_emoji} {r.title()}: *{cnt}* (+{val}🪙)")
+    if breakdown:
+        lines.append("━━━━━━━━━━━━━━━━━━")
+        lines.extend(breakdown)
+
+    if skipped_fav or skipped_missing:
+        lines.append("━━━━━━━━━━━━━━━━━━")
+        if skipped_fav:
+            lines.append(f"⭐ Skipped *{skipped_fav}* fav card(s) (protected)")
+        if skipped_missing:
+            lines.append(f"⚠️ Skipped *{skipped_missing}* invalid position(s)")
+
+    lines.append("━━━━━━━━━━━━━━━━━━")
+    lines.append("Are you sure you want to sell these cards?")
+
+    keyboard = InlineKeyboardMarkup([
+        [
+            InlineKeyboardButton(f"✅ Confirm Sell (+{total_coins}🪙)", callback_data=f"msell_ok|{user.id}|{sell_id}"),
+            InlineKeyboardButton("❌ Cancel", callback_data=f"msell_cancel|{user.id}|{sell_id}"),
+        ]
+    ])
+    await update.effective_message.reply_text("\n".join(lines), reply_markup=keyboard, parse_mode="Markdown")
+
+
+async def cb_msell_ok(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Callback when user clicks Confirm Sell."""
+    query = update.callback_query
+    parts = query.data.split("|")
+    if len(parts) != 3:
+        await query.answer("Invalid request.", show_alert=True)
+        return
+    _, owner_id, sell_id = parts
+    user_id = query.from_user.id
+    if str(user_id) != owner_id:
+        await query.answer("⛔ Not your menu.", show_alert=True)
+        return
+
+    session = _PENDING_MULTI_SELLS.pop(sell_id, None)
+    if not session or (time.time() - session.get("created_at", 0) > 300):
+        await query.answer("⌛ This sell request has expired. Please run /multi_sell again.", show_alert=True)
+        try:
+            await query.edit_message_text("⌛ *Multi-Sell Expired*\nPlease run `/multi_sell` again.", parse_mode="Markdown")
+        except Exception:
+            pass
+        return
+
+    await query.answer("Selling cards...")
+
+    from database import get_user_cards, get_fav_card, remove_card_from_user, add_card_coins, increment_quest_progress
+    indices = session.get("indices", [])
+    rarity_order = {"legend": 0, "epic": 1, "rare": 2, "common": 3}
+    SELL_VALUES = {"common": 25, "rare": 75, "epic": 200, "legend": 600}
+
+    lock = _get_lock(user_id)
     async with lock:
-        for idx in sorted(indices):
+        # Re-fetch cards to ensure snapshot is fully accurate
+        all_cards = await get_user_cards(user_id, sport_filter=None)
+        all_cards.sort(key=lambda c: (rarity_order.get(c["rarity"], 9), c["name"]))
+
+        fav = await get_fav_card(user_id)
+        fav_key = (fav.get("player_id"), fav.get("format")) if fav else (None, None)
+
+        total_coins = 0
+        sold_count = 0
+        skipped_fav = 0
+        skipped_missing = 0
+
+        for idx in indices:
             pos = idx - 1  # 0-indexed
             if pos < 0 or pos >= len(all_cards):
                 skipped_missing += 1
@@ -1435,7 +1562,7 @@ async def handle_multi_sell(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 skipped_fav += 1
                 continue
             sell_val = SELL_VALUES.get(card.get("rarity", "common"), 25)
-            remaining = await remove_card_from_user(user.id, pid, fmt)
+            remaining = await remove_card_from_user(user_id, pid, fmt)
             if remaining < 0:
                 skipped_missing += 1
                 continue
@@ -1443,21 +1570,20 @@ async def handle_multi_sell(update: Update, context: ContextTypes.DEFAULT_TYPE):
             sold_count += 1
 
         if total_coins > 0:
-            new_bal = await add_card_coins(user.id, total_coins)
+            new_bal = await add_card_coins(user_id, total_coins)
             # Track quest progress
             try:
-                from database import increment_quest_progress
-                await increment_quest_progress(user.id, "cards_sold", sold_count)
+                await increment_quest_progress(user_id, "cards_sold", sold_count)
             except Exception:
                 pass
         else:
             new_bal = None
 
-    lines = [f"💰 *Multi-Sell Complete*", "━━━━━━━━━━━━━━━━━━"]
+    lines = ["💰 *Multi-Sell Complete*", "━━━━━━━━━━━━━━━━━━"]
     if sold_count > 0:
-        lines.append(f"✅ Sold *{sold_count}* card(s) for *{total_coins}🪙*")
+        lines.append(f"✅ Sold *{sold_count}* card(s) for *+{total_coins}🪙*")
         if new_bal is not None:
-            lines.append(f"💰 Balance: *{new_bal}🪙*")
+            lines.append(f"💰 New Balance: *{new_bal}🪙*")
     else:
         lines.append("❌ No cards were sold.")
     if skipped_fav:
@@ -1465,4 +1591,24 @@ async def handle_multi_sell(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if skipped_missing:
         lines.append(f"⚠️ Skipped *{skipped_missing}* invalid/missing position(s).")
 
-    await update.effective_message.reply_text("\n".join(lines), parse_mode="Markdown")
+    await query.edit_message_text("\n".join(lines), parse_mode="Markdown")
+
+
+async def cb_msell_cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Callback when user clicks Cancel."""
+    query = update.callback_query
+    parts = query.data.split("|")
+    if len(parts) != 3:
+        await query.answer("Invalid request.", show_alert=True)
+        return
+    _, owner_id, sell_id = parts
+    if str(query.from_user.id) != owner_id:
+        await query.answer("⛔ Not your menu.", show_alert=True)
+        return
+
+    _PENDING_MULTI_SELLS.pop(sell_id, None)
+    await query.answer("Cancelled")
+    await query.edit_message_text(
+        "❌ *Multi-Sell Cancelled*\n━━━━━━━━━━━━━━━━━━\nNo cards were sold.",
+        parse_mode="Markdown"
+    )
