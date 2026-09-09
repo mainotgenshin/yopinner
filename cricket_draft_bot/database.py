@@ -622,14 +622,19 @@ async def get_pack_inventory(user_id: int) -> dict:
         "elite":   int(inv.get("elite", 0)),
     }
 
-async def add_pack(user_id: int, pack_type: str) -> None:
-    """Add one pack of given type to user inventory."""
+async def add_pack_to_user(user_id: int, pack_type: str) -> int:
+    """Add one pack of given type to user inventory and return new count."""
     db = get_db()
-    await db.users.update_one(
+    result = await db.users.find_one_and_update(
         {"user_id": user_id},
         {"$inc": {f"pack_inventory.{pack_type}": 1}},
-        upsert=True
+        upsert=True,
+        return_document=True
     )
+    inv = result.get("pack_inventory", {}) if result else {}
+    return int(inv.get(pack_type, 1))
+
+add_pack = add_pack_to_user
 
 async def use_pack(user_id: int, pack_type: str) -> bool:
     """Atomically consume one pack. Returns True if successful."""
@@ -838,10 +843,12 @@ def _next_midnight_utc() -> float:
     return tomorrow.timestamp()
 
 QUEST_DEFINITIONS = {
-    "obtain_2": {"label": "Obtain 2 cards via pack",  "field": "cards_obtained", "target": 2,  "reward": 10},
-    "obtain_5": {"label": "Obtain 5 cards via pack",  "field": "cards_obtained", "target": 5,  "reward": 20},
-    "trade_1":  {"label": "Trade 1 card",             "field": "cards_traded",   "target": 1,  "reward": 10},
-    "sell_2":   {"label": "Sell 2 cards",             "field": "cards_sold",     "target": 2,  "reward": 10},
+    "obtain_2": {"label": "Obtain 2 cards via pack",  "field": "cards_obtained",  "target": 2,   "reward": 10},
+    "obtain_5": {"label": "Obtain 5 cards via pack",  "field": "cards_obtained",  "target": 5,   "reward": 20},
+    "trade_1":  {"label": "Trade 1 card",             "field": "cards_traded",    "target": 1,   "reward": 20},
+    "sell_3":   {"label": "Sell 3 cards",             "field": "cards_sold",      "target": 3,   "reward": 20},
+    "bbet_500": {"label": "Bet 500🪙 in /bbet",       "field": "bbet_coins_spent","target": 500, "reward": 50},
+    "streak_3": {"label": "Win 3 matches in a row today", "field": "win_streak",  "target": 3,   "reward": 50},
 }
 
 async def get_daily_quests(user_id: int) -> dict:
@@ -854,11 +861,13 @@ async def get_daily_quests(user_id: int) -> dict:
     now = _time.time()
 
     default = {
-        "reset_at":       _next_midnight_utc(),
-        "cards_obtained": 0,
-        "cards_traded":   0,
-        "cards_sold":     0,
-        "claimed":        [],
+        "reset_at":         _next_midnight_utc(),
+        "cards_obtained":   0,
+        "cards_traded":     0,
+        "cards_sold":       0,
+        "bbet_coins_spent": 0,
+        "win_streak":       0,
+        "claimed":          [],
     }
 
     if not doc or "daily_quests" not in doc:
@@ -873,12 +882,15 @@ async def get_daily_quests(user_id: int) -> dict:
     # Check if reset needed
     if now >= quests.get("reset_at", 0):
         new_quests = {
-            "reset_at":       _next_midnight_utc(),
-            "cards_obtained": 0,
-            "cards_traded":   0,
-            "cards_sold":     0,
-            "claimed":        [],
+            "reset_at":         _next_midnight_utc(),
+            "cards_obtained":   0,
+            "cards_traded":     0,
+            "cards_sold":       0,
+            "bbet_coins_spent": 0,
+            "win_streak":       0,
+            "claimed":          [],
         }
+
         await db.users.update_one(
             {"user_id": user_id},
             {"$set": {"daily_quests": new_quests}}
