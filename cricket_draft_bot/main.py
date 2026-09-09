@@ -805,6 +805,7 @@ if __name__ == '__main__':
         cb_tr_page, cb_tr_offer, cb_tr_pick, cb_tr_confirm, cb_tr_decline, cb_tr_cancel,
         cb_tr_tpage,
         cb_quest_claim,
+        cb_msell_ok, cb_msell_cancel,
     )
     # Commands
     application.add_handler(CommandHandler('pack',       handle_pack))
@@ -859,6 +860,8 @@ if __name__ == '__main__':
     application.add_handler(CallbackQueryHandler(cb_tr_cancel,    pattern=r"^tr_cancel\|"))
     application.add_handler(CallbackQueryHandler(cb_tr_tpage,     pattern=r"^tr_tpage\|"))
     application.add_handler(CallbackQueryHandler(cb_quest_claim,  pattern=r"^quest_claim\|"))
+    application.add_handler(CallbackQueryHandler(cb_msell_ok,     pattern=r"^msell_ok\|"))
+    application.add_handler(CallbackQueryHandler(cb_msell_cancel, pattern=r"^msell_cancel\|"))
 
     # Catch-all callback (must be LAST)
     application.add_handler(CallbackQueryHandler(handle_callback))
