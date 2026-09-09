@@ -27,7 +27,7 @@ PACK_EMOJI   = {"basic": "🟦", "premium": "🟣", "elite": "🟡"}
 SPORT_EMOJI  = {"cricket": "🏏", "football": "⚽", "wwe": "🤼"}
 SPORT_LABEL  = {"cricket": "Cricket", "football": "FIFA", "wwe": "WWE Men"}
 FORMAT_LABEL = {"ipl": "IPL", "odi": "ODI", "test": "Test", "wwe": "WWE", "fifa": "FIFA"}
-PACK_PRICES  = {"basic": 150, "premium": 400, "elite": 1000}
+PACK_PRICES  = {"basic": 250, "premium": 550, "elite": 1200}
 PACK_ODDS_TEXT = {
     "basic":   "60% Common | 35% Rare | 5% Epic | 0% Legend",
     "premium": "15% Common | 45% Rare | 35% Epic | 5% Legend",
@@ -56,7 +56,7 @@ async def handle_pack(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
     if update.effective_chat.type != "private":
         kb = InlineKeyboardMarkup([[InlineKeyboardButton(
-            "📬 Open in DM", url=f"https://t.me/{context.bot.username}"
+            "📬 Open in DM", url=f"https://t.me/{context.bot.username}?start=pack"
         )]])
         await update.effective_message.reply_text(
             "📦 Please use /pack in my DM to keep the group clean!",
@@ -84,9 +84,9 @@ async def cb_pack_sport(update: Update, context: ContextTypes.DEFAULT_TYPE):
         text += f"{PACK_EMOJI[tier]} *{tier.title()} Pack* — {PACK_PRICES[tier]}🪙\n`{PACK_ODDS_TEXT[tier]}`\n\n"
     keyboard = InlineKeyboardMarkup([
         [
-            InlineKeyboardButton(f"🟦 Basic 150🪙",   callback_data=f"pack_tier|{owner_id}|{sport}|basic"),
-            InlineKeyboardButton(f"🟣 Premium 400🪙",  callback_data=f"pack_tier|{owner_id}|{sport}|premium"),
-            InlineKeyboardButton(f"🟡 Elite 1000🪙",   callback_data=f"pack_tier|{owner_id}|{sport}|elite"),
+            InlineKeyboardButton(f"🟦 Basic {PACK_PRICES['basic']}🪙",   callback_data=f"pack_tier|{owner_id}|{sport}|basic"),
+            InlineKeyboardButton(f"🟣 Premium {PACK_PRICES['premium']}🪙", callback_data=f"pack_tier|{owner_id}|{sport}|premium"),
+            InlineKeyboardButton(f"🟡 Elite {PACK_PRICES['elite']}🪙",   callback_data=f"pack_tier|{owner_id}|{sport}|elite"),
         ],
         [InlineKeyboardButton("◀️ Back", callback_data=f"pack_back|{owner_id}")]
     ])
@@ -173,7 +173,7 @@ async def handle_inventory(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
     if update.effective_chat.type != "private":
         kb = InlineKeyboardMarkup([[InlineKeyboardButton(
-            "📬 Open in DM", url=f"https://t.me/{context.bot.username}"
+            "📬 Open in DM", url=f"https://t.me/{context.bot.username}?start=inventory"
         )]])
         await update.effective_message.reply_text(
             "📦 Please use /inventory in my DM to keep the group clean!",
@@ -329,7 +329,8 @@ async def _show_mycards(message_or_query, owner_id: int, viewer_id: int, sport_f
         InlineKeyboardButton("⚽",      callback_data=f"mc_page|{owner_id}|football|0"),
         InlineKeyboardButton("🤼",      callback_data=f"mc_page|{owner_id}|wwe|0"),
     ]
-    kb = InlineKeyboardMarkup([filters] + ([nav] if nav else []))
+    collections_row = [InlineKeyboardButton("📊 Collections", callback_data=f"mc_collections|{owner_id}")]
+    kb = InlineKeyboardMarkup([filters] + ([nav] if nav else []) + [collections_row])
 
     if edit:
         await message_or_query.edit_message_text(text, reply_markup=kb, parse_mode="Markdown")
@@ -346,6 +347,61 @@ async def cb_mc_page(update: Update, context: ContextTypes.DEFAULT_TYPE):
     sport_filter = None if sport_str == "all" else sport_str
     await _show_mycards(query, int(owner_id), query.from_user.id, sport_filter, int(page_str), edit=True)
 
+async def cb_mc_collections(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Show full collection breakdown: rarity counts per format."""
+    query = update.callback_query
+    _, owner_id = query.data.split("|")
+    if str(query.from_user.id) != owner_id:
+        await query.answer("⛔ Not your menu.", show_alert=True); return
+    await query.answer()
+    from database import get_user_cards
+    all_cards = await get_user_cards(int(owner_id))
+
+    # Group by sport → format → rarity
+    # sport detection: football cards have format "fifa", wwe have format "wwe", cricket have ipl/odi/test
+    FORMAT_TO_SPORT = {"ipl": "Cricket", "odi": "Cricket", "test": "Cricket", "fifa": "FIFA", "wwe": "WWE"}
+    SPORT_EMOJI_MAP = {"Cricket": "🏏", "FIFA": "⚽", "WWE": "🤼"}
+    FORMAT_ORDER = ["ipl", "odi", "test", "fifa", "wwe"]
+    RARITY_ORDER = ["common", "rare", "epic", "legend"]
+
+    # Build nested counts: {format: {rarity: count, total: count}}
+    counts: dict = {}
+    grand_total = 0
+    for card in all_cards:
+        fmt = card.get("format", "")
+        rarity = card.get("rarity", "common")
+        qty = card.get("quantity", 1)
+        if fmt not in counts:
+            counts[fmt] = {"common": 0, "rare": 0, "epic": 0, "legend": 0}
+        counts[fmt][rarity] = counts[fmt].get(rarity, 0) + qty
+        grand_total += qty
+
+    lines = ["📊 *Your Collections*", "━━━━━━━━━━━━━━━━━━"]
+
+    for fmt in FORMAT_ORDER:
+        if fmt not in counts:
+            continue
+        sport = FORMAT_TO_SPORT.get(fmt, fmt)
+        emoji = SPORT_EMOJI_MAP.get(sport, "🃏")
+        f_label = FORMAT_LABEL.get(fmt, fmt.upper())
+        fmt_total = sum(counts[fmt].get(r, 0) for r in RARITY_ORDER)
+        rarity_parts = []
+        for r in RARITY_ORDER:
+            n = counts[fmt].get(r, 0)
+            if n > 0:
+                rarity_parts.append(f"{RARITY_EMOJI.get(r, '⚪')} {r.title()}: *{n}*")
+        lines.append(f"\n{emoji} *{f_label}*")
+        if rarity_parts:
+            lines.append("  " + " | ".join(rarity_parts))
+        lines.append(f"  Total: *{fmt_total} cards*")
+
+    lines.append(f"\n━━━━━━━━━━━━━━━━━━")
+    lines.append(f"🃏 Grand Total: *{grand_total} cards*")
+
+    text = "\n".join(lines)
+    back_kb = InlineKeyboardMarkup([[InlineKeyboardButton("◀️ Back to Cards", callback_data=f"mc_page|{owner_id}|all|0")]])
+    await query.edit_message_text(text, reply_markup=back_kb, parse_mode="Markdown")
+
 # ─────────────────────────────────────────────────────────────────────────────
 # /viewcard
 # ─────────────────────────────────────────────────────────────────────────────
@@ -353,7 +409,10 @@ async def handle_viewcard(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
     args = context.args
     if not args:
-        await update.effective_message.reply_text("Usage: /viewcard <player name>")
+        try:
+            await update.effective_message.reply_text("Usage: /viewcard <player name>")
+        except Exception:
+            pass
         return
     name_query = " ".join(args)
     from database import get_user_cards, get_db
@@ -361,24 +420,48 @@ async def handle_viewcard(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # Filter by name (case-insensitive partial match)
     matching = [c for c in cards if name_query.lower() in c["name"].lower()]
     if not matching:
-        await update.effective_message.reply_text(f"❌ You don't own any card matching *{esc(name_query)}*.", parse_mode="Markdown")
+        try:
+            await update.effective_message.reply_text(f"❌ You don't own any card matching *{esc(name_query)}*.", parse_mode="Markdown")
+        except Exception:
+            pass
         return
     # Group by player_id to detect multiple formats
     # Distinct player names with this query
-    distinct_names = list({c["name"] for c in matching})
+    distinct_names = sorted({c["name"] for c in matching})
     if len(distinct_names) > 1:
-        # Multiple different players matched — show list
-        lines = [f"🔍 Multiple matches for *{esc(name_query)}*:"]
-        for i, n in enumerate(sorted(distinct_names), 1):
-            lines.append(f"{i}. {esc(n)}")
-        await update.effective_message.reply_text("\n".join(lines) + "\n\nPlease be more specific.", parse_mode="Markdown")
+        # Multiple different players matched — show clickable buttons (NOT a dead-end text list)
+        buttons = []
+        for n in distinct_names:
+            # Find this player's cards to show format info in button
+            player_cards_for_name = [c for c in matching if c["name"] == n]
+            # If they only have one card for this player, go straight to vc_fmt
+            if len(player_cards_for_name) == 1:
+                c = player_cards_for_name[0]
+                label = f"{esc(n)} ({FORMAT_LABEL.get(c['format'], c['format'].upper())})"
+                buttons.append([InlineKeyboardButton(label, callback_data=f"vc_fmt|{user.id}|{c['player_id']}|{c['format']}")])
+            else:
+                # Multiple formats — show name only, next click picks format
+                label = f"{esc(n)} ({len(player_cards_for_name)} formats)"
+                # Use the first player_id (all cards for same name share same player_id)
+                buttons.append([InlineKeyboardButton(label, callback_data=f"vc_name|{user.id}|{player_cards_for_name[0]['player_id']}")])
+        try:
+            await update.effective_message.reply_text(
+                f"🔍 Multiple matches for *{esc(name_query)}*:\nTap a name to view:",
+                reply_markup=InlineKeyboardMarkup(buttons),
+                parse_mode="Markdown"
+            )
+        except Exception:
+            pass
         return
     # One player name — check formats
     player_name = distinct_names[0]
     player_cards = [c for c in matching if c["name"] == player_name]
     if len(player_cards) == 1:
         # Single format — show directly
-        await _show_card_detail(update.effective_message, user.id, player_cards[0], edit=False)
+        try:
+            await _show_card_detail(update.effective_message, user.id, player_cards[0], edit=False)
+        except Exception:
+            pass
     else:
         # Multiple formats — ask which one
         buttons = [
@@ -388,11 +471,45 @@ async def handle_viewcard(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )]
             for c in player_cards
         ]
-        await update.effective_message.reply_text(
+        try:
+            await update.effective_message.reply_text(
+                f"Which *{esc(player_name)}* card do you want to view?",
+                reply_markup=InlineKeyboardMarkup(buttons),
+                parse_mode="Markdown"
+            )
+        except Exception:
+            pass
+
+async def cb_vc_name(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """User picked a player name from the disambiguation list — show their formats."""
+    query = update.callback_query
+    _, owner_id, player_id = query.data.split("|")
+    if str(query.from_user.id) != owner_id:
+        await query.answer("⛔ Not your menu.", show_alert=True); return
+    await query.answer()
+    from database import get_user_cards
+    cards = await get_user_cards(int(owner_id))
+    player_cards = [c for c in cards if c["player_id"] == player_id]
+    if not player_cards:
+        await query.edit_message_text("❌ Card not found in your collection.")
+        return
+    if len(player_cards) == 1:
+        await _show_card_detail(query, int(owner_id), player_cards[0], edit=True)
+    else:
+        buttons = [
+            [InlineKeyboardButton(
+                f"{FORMAT_LABEL.get(c['format'], c['format'].upper())} — {RARITY_EMOJI.get(c['rarity'], '⚪')} OVR {c['ovr']}",
+                callback_data=f"vc_fmt|{owner_id}|{c['player_id']}|{c['format']}"
+            )]
+            for c in player_cards
+        ]
+        player_name = player_cards[0]["name"]
+        await query.edit_message_text(
             f"Which *{esc(player_name)}* card do you want to view?",
             reply_markup=InlineKeyboardMarkup(buttons),
             parse_mode="Markdown"
         )
+
 
 async def cb_vc_fmt(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -1065,7 +1182,7 @@ async def handle_quest(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
     if update.effective_chat.type != "private":
         kb = InlineKeyboardMarkup([[InlineKeyboardButton(
-            "📬 Open in DM", url=f"https://t.me/{context.bot.username}"
+            "📬 Open in DM", url=f"https://t.me/{context.bot.username}?start=quest"
         )]])
         await update.effective_message.reply_text(
             "📋 Please use /quest in my DM to keep the group clean!",
@@ -1235,3 +1352,115 @@ async def handle_h2h(update: Update, context: ContextTypes.DEFAULT_TYPE):
         + (f"_H2H tracked from latest bot update onwards_" if total == 0 else ""),
         parse_mode="Markdown"
     )
+
+# ─────────────────────────────────────────────────────────────────────────────
+# /multi_sell
+# ─────────────────────────────────────────────────────────────────────────────
+async def handle_multi_sell(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """
+    Sell multiple cards by their numbered position in /mycards (all mode).
+    Usage:
+      /multi_sell 1-20   → sell cards numbered 1 through 20
+      /multi_sell 1 5 6  → sell cards at positions 1, 5, 6
+    """
+    user = update.effective_user
+    args = context.args
+
+    if not args:
+        await update.effective_message.reply_text(
+            "📦 *Multi-Sell*\n"
+            "━━━━━━━━━━━━━━━━━━\n"
+            "Usage:\n"
+            "  `/multi_sell 1-10` — sell cards #1 to #10\n"
+            "  `/multi_sell 1 3 5` — sell cards #1, #3, #5\n\n"
+            "_Card numbers match the /mycards list (All tab)_",
+            parse_mode="Markdown"
+        )
+        return
+
+    # Parse indices
+    indices: set[int] = set()
+    try:
+        if len(args) == 1 and "-" in args[0]:
+            # Range: "1-20"
+            parts = args[0].split("-")
+            start, end = int(parts[0]), int(parts[1])
+            if start < 1 or end < start or (end - start) > 200:
+                raise ValueError
+            indices = set(range(start, end + 1))
+        else:
+            # Space-separated numbers
+            for a in args:
+                indices.add(int(a))
+    except (ValueError, IndexError):
+        await update.effective_message.reply_text(
+            "❌ Invalid format.\nUse `/multi_sell 1-10` or `/multi_sell 1 3 5`",
+            parse_mode="Markdown"
+        )
+        return
+
+    if not indices:
+        await update.effective_message.reply_text("❌ No valid card numbers provided.")
+        return
+
+    # Fetch the full sorted card list (same order as /mycards all mode)
+    from database import get_user_cards, get_fav_card, remove_card_from_user, add_card_coins
+    rarity_order = {"legend": 0, "epic": 1, "rare": 2, "common": 3}
+    all_cards = await get_user_cards(user.id, sport_filter=None)
+    all_cards.sort(key=lambda c: (rarity_order.get(c["rarity"], 9), c["name"]))
+
+    SELL_VALUES = {"common": 25, "rare": 75, "epic": 200, "legend": 600}
+
+    fav = await get_fav_card(user.id)
+    fav_key = (fav.get("player_id"), fav.get("format")) if fav else (None, None)
+
+    total_coins = 0
+    sold_count = 0
+    skipped_fav = 0
+    skipped_missing = 0
+
+    lock = _get_lock(user.id)
+    async with lock:
+        for idx in sorted(indices):
+            pos = idx - 1  # 0-indexed
+            if pos < 0 or pos >= len(all_cards):
+                skipped_missing += 1
+                continue
+            card = all_cards[pos]
+            pid, fmt = card["player_id"], card["format"]
+            # Skip fav card if last copy
+            if (pid, fmt) == fav_key and card.get("quantity", 1) <= 1:
+                skipped_fav += 1
+                continue
+            sell_val = SELL_VALUES.get(card.get("rarity", "common"), 25)
+            remaining = await remove_card_from_user(user.id, pid, fmt)
+            if remaining < 0:
+                skipped_missing += 1
+                continue
+            total_coins += sell_val
+            sold_count += 1
+
+        if total_coins > 0:
+            new_bal = await add_card_coins(user.id, total_coins)
+            # Track quest progress
+            try:
+                from database import increment_quest_progress
+                await increment_quest_progress(user.id, "cards_sold", sold_count)
+            except Exception:
+                pass
+        else:
+            new_bal = None
+
+    lines = [f"💰 *Multi-Sell Complete*", "━━━━━━━━━━━━━━━━━━"]
+    if sold_count > 0:
+        lines.append(f"✅ Sold *{sold_count}* card(s) for *{total_coins}🪙*")
+        if new_bal is not None:
+            lines.append(f"💰 Balance: *{new_bal}🪙*")
+    else:
+        lines.append("❌ No cards were sold.")
+    if skipped_fav:
+        lines.append(f"⭐ Skipped *{skipped_fav}* fav card(s) — remove fav first to sell.")
+    if skipped_missing:
+        lines.append(f"⚠️ Skipped *{skipped_missing}* invalid/missing position(s).")
+
+    await update.effective_message.reply_text("\n".join(lines), parse_mode="Markdown")
