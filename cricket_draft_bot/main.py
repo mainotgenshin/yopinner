@@ -126,6 +126,22 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await handle_swap_dm_start(update, context)
         return
 
+    # Handle deep-links for card commands — auto-execute in DM
+    if chat.type == "private" and context.args:
+        deep_arg = context.args[0].lower()
+        if deep_arg == "pack":
+            from handlers.cards import handle_pack
+            await handle_pack(update, context)
+            return
+        elif deep_arg == "inventory":
+            from handlers.cards import handle_inventory
+            await handle_inventory(update, context)
+            return
+        elif deep_arg == "quest":
+            from handlers.cards import handle_quest
+            await handle_quest(update, context)
+            return
+
     if chat.type == "private":
         # DM — no group-specific features
         await update.effective_message.reply_text(
@@ -740,10 +756,11 @@ if __name__ == '__main__':
     application.add_handler(CommandHandler('banner', wrap_admin_logging(handle_banner, "Modify Banner overrides")))
 
     # Card Catalog Admin commands
-    from handlers.admin import handle_add_card, handle_update_card, handle_gift_coins, handle_add_packall, handle_ban_command, handle_unban_command
+    from handlers.admin import handle_add_card, handle_update_card, handle_gift_coins, handle_gift_pack, handle_add_packall, handle_ban_command, handle_unban_command
     application.add_handler(CommandHandler('add_card',    wrap_admin_logging(handle_add_card,    "Add Card to Catalog")))
     application.add_handler(CommandHandler('update_card', wrap_admin_logging(handle_update_card, "Update Card OVR/Rarity")))
     application.add_handler(CommandHandler('gift',        wrap_admin_logging(handle_gift_coins,  "Gift Card Coins")))
+    application.add_handler(CommandHandler('gift_pack',   wrap_admin_logging(handle_gift_pack,   "Gift Pack to User")))
     application.add_handler(CommandHandler('add_packall', wrap_admin_logging(handle_add_packall, "Gift Pack to All Users")))
     application.add_handler(CommandHandler('bban',        wrap_admin_logging(handle_ban_command, "Ban User")))
     application.add_handler(CommandHandler('unbban',      wrap_admin_logging(handle_unban_command, "Unban User")))
@@ -780,11 +797,11 @@ if __name__ == '__main__':
     from handlers.cards import (
         handle_pack, handle_inventory, handle_mycards, handle_viewcard,
         handle_trade_card, handle_quest,
-        handle_ggive, handle_h2h,
+        handle_ggive, handle_h2h, handle_multi_sell,
         cb_pack_sport, cb_pack_tier, cb_pack_confirm, cb_pack_back,
         cb_inv_packs, cb_inv_open,
-        cb_mc_page,
-        cb_vc_fmt, cb_vc_fav, cb_vc_unfav, cb_vc_sell, cb_vc_sell_ok,
+        cb_mc_page, cb_mc_collections,
+        cb_vc_fmt, cb_vc_name, cb_vc_fav, cb_vc_unfav, cb_vc_sell, cb_vc_sell_ok,
         cb_tr_page, cb_tr_offer, cb_tr_pick, cb_tr_confirm, cb_tr_decline, cb_tr_cancel,
         cb_tr_tpage,
         cb_quest_claim,
@@ -798,6 +815,7 @@ if __name__ == '__main__':
     application.add_handler(CommandHandler('quest',      handle_quest))
     application.add_handler(CommandHandler('ggive',      handle_ggive))
     application.add_handler(CommandHandler('h2h',        handle_h2h))
+    application.add_handler(CommandHandler('multi_sell', handle_multi_sell))
 
     # Coin Flip Bet
     application.add_handler(CommandHandler('bbet', handle_bbet))
@@ -812,8 +830,10 @@ if __name__ == '__main__':
     from handlers.swap import (
         handle_swap_pick1, handle_swap_pick2, handle_swap_cancel
     )
-    application.add_handler(CallbackQueryHandler(handle_swap_pick1, pattern=r"^swap1\|"))
-    application.add_handler(CallbackQueryHandler(handle_swap_pick2, pattern=r"^swap2\|"))
+    from handlers.draft import handle_terminate
+    application.add_handler(CallbackQueryHandler(handle_terminate,   pattern=r"^terminate\|"))
+    application.add_handler(CallbackQueryHandler(handle_swap_pick1,  pattern=r"^swap1\|"))
+    application.add_handler(CallbackQueryHandler(handle_swap_pick2,  pattern=r"^swap2\|"))
     application.add_handler(CallbackQueryHandler(handle_swap_cancel, pattern=r"^swapcancel\|"))
 
     # Card system callbacks (specific patterns BEFORE the catch-all)
@@ -824,7 +844,9 @@ if __name__ == '__main__':
     application.add_handler(CallbackQueryHandler(cb_inv_packs,    pattern=r"^inv_packs\|"))
     application.add_handler(CallbackQueryHandler(cb_inv_open,     pattern=r"^inv_open\|"))
     application.add_handler(CallbackQueryHandler(cb_mc_page,      pattern=r"^mc_page\|"))
+    application.add_handler(CallbackQueryHandler(cb_mc_collections, pattern=r"^mc_collections\|"))
     application.add_handler(CallbackQueryHandler(cb_vc_fmt,       pattern=r"^vc_fmt\|"))
+    application.add_handler(CallbackQueryHandler(cb_vc_name,      pattern=r"^vc_name\|"))
     application.add_handler(CallbackQueryHandler(cb_vc_fav,       pattern=r"^vc_fav\|"))
     application.add_handler(CallbackQueryHandler(cb_vc_unfav,     pattern=r"^vc_unfav\|"))
     application.add_handler(CallbackQueryHandler(cb_vc_sell,      pattern=r"^vc_sell\|"))
@@ -851,6 +873,14 @@ if __name__ == '__main__':
             self.send_response(200)
             self.end_headers()
             self.wfile.write(b"OK")
+
+        def do_HEAD(self):
+            # Heroku/Koyeb health check probes use HEAD — return 200 silently
+            self.send_response(200)
+            self.end_headers()
+
+        def log_message(self, format, *args):
+            pass  # Suppress HTTP request logs to keep console clean
 
     def start_health_server():
         port = int(os.environ.get("PORT", 8000))
