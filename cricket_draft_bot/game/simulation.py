@@ -235,6 +235,26 @@ async def run_simulation(match: Match) -> str:
                 record_match_result(winner_id, winner_name, loser_id, loser_name,
                                     is_draw, match.mode, match.chat_id),
             )
+
+            # Mirror current_streak → daily_quests.win_streak for the streak quest
+            if not is_draw:
+                try:
+                    from database import get_db as _get_db, increment_quest_progress
+                    _db = _get_db()
+                    winner_doc = await _db.users.find_one(
+                        {"user_id": winner_id}, {"current_streak": 1, "daily_quests": 1, "_id": 0}
+                    )
+                    if winner_doc:
+                        current_streak = winner_doc.get("current_streak", 1)
+                        daily_q = winner_doc.get("daily_quests", {})
+                        prev_daily_streak = daily_q.get("win_streak", 0)
+                        # Only increment if today's streak went up
+                        if current_streak > prev_daily_streak:
+                            diff = current_streak - prev_daily_streak
+                            await increment_quest_progress(winner_id, "win_streak", diff)
+                except Exception as _se:
+                    logger.warning(f"win_streak quest tracking failed: {_se}")
+
         except Exception as e:
             logger.error(f"Failed to persist user stats in background: {e}")
 
