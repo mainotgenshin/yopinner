@@ -80,3 +80,4 @@ class Match:
     draft_completed_at: float = 0.0  # Timestamp when draft finished, for auto-ready 5min timer
     turn_deadline: float = 0.0  # Unix timestamp when current turn's 10-min AFK window expires
     terminate_votes: List[int] = field(default_factory=list)  # User IDs of players who voted to terminate early
+    terminate_requested_at: float = 0.0  # Unix timestamp of first terminate vote (60s TTL)
