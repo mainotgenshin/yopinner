@@ -3,7 +3,7 @@
 /bbet head|tail <amount>  — Coin flip gambling command.
 Rules:
   - Min bet: 1 coin | Max bet: 1,000 coins
-  - 20 attempts per user per day (resets at midnight UTC)
+  - 10 attempts per user per day (resets at midnight UTC)
   - Win: double the bet (net +amount). Lose: lose the bet.
 """
 import random
@@ -13,12 +13,21 @@ from telegram import Update
 from telegram.ext import ContextTypes
 from database import get_db
 
+import asyncio
+
 logger = logging.getLogger(__name__)
 
 BBET_MAX   = 1000
 BBET_MIN   = 1
-BBET_DAILY = 20
+BBET_DAILY = 10
 
+# Per-user asyncio locks — prevents race-condition double-bets when requests arrive simultaneously
+_BBET_LOCKS: dict[int, asyncio.Lock] = {}
+
+def _get_bbet_lock(user_id: int) -> asyncio.Lock:
+    if user_id not in _BBET_LOCKS:
+        _BBET_LOCKS[user_id] = asyncio.Lock()
+    return _BBET_LOCKS[user_id]
 
 
 async def _get_coins(user_id: int) -> int:
@@ -39,6 +48,8 @@ async def _get_bbet_state(user_id: int):
 
 
 async def _record_bbet(user_id: int, delta: int, new_count: int, today: str) -> int:
+    """Atomically update coins + bet count using a single findAndModify.
+    Guards against the daily limit even if a second request sneaks through."""
     db = get_db()
     result = await db.users.find_one_and_update(
         {"user_id": user_id},
@@ -71,7 +82,7 @@ async def handle_bbet(update: Update, context: ContextTypes.DEFAULT_TYPE):
     choice_raw = args[0].lower().strip()
     if choice_raw not in ("head", "tail", "heads", "tails"):
         await update.effective_message.reply_text(
-            "❌ Invalid choice. Use head or 	ail.\nExample: /bbet head 100",
+            "❌ Invalid choice. Use head or tail.\nExample: /bbet head 100",
             parse_mode="Markdown"
         )
         return
@@ -90,27 +101,35 @@ async def handle_bbet(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return
 
-    count_today, today = await _get_bbet_state(user_id)
-    if count_today >= BBET_DAILY:
-        await update.effective_message.reply_text(
-            f"⛔ You have used all *{BBET_DAILY} bets* for today!\nCome back tomorrow 🌙",
-            parse_mode="Markdown"
-        )
-        return
+    async with _get_bbet_lock(user_id):
+        count_today, today = await _get_bbet_state(user_id)
+        if count_today >= BBET_DAILY:
+            await update.effective_message.reply_text(
+                f"⛔ You have used all *{BBET_DAILY} bets* for today!\nCome back tomorrow 🌙",
+                parse_mode="Markdown"
+            )
+            return
 
-    balance = await _get_coins(user_id)
-    if balance < amount:
-        await update.effective_message.reply_text(
-            f"❌ *Not enough coins!*\nYou need {amount}🪙 but only have {balance}🪙.",
-            parse_mode="Markdown"
-        )
-        return
+        balance = await _get_coins(user_id)
+        if balance < amount:
+            await update.effective_message.reply_text(
+                f"❌ *Not enough coins!*\nYou need {amount}🪙 but only have {balance}🪙.",
+                parse_mode="Markdown"
+            )
+            return
 
-    result   = random.choice(["head", "tail"])
-    won      = (result == choice)
-    delta    = +amount if won else -amount
-    new_count = count_today + 1
-    new_bal  = await _record_bbet(user_id, delta, new_count, today)
+        result   = random.choice(["head", "tail"])
+        won      = (result == choice)
+        delta    = +amount if won else -amount
+        new_count = count_today + 1
+        new_bal  = await _record_bbet(user_id, delta, new_count, today)
+
+    # Track bbet quest progress (coins spent, win or lose)
+    try:
+        from database import increment_quest_progress
+        await increment_quest_progress(user_id, "bbet_coins_spent", amount)
+    except Exception:
+        pass
 
     remaining   = BBET_DAILY - new_count
     result_line = "🟢 You won!" if won else "🔴 You lost!"
