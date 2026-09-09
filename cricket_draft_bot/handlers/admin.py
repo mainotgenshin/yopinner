@@ -1545,7 +1545,7 @@ async def add_player_wwe(update, context):
         return
 
     try:
-        keys = "name|image|power|speed|technique|stamina|durability|charisma|aggression|intelligence|aerial|submission"
+        keys = "name|image|gender|power|speed|technique|stamina|durability|charisma|aggression|intelligence|aerial|submission"
         pattern = rf"({keys})\s*=\s*(.*?)(?=\s+(?:{keys})\s*=|$) "[:-1]
         raw = text + " "
         matches = re.finditer(pattern, raw, re.IGNORECASE | re.DOTALL)
@@ -1557,6 +1557,10 @@ async def add_player_wwe(update, context):
 
         name      = parsed["name"]
         image_url = parsed["image"]
+        gender_raw = parsed.get("gender", "male").lower()
+        is_female = gender_raw in ("female", "women", "woman")
+        gender    = "female" if is_female else "male"
+
         stat_keys = ["power","speed","technique","stamina","durability",
                      "charisma","aggression","intelligence","aerial","submission"]
         wwe_stats = {}
@@ -1565,7 +1569,7 @@ async def add_player_wwe(update, context):
             except: wwe_stats[sk] = 70
 
         clean  = name.upper().replace(" ","_").replace(".","").replace("'","")
-        pid    = f"wwe_{clean[:20]}"
+        pid    = f"wwe_women_{clean[:20]}" if is_female else f"wwe_{clean[:20]}"
 
         msg = await context.bot.send_photo(
             chat_id=update.effective_chat.id,
@@ -1577,16 +1581,18 @@ async def add_player_wwe(update, context):
         from database import save_player
         doc = {
             "player_id": pid, "name": name, "full_name": name,
-            "sport": "wwe", "roles": list(POSITIONS_WWE),
+            "sport": "wwe", "gender": gender, "roles": list(POSITIONS_WWE),
             "stats": {"wwe": wwe_stats},
             "image_file_id": fid, "wwe_image_url": image_url,
         }
         await save_player(doc)
+        section_label = "Women's" if is_female else "Men's"
         await update.message.reply_text(
-            f"✅ WWE Superstar added!\nID: `{pid}`\nName: {esc(name)}",
+            f"✅ WWE {section_label} Superstar added!\nID: `{pid}`\nName: {esc(name)}",
             parse_mode="Markdown"
         )
     except Exception as e:
+
         logger.error(f"add_playerwwe error: {e}")
         await update.message.reply_text(f"❌ Error: {e}")
 
@@ -2522,6 +2528,54 @@ async def handle_gift_coins(update: Update, context: ContextTypes.DEFAULT_TYPE):
     new_bal = await gift_card_coins(target_id, amount)
     await update.effective_message.reply_text(
         f"✅ Gifted *{amount}🪙* to user `{target_id}`\nNew balance: *{new_bal}🪙*",
+        parse_mode='Markdown'
+    )
+
+# ── /gift_pack ────────────────────────────────────────────────────────────────
+async def handle_gift_pack(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """/gift_pack <pack_name> <telegram_id> — Give one pack to a specific user. Admin only.
+    Pack names: basic_cricket, premium_cricket, elite_cricket,
+                basic_football, premium_football, elite_football,
+                basic_wwe, premium_wwe, elite_wwe
+    Example: /gift_pack premium_cricket 123456789
+    """
+    user = update.effective_user
+    from database import is_admin
+    if not await is_admin(user.id):
+        await update.effective_message.reply_text("⛔ Admin only.")
+        return
+    args = context.args
+    if len(args) < 2:
+        await update.effective_message.reply_text(
+            "Usage: /gift_pack <pack_name> <telegram_id>\n"
+            "Pack names: basic_cricket, premium_cricket, elite_cricket,\n"
+            "            basic_football, premium_football, elite_football,\n"
+            "            basic_wwe, premium_wwe, elite_wwe\n"
+            "Example: /gift_pack premium_cricket 123456789"
+        )
+        return
+    pack_key = args[0].lower()
+    valid_tiers  = ('basic', 'premium', 'elite')
+    valid_sports = ('cricket', 'football', 'wwe')
+    parts = pack_key.split('_', 1)
+    if len(parts) != 2 or parts[0] not in valid_tiers or parts[1] not in valid_sports:
+        await update.effective_message.reply_text(
+            f"❌ Invalid pack name '{pack_key}'.\nUse: basic_cricket, premium_football, elite_wwe, etc."
+        )
+        return
+    try:
+        target_id = int(args[1])
+    except ValueError:
+        await update.effective_message.reply_text("❌ Telegram ID must be a number.")
+        return
+
+    from database import add_pack_to_user
+    new_count = await add_pack_to_user(target_id, pack_key)
+    tier, sport = parts[0], parts[1]
+    RARITY_EMOJI_MAP = {"basic": "🟦", "premium": "🟣", "elite": "🟡"}
+    await update.effective_message.reply_text(
+        f"✅ Gifted *{RARITY_EMOJI_MAP.get(tier, '📦')} {pack_key.replace('_', ' ').title()} Pack* to user `{target_id}`\n"
+        f"They now have *{new_count}* pack(s) of this type.",
         parse_mode='Markdown'
     )
 
