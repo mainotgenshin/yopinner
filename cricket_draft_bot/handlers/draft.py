@@ -258,8 +258,12 @@ async def handle_draft_callback(update: Update, context: ContextTypes.DEFAULT_TY
             except Exception:
                 pass
 
+        # Reset terminate votes on any active draft move (#1: Reset on Move)
+        if action in ("draw", "assign", "redraw", "replace"):
+            if getattr(match, 'terminate_votes', None):
+                match.terminate_votes = []
+                match.terminate_requested_at = 0.0
 
-    
         if action == "draw":
             await handle_draw(update, context, match)
         
@@ -316,9 +320,20 @@ def format_draft_board(match: Match, include_turn: bool = True) -> str:
 import asyncio
 from utils.rate_limit import debouncer
 
+def _get_active_terminate_votes(match: Match) -> list:
+    """Return active terminate votes, auto-expiring after 60 seconds TTL (#3)."""
+    term_votes = getattr(match, 'terminate_votes', None) or []
+    if term_votes:
+        req_at = getattr(match, 'terminate_requested_at', 0.0) or 0.0
+        if time.time() - req_at > 60:
+            match.terminate_votes = []
+            match.terminate_requested_at = 0.0
+            return []
+    return term_votes
+
 def _make_draw_keyboard(match: Match) -> list:
     """Build the standard draft board keyboard with Draw and Terminate buttons."""
-    term_votes = getattr(match, 'terminate_votes', []) or []
+    term_votes = _get_active_terminate_votes(match)
     return [
         [InlineKeyboardButton("🎲 Draw Player", callback_data=f"draw_{match.match_id}")],
         [InlineKeyboardButton(f"🏳️ Terminate {len(term_votes)}/2", callback_data=f"terminate|{match.match_id}")]
@@ -517,7 +532,7 @@ async def handle_draw(update: Update, context: ContextTypes.DEFAULT_TYPE, match:
         keyboard.append(footer_row)
     
     # Terminate button (Feature #8: mutual match termination)
-    term_votes = getattr(match, 'terminate_votes', []) or []
+    term_votes = _get_active_terminate_votes(match)
     keyboard.append([InlineKeyboardButton(f"🏳️ Terminate {len(term_votes)}/2", callback_data=f"terminate|{match.match_id}")])
     
     # Get Player Image — use web URL first (for href), fall back to file_id
@@ -906,9 +921,42 @@ async def handle_terminate(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not hasattr(match, 'terminate_votes') or match.terminate_votes is None:
         match.terminate_votes = []
 
+    now = time.time()
+    req_time = getattr(match, 'terminate_requested_at', 0.0) or 0.0
+
+    # ── #3: 60-Second Auto-Expiry (TTL) ──────────────────────────────────
+    if match.terminate_votes and (now - req_time > 60):
+        # The previous terminate vote has expired (> 60s)
+        match.terminate_votes = []
+        match.terminate_requested_at = 0.0
+
+    # ── #2: Click to Retract / Cancel vote (Toggle) ──────────────────────
     if user_id in match.terminate_votes:
-        await query.answer("⏳ You have already voted to terminate (1/2). Waiting for your opponent.", show_alert=True)
+        match.terminate_votes.remove(user_id)
+        if not match.terminate_votes:
+            match.terminate_requested_at = 0.0
+        await save_match_state(match)
+        # Update the button text on the current message back to 0/2
+        try:
+            if query.message and query.message.reply_markup:
+                new_kb = []
+                for row in query.message.reply_markup.inline_keyboard:
+                    new_row = []
+                    for btn in row:
+                        if btn.callback_data and btn.callback_data.startswith(f"terminate|{match_id}"):
+                            new_row.append(InlineKeyboardButton(f"🏳️ Terminate {len(match.terminate_votes)}/2", callback_data=btn.callback_data))
+                        else:
+                            new_row.append(btn)
+                    new_kb.append(new_row)
+                await query.edit_message_reply_markup(reply_markup=InlineKeyboardMarkup(new_kb))
+        except Exception as e:
+            logger.debug(f"Failed to update terminate button label: {e}")
+        await query.answer("↩️ You cancelled your vote to terminate (0/2).", show_alert=True)
         return
+
+    # First vote in this session: set the timestamp
+    if not match.terminate_votes:
+        match.terminate_requested_at = now
 
     match.terminate_votes.append(user_id)
 
@@ -932,7 +980,7 @@ async def handle_terminate(update: Update, context: ContextTypes.DEFAULT_TYPE):
             logger.debug(f"Failed to update terminate button label: {e}")
 
         opp_name = match.team_b.owner_name if user_id == int(match.team_a.owner_id) else match.team_a.owner_name
-        await query.answer(f"🏳️ Vote recorded (1/2). Waiting for {opp_name} to click Terminate.", show_alert=True)
+        await query.answer(f"🏳️ Vote recorded (1/2). Opponent has 60s to agree, or click again to cancel.", show_alert=True)
     else:
         # Both players voted (2/2) -> Terminate match with mutual agreement
         old_afk = AFK_TASKS.pop(match.match_id, None)
