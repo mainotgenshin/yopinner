@@ -226,13 +226,33 @@ async def handle_swap_pick2(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     await save_match_state(match)
 
+    # Build the "Go Back to Match" URL
+    # For supergroups (chat_id like -100xxxxxxxxxx) → t.me/c/{id_without_minus100}/{msg_id}
+    # For public groups with usernames → just link to the group + message
+    go_back_kb = None
+    try:
+        chat_id_str = str(match.chat_id)
+        if match.draft_message_id:
+            if chat_id_str.startswith("-100"):
+                group_id = chat_id_str[4:]  # strip -100
+                go_back_url = f"https://t.me/c/{group_id}/{match.draft_message_id}"
+            else:
+                # Fallback for other formats — just open the chat
+                go_back_url = f"https://t.me/c/{abs(match.chat_id)}/{match.draft_message_id}"
+            go_back_kb = InlineKeyboardMarkup([[
+                InlineKeyboardButton("⬅️ Go Back to Match", url=go_back_url)
+            ]])
+    except Exception:
+        pass
+
     # Confirm to user in DM
     await query.edit_message_text(
         f"✅ *Swap Complete!*\n\n"
         f"• *{esc(p1_obj.name)}* is now in the *{p2_slot}* slot\n"
         f"• *{esc(p2_obj.name)}* is now in the *{p1_slot}* slot\n\n"
         f"Head back to the group to click *🚀 READY* when you're set!",
-        parse_mode="Markdown"
+        parse_mode="Markdown",
+        reply_markup=go_back_kb
     )
 
     # Silently refresh the group message to remove the Swap button for this user
