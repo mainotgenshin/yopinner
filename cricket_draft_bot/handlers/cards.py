@@ -305,12 +305,13 @@ async def _show_mycards(message_or_query, owner_id: int, viewer_id: int, sport_f
     if not cards:
         text = "🃏 *Your Collection*\n━━━━━━━━━━━━━━━━━━\nNo cards yet! Use /pack to buy packs."
     else:
-        lines = [f"🃏 *Your Collection*\n━━━━━━━━━━━━━━━━━━"]
-        for c in page_cards:
+        filter_tag = f" ({SPORT_LABEL.get(sport_filter, sport_filter.title())})" if sport_filter else ""
+        lines = [f"🃏 *Your Collection*{filter_tag}\n━━━━━━━━━━━━━━━━━━"]
+        for idx, c in enumerate(page_cards, start=start + 1):
             r_emoji = RARITY_EMOJI.get(c["rarity"], "⚪")
             f_label = FORMAT_LABEL.get(c["format"], c["format"].upper())
             qty_str = f" ×{c['quantity']}" if c["quantity"] > 1 else ""
-            lines.append(f"{r_emoji} {esc(c['name'])} ({f_label}){qty_str}")
+            lines.append(f"`{idx}.` {r_emoji} {esc(c['name'])} ({f_label}){qty_str}")
         lines.append(f"━━━━━━━━━━━━━━━━━━\nPage {page+1}/{total_pages}")
         text = "\n".join(lines)
     # Navigation + filter buttons
@@ -348,33 +349,33 @@ async def cb_mc_page(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await _show_mycards(query, int(owner_id), query.from_user.id, sport_filter, int(page_str), edit=True)
 
 async def cb_mc_collections(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Show full collection breakdown: rarity counts per format."""
+    """Show full collection breakdown: rarity counts per format with total available n."""
     query = update.callback_query
     _, owner_id = query.data.split("|")
     if str(query.from_user.id) != owner_id:
         await query.answer("⛔ Not your menu.", show_alert=True); return
     await query.answer()
-    from database import get_user_cards
+    from database import get_user_cards, get_catalog_totals
     all_cards = await get_user_cards(int(owner_id))
+    cat_totals = await get_catalog_totals()
+    cat_fmt_rarity = cat_totals.get("by_format_rarity", {})
+    cat_fmt_total  = cat_totals.get("by_format", {})
+    cat_grand      = cat_totals.get("grand_total", 0)
 
     # Group by sport → format → rarity
-    # sport detection: football cards have format "fifa", wwe have format "wwe", cricket have ipl/odi/test
     FORMAT_TO_SPORT = {"ipl": "Cricket", "odi": "Cricket", "test": "Cricket", "fifa": "FIFA", "wwe": "WWE"}
     SPORT_EMOJI_MAP = {"Cricket": "🏏", "FIFA": "⚽", "WWE": "🤼"}
     FORMAT_ORDER = ["ipl", "odi", "test", "fifa", "wwe"]
-    RARITY_ORDER = ["common", "rare", "epic", "legend"]
+    RARITY_ORDER = ["legend", "epic", "rare", "common"]
 
-    # Build nested counts: {format: {rarity: count, total: count}}
+    # Unique owned cards per format and rarity
     counts: dict = {}
-    grand_total = 0
     for card in all_cards:
         fmt = card.get("format", "")
         rarity = card.get("rarity", "common")
-        qty = card.get("quantity", 1)
         if fmt not in counts:
             counts[fmt] = {"common": 0, "rare": 0, "epic": 0, "legend": 0}
-        counts[fmt][rarity] = counts[fmt].get(rarity, 0) + qty
-        grand_total += qty
+        counts[fmt][rarity] = counts[fmt].get(rarity, 0) + 1
 
     lines = ["📊 *Your Collections*", "━━━━━━━━━━━━━━━━━━"]
 
@@ -384,19 +385,20 @@ async def cb_mc_collections(update: Update, context: ContextTypes.DEFAULT_TYPE):
         sport = FORMAT_TO_SPORT.get(fmt, fmt)
         emoji = SPORT_EMOJI_MAP.get(sport, "🃏")
         f_label = FORMAT_LABEL.get(fmt, fmt.upper())
-        fmt_total = sum(counts[fmt].get(r, 0) for r in RARITY_ORDER)
-        rarity_parts = []
-        for r in RARITY_ORDER:
-            n = counts[fmt].get(r, 0)
-            if n > 0:
-                rarity_parts.append(f"{RARITY_EMOJI.get(r, '⚪')} {r.title()}: *{n}*")
-        lines.append(f"\n{emoji} *{f_label}*")
-        if rarity_parts:
-            lines.append("  " + " | ".join(rarity_parts))
-        lines.append(f"  Total: *{fmt_total} cards*")
+        fmt_owned = sum(counts[fmt].get(r, 0) for r in RARITY_ORDER)
+        tot_fmt = cat_fmt_total.get(fmt, 0)
 
+        lines.append(f"\n{emoji} *{f_label}*")
+        for r in RARITY_ORDER:
+            owned_r = counts[fmt].get(r, 0)
+            tot_r = cat_fmt_rarity.get((fmt, r), 0)
+            if owned_r > 0:
+                lines.append(f"  {RARITY_EMOJI.get(r, '⚪')} {r.title()}: *{owned_r}/{tot_r}*")
+        lines.append(f"  Total: *{fmt_owned}/{tot_fmt} cards*")
+
+    grand_unique = len(all_cards)
     lines.append(f"\n━━━━━━━━━━━━━━━━━━")
-    lines.append(f"🃏 Grand Total: *{grand_total} cards*")
+    lines.append(f"🃏 Grand Total: *{grand_unique}/{cat_grand} cards*")
 
     text = "\n".join(lines)
     back_kb = InlineKeyboardMarkup([[InlineKeyboardButton("◀️ Back to Cards", callback_data=f"mc_page|{owner_id}|all|0")]])
