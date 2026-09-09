@@ -1038,8 +1038,53 @@ async def _build_card_pool(sport: str) -> list:
 
 def _invalidate_card_pool_cache():
     """Call after /add_card or /update_card to refresh pool."""
+    global _catalog_totals_cache, _catalog_totals_time
     _card_pool_cache.clear()
     _card_pool_cache_time.clear()
+    _catalog_totals_cache = {}
+    _catalog_totals_time = 0.0
+
+_catalog_totals_cache: dict = {}
+_catalog_totals_time: float = 0.0
+
+async def get_catalog_totals() -> dict:
+    """
+    Returns total cards available in catalog:
+    {
+        'by_format_rarity': {(fmt, rarity): int},
+        'by_format': {fmt: int},
+        'grand_total': int
+    }
+    Cached in memory for 10 minutes.
+    """
+    global _catalog_totals_cache, _catalog_totals_time
+    now = _time.time()
+    if _catalog_totals_cache and (now - _catalog_totals_time) < 600:
+        return _catalog_totals_cache
+
+    pools = [
+        await _build_card_pool("cricket"),
+        await _build_card_pool("football"),
+        await _build_card_pool("wwe")
+    ]
+    by_fmt_rarity = {}
+    by_fmt = {}
+    grand = 0
+    for pool in pools:
+        for card in pool:
+            fmt = card["format"]
+            rarity = card["rarity"]
+            by_fmt_rarity[(fmt, rarity)] = by_fmt_rarity.get((fmt, rarity), 0) + 1
+            by_fmt[fmt] = by_fmt.get(fmt, 0) + 1
+            grand += 1
+
+    _catalog_totals_cache = {
+        "by_format_rarity": by_fmt_rarity,
+        "by_format": by_fmt,
+        "grand_total": grand
+    }
+    _catalog_totals_time = now
+    return _catalog_totals_cache
 
 async def warmup_card_pools() -> None:
     """
