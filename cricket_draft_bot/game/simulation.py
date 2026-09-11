@@ -186,9 +186,9 @@ async def run_simulation(match: Match) -> str:
         res_a = "L"
         res_b = "W"
 
-    _CARD_COIN_REWARDS = {"W": 75, "D": 25, "L": 10}
-    reward_a = _CARD_COIN_REWARDS.get(res_a, 10)
-    reward_b = _CARD_COIN_REWARDS.get(res_b, 10)
+    _CARD_COIN_REWARDS = {"W": 100, "D": 35, "L": 30}
+    reward_a = _CARD_COIN_REWARDS.get(res_a, 30)
+    reward_b = _CARD_COIN_REWARDS.get(res_b, 30)
 
     # Final Result — coins shown inline with score
     details.append("➖➖➖➖➖➖➖➖➖➖")
@@ -213,7 +213,7 @@ async def run_simulation(match: Match) -> str:
             async def _award_card_coins(user_id: int, result: str) -> None:
                 """Silently award card coins after a match. Never raises."""
                 try:
-                    coins = _CARD_COIN_REWARDS.get(result, 10)
+                    coins = _CARD_COIN_REWARDS.get(result, 30)
                     await add_card_coins(user_id, coins)
                 except Exception as _ce:
                     logger.warning(f"Card coin award failed for {user_id}: {_ce}")
