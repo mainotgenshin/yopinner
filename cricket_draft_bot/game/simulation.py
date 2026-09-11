@@ -19,12 +19,17 @@ def get_stat_value(player: Player, mode: str, stat_key: str) -> int:
         if search_key in ('intl', 'international'):
             search_key = 'odi'
              
-        stats = player.stats.get(search_key, {})
+        stats_dict = player.stats or {}
+        if not isinstance(stats_dict, dict):
+            return 50
+        stats = stats_dict.get(search_key, {})
         # Handle fallback for old int-style stats
         if isinstance(stats, int):
             return stats
+        if not isinstance(stats, dict):
+            return 50
         return int(stats.get(stat_key, 50))
-    except:
+    except Exception:
         return 50
 
 def get_clutch_bonus(player: Player, mode: str) -> float:
@@ -37,7 +42,9 @@ def calculate_slot_score(player: Player, role: str, mode: str) -> float:
     # WWE: pure stat comparison, no role penalties
     if mode in ("WWE", "WWE Women"):
         stat_key = WWE_POSITION_STATS.get(role, "power")
-        wwe_stats = player.stats.get("wwe", {})
+        wwe_stats = (player.stats or {}).get("wwe", {})
+        if not isinstance(wwe_stats, dict):
+            wwe_stats = {}
         val = wwe_stats.get(stat_key, 50)
         try:
             return float(val)
@@ -63,7 +70,7 @@ def calculate_slot_score(player: Player, role: str, mode: str) -> float:
     
     if mode == "FIFA":
         effective_roles = player.positions if player.positions else []
-        effective_roles_lower = [r.lower() for r in effective_roles]
+        effective_roles_lower = [str(r).lower() for r in effective_roles if r]
         role_lower = role.lower()
         
         if role in effective_roles or role_lower in effective_roles_lower:
@@ -87,7 +94,8 @@ def calculate_slot_score(player: Player, role: str, mode: str) -> float:
         else:  # ODI and others
             effective_roles = player.roles
 
-        player_roles_lower = [r.lower() for r in effective_roles]
+        effective_roles = effective_roles or []
+        player_roles_lower = [str(r).lower() for r in effective_roles if r]
         role_lower = role.lower()
         
         if role in effective_roles or role_lower in player_roles_lower:
@@ -192,14 +200,16 @@ async def run_simulation(match: Match) -> str:
 
     # Final Result — coins shown inline with score
     details.append("➖➖➖➖➖➖➖➖➖➖")
-    details.append(f"🔵 {esc(match.team_a.owner_name)} — {score_a} (+{reward_a}🪙)")
-    details.append(f"🔴 {esc(match.team_b.owner_name)} — {score_b} (+{reward_b}🪙)")
+    name_a = match.team_a.owner_name or "Player 1"
+    name_b = match.team_b.owner_name or "Player 2"
+    details.append(f"🔵 {esc(name_a)} — {score_a} (+{reward_a}🪙)")
+    details.append(f"🔴 {esc(name_b)} — {score_b} (+{reward_b}🪙)")
     details.append("")
 
     if score_a > score_b:
-        details.append(f"🏆 *WINNER*\n🔵 {esc(match.team_a.owner_name)}")
+        details.append(f"🏆 *WINNER*\n🔵 {esc(name_a)}")
     elif score_b > score_a:
-        details.append(f"🏆 *WINNER*\n🔴 {esc(match.team_b.owner_name)}")
+        details.append(f"🏆 *WINNER*\n🔴 {esc(name_b)}")
     else:
         details.append("🤝 *MATCH DRAWN!*")
 
