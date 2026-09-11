@@ -266,7 +266,6 @@ async def handle_swap_pick2(update: Update, context: ContextTypes.DEFAULT_TYPE):
         import html as _html
         from handlers.draft import format_draft_board
         from utils.banners import get_banner_for_match
-        from game.state import load_match_state
 
         fresh_match = await load_match_state(match.match_id)
         if not fresh_match or fresh_match.state not in ("READY_CHECK", "DRAFTING"):
