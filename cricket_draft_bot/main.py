@@ -290,12 +290,29 @@ async def post_init(application):
                     _warmup_tick = 0
                     await warmup_card_pools()
 
-                # 3. Auto-sweep matches stuck for > 30 minutes
+                # 3. Auto-simulate stuck READY_CHECK matches (> 5 minutes in ready check)
                 import time as _time
                 _now = _time.time()
                 from database import get_db as _get_db
                 _db = _get_db()
-                stale_cursor = _db.matches.find({"created_at": {"$lt": _now - 1800}})
+                ready_cursor = _db.matches.find({
+                    "state_data.state": "READY_CHECK",
+                    "$or": [
+                        {"state_data.draft_completed_at": {"$gt": 0, "$lt": _now - 300}},
+                        {"created_at": {"$lt": _now - 600}}
+                    ]
+                })
+                async for rc_doc in ready_cursor:
+                    rc_mid = rc_doc.get("match_id", "")
+                    if rc_mid:
+                        _log.info(f"Background maintenance loop: triggering auto-simulation for stuck match {rc_mid}")
+                        asyncio.create_task(_auto_simulate(application.bot, rc_mid))
+
+                # 4. Auto-sweep matches stuck for > 30 minutes in DRAFTING phase
+                stale_cursor = _db.matches.find({
+                    "created_at": {"$lt": _now - 1800},
+                    "state_data.state": {"$nin": ["READY_CHECK", "SIMULATING"]}
+                })
                 async for stale in stale_cursor:
                     mid     = stale.get("match_id", "")
                     chat_id = stale.get("chat_id")
@@ -303,6 +320,8 @@ async def post_init(application):
                     if mid:
                         try:
                             from game.state import evict_match_cache
+                            from handlers.ready import _READY_LOCKS
+                            _READY_LOCKS.pop(mid, None)
                             evict_match_cache(mid)
                             await _db.matches.delete_one({"match_id": mid})
                             if chat_id and pin_id:
@@ -376,8 +395,13 @@ async def _startup_recovery(bot):
         age = now - created_at
         draft_completed_at = sd.get("draft_completed_at", 0.0)
 
-        if age >= ABANDON_LIMIT:
-            # Match is stale — clean it up
+        if state == "READY_CHECK":
+            # Draft complete! Auto-simulate instead of abandoning
+            asyncio.create_task(_auto_simulate(bot, match_id))
+            restarted += 1
+
+        elif age >= ABANDON_LIMIT:
+            # Match is stale in DRAFTING phase — clean it up
             try:
                 from handlers.draft import queue_unpin
                 if pinned_id:
@@ -389,11 +413,6 @@ async def _startup_recovery(bot):
             except Exception:
                 pass
             cleaned += 1
-
-        elif state == "READY_CHECK" and draft_completed_at > 0 and (now - draft_completed_at) >= AUTOREADY_LIMIT:
-            # Draft complete but players didn't click ready for 5+ min — auto-simulate
-            asyncio.create_task(_auto_simulate(bot, match_id))
-            restarted += 1
 
         else:
             # Match is active — restart AFK forfeit timer if in drafting phase
@@ -490,44 +509,67 @@ async def _startup_recovery(bot):
 
 async def _auto_simulate(bot, match_id: str):
     """Trigger simulation for a READY_CHECK match that timed out."""
-    from game.state import load_match_state, save_match_state
-    from game.simulation import run_simulation
-    from utils.rate_limit import debouncer
+    from handlers.ready import _get_ready_lock
+    lock = _get_ready_lock(match_id)
+    async with lock:
+        from game.state import load_match_state, save_match_state
+        from game.simulation import run_simulation
+        from utils.rate_limit import debouncer
 
-    logger = logging.getLogger(__name__)
-    try:
-        match = await load_match_state(match_id)
-        if not match or match.state != "READY_CHECK":
-            return
+        logger = logging.getLogger(__name__)
+        try:
+            match = await load_match_state(match_id)
+            if not match or match.state != "READY_CHECK":
+                return
 
-        match.state = "SIMULATING"
-        match.team_a.is_ready = True
-        match.team_b.is_ready = True
-        await save_match_state(match)
+            match.state = "SIMULATING"
+            match.team_a.is_ready = True
+            match.team_b.is_ready = True
+            await save_match_state(match)
 
-        result_text = await run_simulation(match)
-        match.state = "FINISHED"
-        match.finished_at = time.time()
-        await save_match_state(match)
+            try:
+                result_text = await run_simulation(match)
+            except Exception as sim_e:
+                logger.error(f"Auto-simulation computation failed for {match_id}: {sim_e}", exc_info=True)
+                match.state = "READY_CHECK"
+                match.team_a.is_ready = False
+                match.team_b.is_ready = False
+                await save_match_state(match)
+                return
 
-        # Clean up debouncer state for this match to prevent memory leak
-        debouncer.cancel_updates(match.chat_id, match.draft_message_id)
+            match.state = "FINISHED"
+            match.finished_at = time.time()
+            await save_match_state(match)
 
-        await bot.send_message(
-            chat_id=match.chat_id,
-            text=f"\u23f0 *Auto-Ready triggered (5min timeout)*\n\n{result_text}",
-            parse_mode="Markdown"
-        )
+            # Clean up debouncer state for this match to prevent memory leak
+            debouncer.cancel_updates(match.chat_id, match.draft_message_id)
 
-        # Queue draft board for background unpin (Option 3: zero quota collision)
-        pinned_id = getattr(match, 'pinned_message_id', None)
-        if pinned_id:
-            from handlers.draft import queue_unpin
-            queue_unpin(match.chat_id, pinned_id)
+            msg = f"⏰ *Auto-Ready triggered (5min timeout)*\n\n{result_text}"
+            try:
+                await bot.send_message(
+                    chat_id=match.chat_id,
+                    text=msg,
+                    parse_mode="Markdown"
+                )
+            except Exception as send_err:
+                logger.warning(f"Auto-ready markdown send failed: {send_err}. Retrying as plain text...")
+                try:
+                    await bot.send_message(
+                        chat_id=match.chat_id,
+                        text=msg,
+                        parse_mode=None
+                    )
+                except Exception as final_err:
+                    logger.error(f"Auto-ready plain text send failed: {final_err}")
 
-    except Exception as e:
+            # Queue draft board for background unpin (Option 3: zero quota collision)
+            pinned_id = getattr(match, 'pinned_message_id', None)
+            if pinned_id:
+                from handlers.draft import queue_unpin
+                queue_unpin(match.chat_id, pinned_id)
 
-        logger.error(f"Auto-simulate failed for {match_id}: {e}")
+        except Exception as e:
+            logger.error(f"Auto-simulate failed for {match_id}: {e}")
 
 
 async def _refresh_draft_ui(bot, match_id: str, delay: float = 0.0):
