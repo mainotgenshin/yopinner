@@ -154,9 +154,11 @@ class MessageDebouncer:
             while key in self._pending and _iters < _max_iters:
                 _iters += 1
                 caption, reply_markup, send_media, target_state = self._pending.pop(key)
+                active_media = target_state.get("media")
                 success = await self._run_api_call(
                     bot, match.chat_id, match.draft_message_id,
-                    caption, reply_markup, send_media, parse_mode
+                    caption, reply_markup, send_media, parse_mode,
+                    active_media=active_media
                 )
                 if success:
                     self.last_state[key] = target_state
@@ -190,12 +192,14 @@ class MessageDebouncer:
 
     async def _run_api_call(
         self, bot, chat_id: int, message_id: int,
-        text: str, reply_markup, media, parse_mode: str
+        text: str, reply_markup, media, parse_mode: str,
+        active_media=None
     ) -> bool:
         try:
             await _acquire_chat_slot(chat_id)   # per-chat rate gate
-            media_is_url = bool(media and str(media).startswith("http"))
-            href_text = f'<a href="{media}">&#8205;</a>' + text if media_is_url else text
+            effective_media = active_media if active_media is not None else media
+            media_is_url = bool(effective_media and str(effective_media).startswith("http"))
+            href_text = f'<a href="{effective_media}">&#8205;</a>' + text if media_is_url else text
 
             for attempt in range(3):
                 try:
@@ -211,6 +215,12 @@ class MessageDebouncer:
                             chat_id=chat_id, message_id=message_id,
                             media=InputMediaPhoto(media=media, caption=text, parse_mode=parse_mode),
                             reply_markup=reply_markup,
+                        )
+                        return True
+                    elif effective_media:
+                        await bot.edit_message_caption(
+                            chat_id=chat_id, message_id=message_id,
+                            caption=text, reply_markup=reply_markup, parse_mode=parse_mode,
                         )
                         return True
                     else:
@@ -230,7 +240,7 @@ class MessageDebouncer:
                     if "there is no text" in err or "only edit the caption" in err:
                         # Message is a photo message in Telegram — edit its media/caption
                         try:
-                            if media:
+                            if media and not str(media).startswith("http"):
                                 await bot.edit_message_media(
                                     chat_id=chat_id, message_id=message_id,
                                     media=InputMediaPhoto(media=media, caption=text, parse_mode=parse_mode),
@@ -244,7 +254,7 @@ class MessageDebouncer:
                             return True
                         except Exception:
                             return False
-                    if "there is no caption" in err or "not a media message" in err:
+                    if "there is no caption" in err or "not a media message" in err or "there is no media" in err:
                         try:
                             await bot.edit_message_text(
                                 chat_id=chat_id, message_id=message_id,
