@@ -223,6 +223,7 @@ async def handle_swap_pick2(update: Update, context: ContextTypes.DEFAULT_TYPE):
     team.slots[p1_slot] = p2_obj
     team.slots[p2_slot] = p1_obj
     team.swaps_used = 1
+    team.is_ready = False  # Position change invalidates ready status — player must re-confirm!
 
     # Reset terminate votes on move (#1: Reset on Move)
     if getattr(match, 'terminate_votes', None):
@@ -260,43 +261,56 @@ async def handle_swap_pick2(update: Update, context: ContextTypes.DEFAULT_TYPE):
         reply_markup=go_back_kb
     )
 
-    # Silently refresh the group message to remove the Swap button for this user
+    # Silently refresh the group message to update readiness & swap buttons
     try:
         import html as _html
         from handlers.draft import format_draft_board
         from utils.banners import get_banner_for_match
+        from game.state import load_match_state
 
-        board_text = format_draft_board(match, include_turn=False)
-        a_status = "✅" if match.team_a.is_ready else "⏳"
-        b_status = "✅" if match.team_b.is_ready else "⏳"
-        name_a_safe = _html.escape(match.team_a.owner_name or "Player 1")
-        name_b_safe = _html.escape(match.team_b.owner_name or "Player 2")
+        fresh_match = await load_match_state(match.match_id)
+        if not fresh_match or fresh_match.state not in ("READY_CHECK", "DRAFTING"):
+            return
+
+        board_text = format_draft_board(fresh_match, include_turn=False)
+        a_status = "✅" if fresh_match.team_a.is_ready else "⏳"
+        b_status = "✅" if fresh_match.team_b.is_ready else "⏳"
+        name_a_safe = _html.escape(fresh_match.team_a.owner_name or "Player 1")
+        name_b_safe = _html.escape(fresh_match.team_b.owner_name or "Player 2")
+
+        if not fresh_match.team_a.is_ready and not fresh_match.team_b.is_ready:
+            status_line = "Waiting for both..."
+        elif fresh_match.team_a.is_ready and fresh_match.team_b.is_ready:
+            status_line = "All ready! Starting simulation..."
+        else:
+            status_line = "Waiting for ready..."
+
         ready_text = (
             f"{board_text}\n\n✅ <b>Draft Complete!</b>\n\n"
             f"{name_a_safe}: {a_status}\n"
             f"{name_b_safe}: {b_status}\n\n"
-            f"Waiting for both..."
+            f"{status_line}"
         )
 
-        keyboard = [[InlineKeyboardButton("🚀 READY", callback_data=f"ready_{match.match_id}")]]
+        keyboard = [[InlineKeyboardButton("🚀 READY", callback_data=f"ready_{fresh_match.match_id}")]]
 
         # Keep Swap button visible if EITHER team still has their swap unconsumed
-        a_swaps = getattr(match.team_a, 'swaps_used', 0)
-        b_swaps = getattr(match.team_b, 'swaps_used', 0)
+        a_swaps = getattr(fresh_match.team_a, 'swaps_used', 0)
+        b_swaps = getattr(fresh_match.team_b, 'swaps_used', 0)
         if a_swaps < 1 or b_swaps < 1:
             bot_uname = context.bot.username
-            swap_url = f"https://t.me/{bot_uname}?start=swap_{match.match_id}"
+            swap_url = f"https://t.me/{bot_uname}?start=swap_{fresh_match.match_id}"
             keyboard.append([InlineKeyboardButton("🔀 Swap Positions (1 Left)", url=swap_url)])
 
-        banner = await get_banner_for_match(match)
+        banner = await get_banner_for_match(fresh_match)
         media_is_url = bool(banner and str(banner).startswith("http"))
         href_text = f'<a href="{banner}">&#8205;</a>' + ready_text if media_is_url else ready_text
 
         if media_is_url:
             try:
                 await context.bot.edit_message_text(
-                    chat_id=match.chat_id,
-                    message_id=match.draft_message_id,
+                    chat_id=fresh_match.chat_id,
+                    message_id=fresh_match.draft_message_id,
                     text=href_text,
                     reply_markup=InlineKeyboardMarkup(keyboard),
                     parse_mode="HTML",
@@ -307,8 +321,8 @@ async def handle_swap_pick2(update: Update, context: ContextTypes.DEFAULT_TYPE):
         else:
             try:
                 await context.bot.edit_message_caption(
-                    chat_id=match.chat_id,
-                    message_id=match.draft_message_id,
+                    chat_id=fresh_match.chat_id,
+                    message_id=fresh_match.draft_message_id,
                     caption=ready_text,
                     reply_markup=InlineKeyboardMarkup(keyboard),
                     parse_mode="HTML"
