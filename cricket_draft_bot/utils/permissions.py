@@ -20,9 +20,12 @@ async def check_admin(update: Update) -> bool:
     Helper to check permission and reply if denied.
     Returns True if allowed, False if denied.
     """
+    if not update.effective_user:
+        return False
     user_id = update.effective_user.id
     if not await can_manage_bot(user_id):
-        await update.message.reply_text("⛔ You do not have permission to use this command.")
+        if update.effective_message:
+            await update.effective_message.reply_text("⛔ You do not have permission to use this command.")
         return False
     return True
 
@@ -30,8 +33,11 @@ async def check_owner(update: Update) -> bool:
     """
     Helper to strictly check owner permission.
     """
+    if not update.effective_user:
+        return False
     user_id = update.effective_user.id
     if not is_owner(user_id):
-        await update.message.reply_text("⛔ This command is restricted to Bot Owners.")
+        if update.effective_message:
+            await update.effective_message.reply_text("⛔ This command is restricted to Bot Owners.")
         return False
     return True
