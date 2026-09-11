@@ -695,43 +695,50 @@ async def handle_assign(update: Update, context: ContextTypes.DEFAULT_TYPE, matc
         # Start 5-min auto-simulate timer (live — not just on startup recovery)
         async def _auto_ready_live(bot, match_id, chat_id):
             await asyncio.sleep(300)  # 5 minutes
-            from game.state import load_match_state, save_match_state as _save
-            from game.simulation import run_simulation
-            from utils.rate_limit import debouncer
-            m = await load_match_state(match_id)
-            if not m or m.state != "READY_CHECK":
-                return  # Already simulated or cancelled
-            try:
-                m.state = "SIMULATING"
-                m.team_a.is_ready = True
-                m.team_b.is_ready = True
-                await _save(m)
-                result_text = await run_simulation(m)  # async, returns str
-                m.state = "FINISHED"
-                m.finished_at = time.time()
-
-                await _save(m)
-                debouncer.cancel_updates(chat_id, m.draft_message_id)
-                msg = f"⏰ *Auto-Ready triggered (5min timeout)*\n\n{result_text}"
+            from handlers.ready import _get_ready_lock
+            lock = _get_ready_lock(match_id)
+            async with lock:
+                from game.state import load_match_state, save_match_state as _save
+                from game.simulation import run_simulation
+                from utils.rate_limit import debouncer
+                m = await load_match_state(match_id)
+                if not m or m.state != "READY_CHECK":
+                    return  # Already simulated or cancelled
                 try:
-                    await bot.send_message(chat_id=chat_id, text=msg, parse_mode="Markdown")
-                except Exception:
+                    m.state = "SIMULATING"
+                    m.team_a.is_ready = True
+                    m.team_b.is_ready = True
+                    await _save(m)
+
                     try:
-                        await bot.send_message(chat_id=chat_id, text=msg)
-                    except Exception:
-                        pass
-                pinned = getattr(m, 'pinned_message_id', None)
-                if pinned:
-                    queue_unpin(chat_id, pinned)
-                try:
-                    from database import get_db
-                    await get_db().matches.delete_one({"match_id": match_id})
-                    evict_match_cache(match_id)
-                except Exception:
-                    pass
+                        result_text = await run_simulation(m)  # async, returns str
+                    except Exception as sim_e:
+                        logger.error(f"Auto-ready live simulation error for {match_id}: {sim_e}", exc_info=True)
+                        m.state = "READY_CHECK"
+                        m.team_a.is_ready = False
+                        m.team_b.is_ready = False
+                        await _save(m)
+                        return
 
-            except Exception as e:
-                logger.error(f"Auto-ready live failed for {match_id}: {e}")
+                    m.state = "FINISHED"
+                    m.finished_at = time.time()
+                    await _save(m)
+
+                    debouncer.cancel_updates(chat_id, m.draft_message_id)
+                    msg = f"⏰ *Auto-Ready triggered (5min timeout)*\n\n{result_text}"
+                    try:
+                        await bot.send_message(chat_id=chat_id, text=msg, parse_mode="Markdown")
+                    except Exception:
+                        try:
+                            await bot.send_message(chat_id=chat_id, text=msg, parse_mode=None)
+                        except Exception:
+                            pass
+                    pinned = getattr(m, 'pinned_message_id', None)
+                    if pinned:
+                        queue_unpin(chat_id, pinned)
+
+                except Exception as e:
+                    logger.error(f"Auto-ready live failed for {match_id}: {e}")
 
 
         asyncio.create_task(_auto_ready_live(context.bot, match.match_id, match.chat_id))
