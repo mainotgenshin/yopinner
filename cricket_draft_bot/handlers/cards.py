@@ -316,6 +316,8 @@ async def _show_mycards(message_or_query, owner_id: int, viewer_id: int, sport_f
         text = "\n".join(lines)
     # Navigation + filter buttons
     nav = []
+    if total_pages > 10 and page > 0:
+        nav.append(InlineKeyboardButton("⏮ -10", callback_data=f"mc_page|{owner_id}|{sport_filter or 'all'}|{max(0, page-10)}"))
     if total_pages > 5 and page > 0:
         nav.append(InlineKeyboardButton("⏪ -5", callback_data=f"mc_page|{owner_id}|{sport_filter or 'all'}|{max(0, page-5)}"))
     if page > 0:
@@ -324,6 +326,8 @@ async def _show_mycards(message_or_query, owner_id: int, viewer_id: int, sport_f
         nav.append(InlineKeyboardButton("▶️", callback_data=f"mc_page|{owner_id}|{sport_filter or 'all'}|{page+1}"))
     if total_pages > 5 and page < total_pages - 1:
         nav.append(InlineKeyboardButton("+5 ⏩", callback_data=f"mc_page|{owner_id}|{sport_filter or 'all'}|{min(total_pages-1, page+5)}"))
+    if total_pages > 10 and page < total_pages - 1:
+        nav.append(InlineKeyboardButton("+10 ⏭", callback_data=f"mc_page|{owner_id}|{sport_filter or 'all'}|{min(total_pages-1, page+10)}"))
     filters = [
         InlineKeyboardButton("All",     callback_data=f"mc_page|{owner_id}|all|0"),
         InlineKeyboardButton("🏏",      callback_data=f"mc_page|{owner_id}|cricket|0"),
@@ -416,45 +420,90 @@ async def handle_viewcard(update: Update, context: ContextTypes.DEFAULT_TYPE):
         except Exception:
             pass
         return
-    name_query = " ".join(args)
+    name_query = " ".join(args).strip()
+    if len(name_query) < 2:
+        try:
+            await update.effective_message.reply_text(
+                "⚠️ *Search query too short.* Please type at least 2 characters (e.g. `/viewcard AB` or `/viewcard Rohit`).",
+                parse_mode="Markdown"
+            )
+        except Exception:
+            pass
+        return
+
     from database import get_user_cards, get_db
     cards = await get_user_cards(user.id)
-    # Filter by name (case-insensitive partial match)
-    matching = [c for c in cards if name_query.lower() in c["name"].lower()]
+    if not cards:
+        try:
+            await update.effective_message.reply_text("❌ You don't own any cards yet. Use /pack to get some!", parse_mode="Markdown")
+        except Exception:
+            pass
+        return
+
+    q_lower = name_query.lower()
+
+    # 1. Exact match priority
+    exact_matches = [c for c in cards if c["name"].lower() == q_lower]
+    if exact_matches:
+        matching = exact_matches
+    else:
+        # 2. Starts-with first, then general substring
+        starts_with = [c for c in cards if c["name"].lower().startswith(q_lower)]
+        contains = [c for c in cards if q_lower in c["name"].lower() and not c["name"].lower().startswith(q_lower)]
+        matching = starts_with + contains
+
     if not matching:
         try:
             await update.effective_message.reply_text(f"❌ You don't own any card matching *{esc(name_query)}*.", parse_mode="Markdown")
         except Exception:
             pass
         return
-    # Group by player_id to detect multiple formats
-    # Distinct player names with this query
-    distinct_names = sorted({c["name"] for c in matching})
+
+    # Preserve order of relevance while getting unique player names
+    distinct_names = []
+    seen = set()
+    for c in matching:
+        if c["name"] not in seen:
+            seen.add(c["name"])
+            distinct_names.append(c["name"])
+
     if len(distinct_names) > 1:
-        # Multiple different players matched — show clickable buttons (NOT a dead-end text list)
+        # Multiple different players matched — show clickable buttons (capped to top 8)
+        MAX_MATCHES = 8
+        total_found = len(distinct_names)
+        display_names = distinct_names[:MAX_MATCHES]
+
         buttons = []
-        for n in distinct_names:
+        for n in display_names:
             # Find this player's cards to show format info in button
             player_cards_for_name = [c for c in matching if c["name"] == n]
-            # If they only have one card for this player, go straight to vc_fmt
             if len(player_cards_for_name) == 1:
                 c = player_cards_for_name[0]
                 label = f"{esc(n)} ({FORMAT_LABEL.get(c['format'], c['format'].upper())})"
                 buttons.append([InlineKeyboardButton(label, callback_data=f"vc_fmt|{user.id}|{c['player_id']}|{c['format']}")])
             else:
-                # Multiple formats — show name only, next click picks format
                 label = f"{esc(n)} ({len(player_cards_for_name)} formats)"
-                # Use the first player_id (all cards for same name share same player_id)
                 buttons.append([InlineKeyboardButton(label, callback_data=f"vc_name|{user.id}|{player_cards_for_name[0]['player_id']}")])
+
+        if total_found > MAX_MATCHES:
+            header_text = (
+                f"🔍 Found *{total_found}* players matching *{esc(name_query)}*.\n"
+                f"Showing top {MAX_MATCHES} (type more letters to narrow down):\n\n"
+                f"Tap a name to view:"
+            )
+        else:
+            header_text = f"🔍 Multiple matches for *{esc(name_query)}*:\nTap a name to view:"
+
         try:
             await update.effective_message.reply_text(
-                f"🔍 Multiple matches for *{esc(name_query)}*:\nTap a name to view:",
+                header_text,
                 reply_markup=InlineKeyboardMarkup(buttons),
                 parse_mode="Markdown"
             )
         except Exception:
             pass
         return
+
     # One player name — check formats
     player_name = distinct_names[0]
     player_cards = [c for c in matching if c["name"] == player_name]
@@ -848,6 +897,8 @@ async def _show_trade_picker(msg_or_q, initiator_id: int, target_id: int, target
         for c in page_cards
     ]
     nav = []
+    if total_pages > 10 and page > 0:
+        nav.append(InlineKeyboardButton("⏮ -10", callback_data=f"tr_page|{initiator_id}|{target_id}|{max(0, page-10)}"))
     if total_pages > 5 and page > 0:
         nav.append(InlineKeyboardButton("⏪ -5", callback_data=f"tr_page|{initiator_id}|{target_id}|{max(0, page-5)}"))
     if page > 0:
@@ -856,6 +907,8 @@ async def _show_trade_picker(msg_or_q, initiator_id: int, target_id: int, target
         nav.append(InlineKeyboardButton("▶️", callback_data=f"tr_page|{initiator_id}|{target_id}|{page+1}"))
     if total_pages > 5 and page < total_pages - 1:
         nav.append(InlineKeyboardButton("+5 ⏩", callback_data=f"tr_page|{initiator_id}|{target_id}|{min(total_pages-1, page+5)}"))
+    if total_pages > 10 and page < total_pages - 1:
+        nav.append(InlineKeyboardButton("+10 ⏭", callback_data=f"tr_page|{initiator_id}|{target_id}|{min(total_pages-1, page+10)}"))
     if nav:
         buttons.append(nav)
 
@@ -964,6 +1017,8 @@ async def _show_target_picker(query, trade_id: str, target_id: str, cards: list,
         for c in page_cards
     ]
     nav = []
+    if total_pages > 10 and page > 0:
+        nav.append(InlineKeyboardButton("⏮ -10", callback_data=f"tr_tpage|{target_id}|{trade_id}|{max(0, page-10)}"))
     if total_pages > 5 and page > 0:
         nav.append(InlineKeyboardButton("⏪ -5", callback_data=f"tr_tpage|{target_id}|{trade_id}|{max(0, page-5)}"))
     if page > 0:
@@ -972,6 +1027,8 @@ async def _show_target_picker(query, trade_id: str, target_id: str, cards: list,
         nav.append(InlineKeyboardButton("▶️", callback_data=f"tr_tpage|{target_id}|{trade_id}|{page+1}"))
     if total_pages > 5 and page < total_pages - 1:
         nav.append(InlineKeyboardButton("+5 ⏩", callback_data=f"tr_tpage|{target_id}|{trade_id}|{min(total_pages-1, page+5)}"))
+    if total_pages > 10 and page < total_pages - 1:
+        nav.append(InlineKeyboardButton("+10 ⏭", callback_data=f"tr_tpage|{target_id}|{trade_id}|{min(total_pages-1, page+10)}"))
     if nav:
         pick_buttons.append(nav)
 
