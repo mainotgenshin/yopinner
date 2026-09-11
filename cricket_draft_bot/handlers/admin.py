@@ -536,12 +536,15 @@ async def remove_player(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def get_player_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """/stats Player Name [sport=wwe|cricket|football]"""
+    if not update.effective_message: return
     if not await check_admin(update): return
 
+    message = update.effective_message
+    raw_text = message.text or message.caption or ""
     import re
-    text = update.message.text.replace('/stats', '').strip()
+    text = raw_text.replace('/stats', '').strip()
     if not text:
-        await update.message.reply_text(
+        await message.reply_text(
             "**Usage:** `/stats Player Name` or `/stats Player Name sport=wwe`",
             parse_mode="Markdown"
         )
@@ -559,7 +562,7 @@ async def get_player_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     if not results:
         hint = f" (sport={sport_filter})" if sport_filter else ""
-        await update.message.reply_text(
+        await message.reply_text(
             f"❌ Player matching `{esc(text)}`{hint} not found.", parse_mode="Markdown"
         )
         return
@@ -573,7 +576,7 @@ async def get_player_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
             names = [f"`{esc(r['name'])}`" for r in results[:5]]
             if len(results) > 5: names.append("...")
             
-            await update.message.reply_text(
+            await message.reply_text(
                 f"⚠️ Multiple players found matching `{esc(text)}`:\n"
                 f"{', '.join(names)}\n\n"
                 f"Please type the full name to be more specific.",
@@ -617,18 +620,18 @@ async def get_player_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if img_url and str(img_url).startswith('http'):
             try:
                 href_text = f'<a href="{img_url}">\u200b</a>' + msg
-                await update.message.reply_text(href_text, parse_mode="HTML", disable_web_page_preview=False)
+                await message.reply_text(href_text, parse_mode="HTML", disable_web_page_preview=False)
                 return
             except Exception:
                 pass
         img = p.get('image_file_id') or p.get('wwe_image_url')
         if img:
             try:
-                await update.message.reply_photo(photo=img, caption=msg, parse_mode="Markdown")
+                await message.reply_photo(photo=img, caption=msg, parse_mode="Markdown")
                 return
             except Exception:
                 pass
-        await update.message.reply_text(msg, parse_mode="Markdown")
+        await message.reply_text(msg, parse_mode="Markdown")
         return
 
     # ── FIFA ─────────────────────────────────────────────────────────────────
@@ -656,7 +659,7 @@ async def get_player_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if img_url and str(img_url).startswith('http'):
             try:
                 href_text = f'<a href="{img_url}">\u200b</a>' + msg
-                await update.message.reply_text(href_text, parse_mode="HTML", disable_web_page_preview=False)
+                await message.reply_text(href_text, parse_mode="HTML", disable_web_page_preview=False)
                 return
             except Exception:
                 pass
@@ -664,14 +667,14 @@ async def get_player_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
         for img_key in ('image_file_id', 'fifa_image_url'):
             if p.get(img_key) and not sent:
                 try:
-                    await update.message.reply_photo(
+                    await message.reply_photo(
                         photo=p[img_key], caption=msg, parse_mode="Markdown"
                     )
                     sent = True
                 except Exception:
                     pass
         if not sent:
-            await update.message.reply_text(msg, parse_mode="Markdown")
+            await message.reply_text(msg, parse_mode="Markdown")
         return
 
 
@@ -748,14 +751,14 @@ async def get_player_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if img_url and str(img_url).startswith('http'):
         try:
             href_text = f'<a href="{img_url}">\u200b</a>' + msg
-            await update.message.reply_text(href_text, reply_markup=kb, parse_mode="HTML", disable_web_page_preview=False)
+            await message.reply_text(href_text, reply_markup=kb, parse_mode="HTML", disable_web_page_preview=False)
             return
         except Exception:
             pass
 
     if p.get('image_file_id'):
         try:
-            await update.message.reply_photo(
+            await message.reply_photo(
                 photo=p['image_file_id'], caption=md_msg,
                 reply_markup=kb, parse_mode="Markdown"
             )
@@ -763,7 +766,7 @@ async def get_player_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
         except Exception as e:
             logger.error(f"Photo send failed for {p['name']}: {e}")
     # Fallback: plain HTML — never crashes on special chars
-    await update.message.reply_text(msg, reply_markup=kb, parse_mode="HTML")
+    await message.reply_text(msg, reply_markup=kb, parse_mode="HTML")
 
 
 
