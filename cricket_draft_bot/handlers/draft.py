@@ -24,12 +24,19 @@ CACHED_BANNERS = {}
 
 # Concurrency Control
 PROCESSING_LOCKS = set()
+_TERMINATE_LOCKS: dict = {}
+
+def _get_terminate_lock(match_id: str) -> asyncio.Lock:
+    if match_id not in _TERMINATE_LOCKS:
+        _TERMINATE_LOCKS[match_id] = asyncio.Lock()
+    return _TERMINATE_LOCKS[match_id]
 
 # Per-user click cooldown — prevents button spam on draft actions.
 # If the same user clicks again within _CLICK_COOLDOWN seconds, they get
 # an instant toast and the action is discarded (zero DB/API cost).
 _USER_CLICK_TIMES: dict = {}  # user_id -> float (asyncio event loop time)
 _CLICK_COOLDOWN = 1.0         # seconds minimum between draft button clicks (stops rapid double-taps without blocking responsive players)
+_TERMINATE_COOLDOWN = 2.0     # seconds minimum between terminate button clicks
 
 # ── Background Unpin Queue (Option 3 Peak Optimization) ───────────────────
 # Finished matches queue their draft boards here instead of calling unpin_chat_message
@@ -76,11 +83,11 @@ async def _afk_forfeit(match_id: str, expected_turn: int, bot, chat_id: int):
         from utils.rate_limit import debouncer
         debouncer.cancel_updates(chat_id, match.draft_message_id)
 
-        # Deduct 5 card coins from forfeiting user
+        # Deduct 20 card coins from forfeiting user
         try:
             from database import deduct_card_coins
-            await deduct_card_coins(afk_team.owner_id, 5)
-            coin_note = " \n💸 *-5 card coins deducted.*"
+            await deduct_card_coins(afk_team.owner_id, 20)
+            coin_note = " \n💸 *-20 card coins deducted.*"
         except Exception:
             coin_note = ""
         msg = f"💤 *{esc(afk_team.owner_name)} forfeited due to being AFK for 5 mins.*{coin_note}"
@@ -122,6 +129,7 @@ async def _afk_forfeit(match_id: str, expected_turn: int, bot, chat_id: int):
         logger.error(f"_afk_forfeit error for {match_id}: {e}")
     finally:
         AFK_TASKS.pop(match_id, None)
+        _TERMINATE_LOCKS.pop(match_id, None)
 
 def _reset_afk_timer(match: Match, bot, chat_id: int):
     """Cancel any existing AFK task and start a fresh 10-min timer for current turn."""
@@ -461,6 +469,76 @@ async def update_draft_message(update: Update, context: ContextTypes.DEFAULT_TYP
     await debouncer.schedule_update(match, context.bot, caption, reply_markup, media=media, parse_mode="HTML")
 
 
+async def _refresh_draft_ui_for_terminate(update: Update, context: ContextTypes.DEFAULT_TYPE, match: Match):
+    """Rebuild and push the current draft board via the debouncer after a terminate vote/retract."""
+    if match.pending_player_id:
+        player = await get_player(match.pending_player_id)
+        if player:
+            current_team = match.team_a if match.team_a.owner_id == match.current_turn else match.team_b
+            import html as _html
+            owner_safe = _html.escape(current_team.owner_name or "Player")
+            p_name_safe = _html.escape(player.get('name', 'Player'))
+            card_caption = f"✨ ⚔️ <b>{owner_safe}'s turn</b>\nPulled: <b>{p_name_safe}</b>\nAssign a position:"
+
+            if match.mode == "FIFA":
+                active_positions = POSITIONS_FIFA
+            elif "WWE" in match.mode:
+                active_positions = POSITIONS_WWE
+            elif "Test" in match.mode:
+                active_positions = POSITIONS_TEST
+            else:
+                active_positions = POSITIONS_T20
+
+            keyboard = []
+            row = []
+            for pos in active_positions:
+                if not current_team.slots.get(pos):
+                    row.append(InlineKeyboardButton(f"🟢 {pos}", callback_data=f"assign_{match.match_id}|{pos}"))
+                if len(row) == 2:
+                    keyboard.append(row)
+                    row = []
+            if row:
+                keyboard.append(row)
+
+            footer_row = []
+            if current_team.redraws_remaining > 0:
+                footer_row.append(InlineKeyboardButton(f"🗑 Skip ({current_team.redraws_remaining})", callback_data=f"redraw_{match.match_id}"))
+            if current_team.replacements_remaining > 0 and any(current_team.slots.values()):
+                footer_row.append(InlineKeyboardButton(f"♻️ Replace ({current_team.replacements_remaining})", callback_data=f"replace_start_{match.match_id}"))
+            if footer_row:
+                keyboard.append(footer_row)
+
+            term_votes = _get_active_terminate_votes(match)
+            keyboard.append([InlineKeyboardButton(f"🏳️ Terminate {len(term_votes)}/2", callback_data=f"terminate|{match.match_id}")])
+
+            p_data = player
+            if match.mode == "FIFA":
+                custom_url = p_data.get("fifa_image_url") or p_data.get("image_url")
+                if custom_url and str(custom_url).startswith("http") and "ratings-images-prod.pulse.ea.com" not in str(custom_url):
+                    media = custom_url
+                else:
+                    media = (p_data.get("image_file_id") or p_data.get("fifa_image_url") or
+                             p_data.get("image_url") or DRAFT_BANNER_FIFA)
+            elif "WWE" in match.mode:
+                media = (p_data.get("wwe_image_url") or p_data.get("image_url") or
+                         p_data.get("image_file_id") or DRAFT_BANNER_WWE)
+            elif match.mode == "Test":
+                media = (p_data.get("test_image_url") or p_data.get("image_url") or
+                         p_data.get("image_file_id") or DRAFT_BANNER_TEST)
+            elif "IPL" in match.mode:
+                media = (p_data.get("ipl_image_url") or p_data.get("image_url") or
+                         p_data.get("ipl_image_file_id") or p_data.get("image_file_id") or DRAFT_BANNER_IPL)
+            else:
+                media = (p_data.get("odi_image_url") or p_data.get("image_url") or
+                         p_data.get("odi_image_file_id") or p_data.get("image_file_id") or DRAFT_BANNER_ODI)
+
+            await update_draft_message(update, context, match, card_caption, keyboard, media=media, synchronous=False)
+            return
+
+    board_text = format_draft_board(match)
+    keyboard = _make_draw_keyboard(match)
+    banner = await get_banner_for_match(match)
+    await update_draft_message(update, context, match, board_text, keyboard, media=banner, synchronous=False)
 
 
 async def handle_draw(update: Update, context: ContextTypes.DEFAULT_TYPE, match: Match, synchronous: bool = False):
@@ -658,10 +736,11 @@ async def handle_assign(update: Update, context: ContextTypes.DEFAULT_TYPE, matc
 
         asyncio.create_task(_auto_ready_live(context.bot, match.match_id, match.chat_id))
 
-        # Draft done — cancel AFK timer (no more turns)
+        # Draft done — cancel AFK timer (no more turns) and clean terminate lock
         old_afk = AFK_TASKS.pop(match.match_id, None)
         if old_afk and not old_afk.done():
             old_afk.cancel()
+        _TERMINATE_LOCKS.pop(match.match_id, None)
 
         board_text = format_draft_board(match)
         # Final Board Update
@@ -908,116 +987,130 @@ async def handle_terminate(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
     match_id = parts[1]
 
-    match = await load_match_state(match_id)
-    if not match or match.state != "DRAFTING":
-        await query.answer("⚠️ This match is no longer in the draft phase.", show_alert=True)
+    # Concurrency check with ongoing draft move (draw, assign, redraw, replace)
+    if match_id in PROCESSING_LOCKS:
+        try:
+            await query.answer("⏳ Match action in progress... please wait.", show_alert=False)
+        except Exception:
+            pass
         return
 
     user_id = query.from_user.id
-    if user_id not in (int(match.team_a.owner_id), int(match.team_b.owner_id)):
-        await query.answer("⛔ Only match participants can vote to terminate!", show_alert=True)
-        return
-
-    if not hasattr(match, 'terminate_votes') or match.terminate_votes is None:
-        match.terminate_votes = []
-
-    now = time.time()
-    req_time = getattr(match, 'terminate_requested_at', 0.0) or 0.0
-
-    # ── #3: 60-Second Auto-Expiry (TTL) ──────────────────────────────────
-    if match.terminate_votes and (now - req_time > 60):
-        # The previous terminate vote has expired (> 60s)
-        match.terminate_votes = []
-        match.terminate_requested_at = 0.0
-
-    # ── #2: Click to Retract / Cancel vote (Toggle) ──────────────────────
-    if user_id in match.terminate_votes:
-        match.terminate_votes.remove(user_id)
-        if not match.terminate_votes:
-            match.terminate_requested_at = 0.0
-        await save_match_state(match)
-        # Update the button text on the current message back to 0/2
+    _loop_now = asyncio.get_event_loop().time()
+    if _loop_now - _USER_CLICK_TIMES.get(user_id, 0) < _TERMINATE_COOLDOWN:
         try:
-            if query.message and query.message.reply_markup:
-                new_kb = []
-                for row in query.message.reply_markup.inline_keyboard:
-                    new_row = []
-                    for btn in row:
-                        if btn.callback_data and btn.callback_data.startswith(f"terminate|{match_id}"):
-                            new_row.append(InlineKeyboardButton(f"🏳️ Terminate {len(match.terminate_votes)}/2", callback_data=btn.callback_data))
-                        else:
-                            new_row.append(btn)
-                    new_kb.append(new_row)
-                await query.edit_message_reply_markup(reply_markup=InlineKeyboardMarkup(new_kb))
-        except Exception as e:
-            logger.debug(f"Failed to update terminate button label: {e}")
-        await query.answer("↩️ You cancelled your vote to terminate (0/2).", show_alert=True)
-        return
-
-    # First vote in this session: set the timestamp
-    if not match.terminate_votes:
-        match.terminate_requested_at = now
-
-    match.terminate_votes.append(user_id)
-
-    if len(match.terminate_votes) < 2:
-        # 1 vote registered
-        await save_match_state(match)
-        # Update the button text on the current message to 1/2
-        try:
-            if query.message and query.message.reply_markup:
-                new_kb = []
-                for row in query.message.reply_markup.inline_keyboard:
-                    new_row = []
-                    for btn in row:
-                        if btn.callback_data and btn.callback_data.startswith(f"terminate|{match_id}"):
-                            new_row.append(InlineKeyboardButton(f"🏳️ Terminate {len(match.terminate_votes)}/2", callback_data=btn.callback_data))
-                        else:
-                            new_row.append(btn)
-                    new_kb.append(new_row)
-                await query.edit_message_reply_markup(reply_markup=InlineKeyboardMarkup(new_kb))
-        except Exception as e:
-            logger.debug(f"Failed to update terminate button label: {e}")
-
-        opp_name = match.team_b.owner_name if user_id == int(match.team_a.owner_id) else match.team_a.owner_name
-        await query.answer(f"🏳️ Vote recorded (1/2). Opponent has 60s to agree, or click again to cancel.", show_alert=True)
-    else:
-        # Both players voted (2/2) -> Terminate match with mutual agreement
-        old_afk = AFK_TASKS.pop(match.match_id, None)
-        if old_afk and not old_afk.done():
-            old_afk.cancel()
-
-        match.state = "FINISHED"
-        match.finished_at = time.time()
-        await save_match_state(match)
-        evict_match_cache(match_id)
-
-        from utils.rate_limit import debouncer
-        debouncer.cancel_updates(match.chat_id, match.draft_message_id)
-
-        from database import get_db
-        try:
-            db = get_db()
-            await db.matches.delete_one({"match_id": match_id})
+            await query.answer("⏳ Please wait before clicking terminate again.", show_alert=False)
         except Exception:
             pass
+        return
+    _USER_CLICK_TIMES[user_id] = _loop_now
 
-        if getattr(match, 'pinned_message_id', None):
-            queue_unpin(match.chat_id, match.pinned_message_id)
-
-        term_text = (
-            "🏳️ <b>Match Terminated</b>\n\n"
-            "Both players agreed to end the match early by mutual agreement.\n"
-            "<i>No stats or coins recorded.</i>"
-        )
-        try:
-            await query.edit_message_caption(caption=term_text, reply_markup=None, parse_mode="HTML")
-        except Exception:
+    lock = _get_terminate_lock(match_id)
+    async with lock:
+        match = await load_match_state(match_id)
+        if not match or match.state != "DRAFTING":
             try:
-                await query.edit_message_text(text=term_text, reply_markup=None, parse_mode="HTML")
+                await query.answer("⚠️ This match is no longer in the draft phase.", show_alert=True)
             except Exception:
                 pass
-        await query.answer("🏳️ Match terminated by mutual agreement.", show_alert=False)
+            return
+
+        if user_id not in (int(match.team_a.owner_id), int(match.team_b.owner_id)):
+            try:
+                await query.answer("⛔ Only match participants can vote to terminate!", show_alert=True)
+            except Exception:
+                pass
+            return
+
+        if not hasattr(match, 'terminate_votes') or match.terminate_votes is None:
+            match.terminate_votes = []
+
+        now = time.time()
+        req_time = getattr(match, 'terminate_requested_at', 0.0) or 0.0
+
+        # ── #3: 60-Second Auto-Expiry (TTL) ──────────────────────────────────
+        if match.terminate_votes and (now - req_time > 60):
+            match.terminate_votes = []
+            match.terminate_requested_at = 0.0
+
+        # ── #2: Click to Retract / Cancel vote (Toggle) ──────────────────────
+        if user_id in match.terminate_votes:
+            match.terminate_votes.remove(user_id)
+            if not match.terminate_votes:
+                match.terminate_requested_at = 0.0
+            await save_match_state(match)
+            await _refresh_draft_ui_for_terminate(update, context, match)
+            try:
+                await query.answer("↩️ You cancelled your vote to terminate (0/2).", show_alert=True)
+            except Exception:
+                pass
+            return
+
+        # First vote in this session: set the timestamp
+        if not match.terminate_votes:
+            match.terminate_requested_at = now
+
+        if user_id not in match.terminate_votes:
+            match.terminate_votes.append(user_id)
+
+        if len(match.terminate_votes) < 2:
+            # 1 vote registered
+            await save_match_state(match)
+            await _refresh_draft_ui_for_terminate(update, context, match)
+            try:
+                await query.answer("🏳️ Vote recorded (1/2). Opponent has 60s to agree, or click again to cancel.", show_alert=True)
+            except Exception:
+                pass
+        else:
+            # Both players voted (2/2) -> Terminate match with mutual agreement
+            old_afk = AFK_TASKS.pop(match.match_id, None)
+            if old_afk and not old_afk.done():
+                old_afk.cancel()
+
+            match.state = "FINISHED"
+            match.finished_at = time.time()
+            await save_match_state(match)
+            evict_match_cache(match_id)
+            _TERMINATE_LOCKS.pop(match_id, None)
+
+            from utils.rate_limit import debouncer
+            debouncer.cancel_updates(match.chat_id, match.draft_message_id)
+
+            from database import get_db
+            try:
+                db = get_db()
+                await db.matches.delete_one({"match_id": match_id})
+            except Exception:
+                pass
+
+            if getattr(match, 'pinned_message_id', None):
+                queue_unpin(match.chat_id, match.pinned_message_id)
+
+            term_text = (
+                "🏳️ <b>Match Terminated</b>\n\n"
+                "Both players agreed to end the match early by mutual agreement.\n"
+                "<i>No stats or coins recorded.</i>"
+            )
+            try:
+                await query.edit_message_caption(caption=term_text, reply_markup=None, parse_mode="HTML")
+            except Exception:
+                try:
+                    await query.edit_message_text(text=term_text, reply_markup=None, parse_mode="HTML")
+                except Exception:
+                    try:
+                        await context.bot.edit_message_caption(
+                            chat_id=match.chat_id,
+                            message_id=match.draft_message_id,
+                            caption=term_text,
+                            reply_markup=None,
+                            parse_mode="HTML"
+                        )
+                    except Exception:
+                        pass
+            try:
+                await query.answer("🏳️ Match terminated by mutual agreement.", show_alert=False)
+            except Exception:
+                pass
 
 
 
