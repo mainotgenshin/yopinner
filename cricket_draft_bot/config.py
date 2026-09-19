@@ -157,3 +157,23 @@ EXCLUDED_IPL_PLAYERS = [
     "Mark Chapman",
     "Temba Bavuma"
 ]
+
+# ── PKL (Pro Kabaddi League) ──────────────────────────────────────────────────
+POSITIONS_PKL = [
+    "Captain",
+    "Raider",
+    "Left Defender",
+    "Right Defender",
+    "All Rounder",
+]
+
+# Maps each PKL draft position → stat key in stats.pkl
+PKL_POSITION_STATS = {
+    "Captain":       "captain",
+    "Raider":        "raider",
+    "Left Defender": "left_defender",
+    "Right Defender":"right_defender",
+    "All Rounder":   "all_rounder",
+}
+
+DRAFT_BANNER_PKL = "https://i.ibb.co/4R4rq3DQ/x.jpg"  # update with PKL banner URL when ready
