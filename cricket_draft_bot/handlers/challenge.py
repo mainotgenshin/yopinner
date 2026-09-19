@@ -22,6 +22,33 @@ _pending_challenges: dict = {}
 # Locks to prevent double-clicks/spam on the mode picker buttons
 MODE_PICK_LOCKS = set()
 
+# Per-user cooldown to prevent challenge command spam
+_CHALLENGE_COOLDOWNS: dict = {}
+
+def _check_challenge_cooldown(user_id: int) -> bool:
+    now = time.time()
+    if now - _CHALLENGE_COOLDOWNS.get(user_id, 0) < 3.0:
+        return False
+    _CHALLENGE_COOLDOWNS[user_id] = now
+    if len(_CHALLENGE_COOLDOWNS) > 200:
+        cutoff = now - 60
+        for k in list(_CHALLENGE_COOLDOWNS.keys()):
+            if _CHALLENGE_COOLDOWNS[k] < cutoff:
+                _CHALLENGE_COOLDOWNS.pop(k, None)
+    return True
+
+def _get_challenge_target(update: Update, owner_id: int):
+    """Checks if message is a reply to another user and returns (target_user, error_msg)."""
+    if update.effective_message and update.effective_message.reply_to_message:
+        target = update.effective_message.reply_to_message.from_user
+        if target:
+            if target.id == owner_id:
+                return None, "You can't challenge yourself!"
+            if target.is_bot:
+                return None, "You can't challenge a bot!"
+            return target, None
+    return None, None
+
 _EMBED_LINK_TIP = (
     "\n\n⚠️ <i>Image preview unavailable.</i> "
     "To enable banner previews: grant <b>Admin</b> rights to the bot, "
@@ -274,10 +301,25 @@ async def challenge_ipl(update: Update, context: ContextTypes.DEFAULT_TYPE):
     _reply_obj = getattr(update, 'effective_message', None) or getattr(update, 'callback_query', None)
     if not await _check_match_limit(owner_id, _reply_obj):
         return
+    if not _check_challenge_cooldown(owner_id):
+        return
+
+    target_user, err = _get_challenge_target(update, owner_id)
+    if err:
+        await update.effective_message.reply_text(f"❌ {err}")
+        return
+
     key = f"join_IPL_{owner_id}"
+    if target_user:
+        key += f"_{target_user.id}"
+
     keyboard = [[InlineKeyboardButton("⚔️ Join Game", callback_data=key)]]
     name = html.escape(update.effective_user.first_name)
-    caption = f"🏏 <b>IPL Challenge!</b>\nUser: {name}\nMode: IPL\nWaiting for opponent... <i>(expires in 2 min)</i>"
+    if target_user:
+        target_name = html.escape(target_user.first_name)
+        caption = f"🏏 <b>IPL Challenge!</b>\nFrom: {name}\nTo: {target_name}\n\nWaiting for {target_name} to accept... <i>(expires in 2 min)</i>"
+    else:
+        caption = f"🏏 <b>IPL Challenge!</b>\nUser: {name}\nMode: IPL\nWaiting for opponent... <i>(expires in 2 min)</i>"
     banner = await get_banner_for_mode("ipl")
     href_text = f'<a href="{banner}">&#8205;</a>' + caption if banner and str(banner).startswith("http") else caption
     msg = None
@@ -327,15 +369,31 @@ async def challenge_odi(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.effective_message.reply_text("⚔️ Challenges can only be started in *group chats*!\nAdd me to a group and use /challenge there.", parse_mode="Markdown"); return
     from utils.banners import get_banner_for_mode
     owner_id = update.effective_user.id
-    chat_id = update.effective_chat.id
+    chat_id  = update.effective_chat.id
     # ─ Match limit check
     _reply_obj = getattr(update, 'effective_message', None) or getattr(update, 'callback_query', None)
     if not await _check_match_limit(owner_id, _reply_obj):
         return
+
+    if not _check_challenge_cooldown(owner_id):
+        return
+
+    target_user, err = _get_challenge_target(update, owner_id)
+    if err:
+        await update.effective_message.reply_text(f"❌ {err}")
+        return
+
     key = f"join_ODI_{owner_id}"
-    keyboard = [[InlineKeyboardButton("\u2694\ufe0f Join Game", callback_data=key)]]
+    if target_user:
+        key += f"_{target_user.id}"
+
+    keyboard = [[InlineKeyboardButton("⚔️ Join Game", callback_data=key)]]
     name = html.escape(update.effective_user.first_name)
-    caption = f"\U0001f3cf <b>ODI Challenge!</b>\nUser: {name}\nMode: ODI\nWaiting for opponent... <i>(expires in 2 min)</i>"
+    if target_user:
+        target_name = html.escape(target_user.first_name)
+        caption = f"🏏 <b>ODI Challenge!</b>\nFrom: {name}\nTo: {target_name}\n\nWaiting for {target_name} to accept... <i>(expires in 2 min)</i>"
+    else:
+        caption = f"🏏 <b>ODI Challenge!</b>\nUser: {name}\nMode: ODI\nWaiting for opponent... <i>(expires in 2 min)</i>"
     banner = await get_banner_for_mode("odi")
     href_text = f'<a href="{banner}">&#8205;</a>' + caption if banner and str(banner).startswith("http") else caption
     msg = None
@@ -393,10 +451,26 @@ async def challenge_fifa(update: Update, context: ContextTypes.DEFAULT_TYPE):
     _reply_obj = getattr(update, 'effective_message', None) or getattr(update, 'callback_query', None)
     if not await _check_match_limit(owner_id, _reply_obj):
         return
+
+    if not _check_challenge_cooldown(owner_id):
+        return
+
+    target_user, err = _get_challenge_target(update, owner_id)
+    if err:
+        await update.effective_message.reply_text(f"❌ {err}")
+        return
+
     key = f"join_FIFA_{owner_id}"
+    if target_user:
+        key += f"_{target_user.id}"
+
     keyboard = [[InlineKeyboardButton("⚔️ Join Game", callback_data=key)]]
     name = html.escape(update.effective_user.first_name)
-    caption = f"⚽ <b>FIFA Challenge!</b>\nUser: {name}\nMode: FIFA\nWaiting for opponent... <i>(expires in 2 min)</i>"
+    if target_user:
+        target_name = html.escape(target_user.first_name)
+        caption = f"⚽ <b>FIFA Challenge!</b>\nFrom: {name}\nTo: {target_name}\n\nWaiting for {target_name} to accept... <i>(expires in 2 min)</i>"
+    else:
+        caption = f"⚽ <b>FIFA Challenge!</b>\nUser: {name}\nMode: FIFA\nWaiting for opponent... <i>(expires in 2 min)</i>"
     banner = await get_banner_for_mode("fifa")
     href_text = f'<a href="{banner}">&#8205;</a>' + caption if banner and str(banner).startswith("http") else caption
     msg = None
@@ -617,6 +691,8 @@ async def challenge_wwe(update: Update, context: ContextTypes.DEFAULT_TYPE):
     _reply_obj = getattr(update, 'effective_message', None) or getattr(update, 'callback_query', None)
     if not await _check_match_limit(owner_id, _reply_obj):
         return
+    if not _check_challenge_cooldown(owner_id):
+        return
     await send_wwe_gender_selector(update, context, owner_id)
 
 async def challenge_test(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -630,10 +706,26 @@ async def challenge_test(update: Update, context: ContextTypes.DEFAULT_TYPE):
     _reply_obj = getattr(update, 'effective_message', None) or getattr(update, 'callback_query', None)
     if not await _check_match_limit(owner_id, _reply_obj):
         return
+
+    if not _check_challenge_cooldown(owner_id):
+        return
+
+    target_user, err = _get_challenge_target(update, owner_id)
+    if err:
+        await update.effective_message.reply_text(f"❌ {err}")
+        return
+
     key = f"join_Test_{owner_id}"
+    if target_user:
+        key += f"_{target_user.id}"
+
     keyboard = [[InlineKeyboardButton("\u2694\ufe0f Join Game", callback_data=key)]]
     name = html.escape(update.effective_user.first_name)
-    caption = f"\U0001f3cf <b>Test Challenge!</b>\nUser: {name}\nMode: Test\nWaiting for opponent... <i>(expires in 2 min)</i>"
+    if target_user:
+        target_name = html.escape(target_user.first_name)
+        caption = f"🏏 <b>Test Challenge!</b>\nFrom: {name}\nTo: {target_name}\n\nWaiting for {target_name} to accept... <i>(expires in 2 min)</i>"
+    else:
+        caption = f"🏏 <b>Test Challenge!</b>\nUser: {name}\nMode: Test\nWaiting for opponent... <i>(expires in 2 min)</i>"
     banner = await get_banner_for_mode("test")
     href_text = f'<a href="{banner}">&#8205;</a>' + caption if banner and str(banner).startswith("http") else caption
     msg = None
@@ -733,13 +825,16 @@ async def challenge_unified(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await send_wwe_gender_selector(update, context, owner_id)
         return
     elif mode_arg in ('pkl', 'kabaddi'):
-        await challenge_pkl(update, context)
-        return
+        real_mode = "PKL"
+        banner = await get_banner_for_mode("pkl")
     else:
         await update.effective_message.reply_text(
             f"❌ Unknown mode: {mode_arg}\nUse: `odi`, `test`, `ipl`, `fifa`, `wwe`, `pkl`.",
             parse_mode="Markdown"
         )
+        return
+
+    if not _check_challenge_cooldown(owner_id):
         return
 
     # Check for targeted challenge (reply)
@@ -749,26 +844,31 @@ async def challenge_unified(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if target_user.id == update.effective_user.id:
             await update.effective_message.reply_text("You can't challenge yourself!")
             return
+        if target_user.is_bot:
+            await update.effective_message.reply_text("You can't challenge a bot!")
+            return
 
     key = f"join_{real_mode}_{update.effective_user.id}"
     if target_user:
         key += f"_{target_user.id}"
 
-    keyboard = [[InlineKeyboardButton("\u2694\ufe0f Accept Challenge", callback_data=key)]]
+    keyboard = [[InlineKeyboardButton("⚔️ Accept Challenge", callback_data=key)]]
 
     from telegram.helpers import escape_markdown
     def _esc(t): return escape_markdown(t, version=1)
 
+    m_icon = "⚽" if real_mode == "FIFA" else "🤸" if real_mode == "PKL" else "🏏"
+
     if target_user:
         msg_text = (
-            f"\U0001f3cf *{real_mode} Challenge!*\n"
+            f"{m_icon} *{real_mode} Challenge!*\n"
             f"From: {_esc(update.effective_user.first_name)}\n"
             f"To: {_esc(target_user.first_name)}\n\n"
             f"Waiting for {_esc(target_user.first_name)} to accept..."
         )
     else:
         msg_text = (
-            f"\U0001f3cf *{real_mode} Challenge!*\n"
+            f"{m_icon} *{real_mode} Challenge!*\n"
             f"User: {_esc(update.effective_user.first_name)}\n"
             f"Waiting for opponent..."
         )
@@ -781,9 +881,9 @@ async def challenge_unified(update: Update, context: ContextTypes.DEFAULT_TYPE):
             challenger_html = html.escape(update.effective_user.first_name)
             if target_user:
                 target_html = html.escape(target_user.first_name)
-                ch_caption = f"🏏 <b>{real_mode} Challenge!</b>\nFrom: {challenger_html}\nTo: {target_html}\n\nWaiting for {target_html} to accept..."
+                ch_caption = f"{m_icon} <b>{real_mode} Challenge!</b>\nFrom: {challenger_html}\nTo: {target_html}\n\nWaiting for {target_html} to accept..."
             else:
-                ch_caption = f"🏏 <b>{real_mode} Challenge!</b>\nUser: {challenger_html}\nWaiting for opponent..."
+                ch_caption = f"{m_icon} <b>{real_mode} Challenge!</b>\nUser: {challenger_html}\nWaiting for opponent..."
             sent_msg = await update.effective_message.reply_text(
                 f'<a href="{banner}">&#8205;</a>' + ch_caption,
                 reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="HTML",
@@ -1059,14 +1159,33 @@ async def challenge_pkl(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not await _check_match_limit(owner_id, _reply_obj):
         return
 
-    key      = f"join_PKL_{owner_id}"
+    if not _check_challenge_cooldown(owner_id):
+        return
+
+    target_user, err = _get_challenge_target(update, owner_id)
+    if err:
+        await update.effective_message.reply_text(f"❌ {err}")
+        return
+
+    key = f"join_PKL_{owner_id}"
+    if target_user:
+        key += f"_{target_user.id}"
+
     keyboard = [[InlineKeyboardButton("⚔️ Join Game", callback_data=key)]]
     name     = html.escape(update.effective_user.first_name)
-    caption  = (
-        f"🤸 <b>PKL Challenge!</b>\n"
-        f"User: {name}\nMode: Pro Kabaddi League\n"
-        f"Waiting for opponent... <i>(expires in 2 min)</i>"
-    )
+    if target_user:
+        target_name = html.escape(target_user.first_name)
+        caption  = (
+            f"🤸 <b>PKL Challenge!</b>\n"
+            f"From: {name}\nTo: {target_name}\n\n"
+            f"Waiting for {target_name} to accept... <i>(expires in 2 min)</i>"
+        )
+    else:
+        caption  = (
+            f"🤸 <b>PKL Challenge!</b>\n"
+            f"User: {name}\nMode: Pro Kabaddi League\n"
+            f"Waiting for opponent... <i>(expires in 2 min)</i>"
+        )
     banner   = await get_banner_for_mode("pkl")
     href_text = f'<a href="{banner}">&#8205;</a>' + caption if banner and str(banner).startswith("http") else caption
 
