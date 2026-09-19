@@ -91,6 +91,7 @@ async def init_db():
         await db.players.create_index([("cards.test.rarity", ASCENDING)])
         await db.players.create_index([("cards.wwe.rarity", ASCENDING)])
         await db.players.create_index([("cards.fifa.rarity", ASCENDING)])
+        await db.players.create_index([("cards.pkl.rarity", ASCENDING)])
         # H2H result lookups by player pair
         await db.match_results.create_index([("player_a_id", ASCENDING), ("player_b_id", ASCENDING)])
         await db.match_results.create_index([("played_at", ASCENDING)])
@@ -1361,4 +1362,243 @@ async def unban_user(user_id: int) -> bool:
     )
     _banned_users_cache.discard(user_id)
     return True
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# DAILY CHECK-IN SYSTEM
+# ═══════════════════════════════════════════════════════════════════════════
+
+import datetime as _datetime
+
+def _checkin_day_key() -> str:
+    """Returns today's date string in UTC as YYYY-MM-DD for dedup."""
+    return _datetime.datetime.utcnow().strftime("%Y-%m-%d")
+
+async def get_checkin_status(user_id: int) -> dict:
+    """
+    Returns the user's check-in state:
+    {checkin_streak, last_checkin_day, checked_in_today}
+    """
+    db = get_db()
+    doc = await db.users.find_one(
+        {"user_id": user_id},
+        {"checkin_streak": 1, "last_checkin_day": 1, "_id": 0}
+    )
+    today = _checkin_day_key()
+    if not doc:
+        return {"checkin_streak": 0, "last_checkin_day": None, "checked_in_today": False}
+
+    last = doc.get("last_checkin_day")
+    streak = doc.get("checkin_streak", 0)
+    checked_in_today = (last == today)
+    return {
+        "checkin_streak": streak,
+        "last_checkin_day": last,
+        "checked_in_today": checked_in_today,
+    }
+
+
+async def do_checkin(user_id: int) -> dict:
+    """
+    Performs a daily check-in. Returns:
+    {
+      success: bool,           # False if already checked in today
+      coins_awarded: int,
+      new_streak: int,
+      milestone: bool,         # True if this is a 7-day milestone
+      card_awarded: dict|None  # {player_id, name, format, rarity, ovr} or None
+    }
+    """
+    import random as _random
+
+    db = get_db()
+    today = _checkin_day_key()
+
+    doc = await db.users.find_one(
+        {"user_id": user_id},
+        {"checkin_streak": 1, "last_checkin_day": 1, "_id": 0}
+    )
+
+    last_day = (doc or {}).get("last_checkin_day")
+    streak   = (doc or {}).get("checkin_streak", 0)
+
+    # Already checked in today?
+    if last_day == today:
+        return {"success": False, "coins_awarded": 0, "new_streak": streak,
+                "milestone": False, "card_awarded": None}
+
+    # Calculate yesterday
+    yesterday = (_datetime.datetime.utcnow() - _datetime.timedelta(days=1)).strftime("%Y-%m-%d")
+
+    if last_day == yesterday:
+        new_streak = streak + 1  # consecutive day
+    else:
+        new_streak = 1           # streak broken or first check-in
+
+    coins = 50
+    is_milestone = (new_streak % 7 == 0)
+    card_awarded = None
+
+    if is_milestone:
+        # Award a random card from the pool (common 60%, rare 30%, epic 10%)
+        rarity_roll = _random.random()
+        if rarity_roll < 0.60:
+            target_rarity = "common"
+        elif rarity_roll < 0.90:
+            target_rarity = "rare"
+        else:
+            target_rarity = "epic"
+
+        # Pick a random player with a card of that rarity (any format/sport)
+        # Try multiple formats, pick a random matching player
+        fmt_fields = [
+            ("cards.odi.rarity",  "odi"),
+            ("cards.ipl.rarity",  "ipl"),
+            ("cards.test.rarity", "test"),
+            ("cards.pkl.rarity",  "pkl"),
+            ("cards.wwe.rarity",  "wwe"),
+            ("cards.fifa.rarity", "fifa"),
+        ]
+        _random.shuffle(fmt_fields)
+
+        for rarity_field, fmt in fmt_fields:
+            candidates = await db.players.find(
+                {rarity_field: target_rarity},
+                {"player_id": 1, "name": 1, f"cards.{fmt}": 1, "_id": 0}
+            ).to_list(200)
+
+            if candidates:
+                chosen_player = _random.choice(candidates)
+                card_data = chosen_player.get("cards", {}).get(fmt, {})
+                card_awarded = {
+                    "player_id": chosen_player["player_id"],
+                    "name":      chosen_player["name"],
+                    "format":    fmt,
+                    "rarity":    card_data.get("rarity", target_rarity),
+                    "ovr":       card_data.get("ovr", 0),
+                }
+                # Add card to user inventory
+                await add_card_to_user(user_id, chosen_player["player_id"], fmt, 1)
+                break
+
+    # Persist check-in
+    await db.users.update_one(
+        {"user_id": user_id},
+        {"$set": {
+            "checkin_streak":   new_streak,
+            "last_checkin_day": today,
+        }},
+        upsert=True
+    )
+
+    # Award coins
+    await add_card_coins(user_id, coins)
+
+    return {
+        "success":       True,
+        "coins_awarded": coins,
+        "new_streak":    new_streak,
+        "milestone":     is_milestone,
+        "card_awarded":  card_awarded,
+    }
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# ACHIEVEMENT SYSTEM
+# ═══════════════════════════════════════════════════════════════════════════
+
+async def get_achievements(user_id: int) -> list:
+    """Returns list of achievement strings for a user."""
+    db = get_db()
+    doc = await db.users.find_one({"user_id": user_id}, {"achievements": 1, "_id": 0})
+    return (doc or {}).get("achievements", [])
+
+
+async def add_achievement(user_id: int, text: str) -> int:
+    """
+    Adds an achievement to a user. Returns total achievement count.
+    """
+    db = get_db()
+    result = await db.users.find_one_and_update(
+        {"user_id": user_id},
+        {"$push": {"achievements": text}},
+        upsert=True,
+        return_document=True
+    )
+    return len((result or {}).get("achievements", [text]))
+
+
+async def remove_achievement(user_id: int, index: int) -> tuple[bool, str]:
+    """
+    Removes achievement by 1-based index.
+    Returns (success, removed_text_or_error).
+    """
+    db = get_db()
+    doc = await db.users.find_one({"user_id": user_id}, {"achievements": 1, "_id": 0})
+    achievements = (doc or {}).get("achievements", [])
+
+    if not achievements:
+        return False, "No achievements found."
+    if index < 1 or index > len(achievements):
+        return False, f"Invalid number. Must be 1–{len(achievements)}."
+
+    removed = achievements[index - 1]
+    achievements.pop(index - 1)
+    await db.users.update_one(
+        {"user_id": user_id},
+        {"$set": {"achievements": achievements}}
+    )
+    return True, removed
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# BOT STATUS HELPERS
+# ═══════════════════════════════════════════════════════════════════════════
+
+async def get_botstatus_data() -> dict:
+    """
+    Returns a dict of bot status metrics for /botstatus command.
+    All DB calls run concurrently.
+    """
+    import asyncio as _asyncio
+    db = get_db()
+
+    async def _count_users():
+        return await db.users.count_documents({})
+
+    async def _count_cards():
+        return await db.user_cards.count_documents({})
+
+    async def _count_active_matches():
+        """Returns total active count + breakdown by mode."""
+        cursor = db.matches.find(
+            {"state_data.state": {"$in": ["DRAFTING", "ACTIVE", "IN_PROGRESS"]}},
+            {"state_data.mode": 1, "_id": 0}
+        )
+        docs = await cursor.to_list(500)
+        mode_counts: dict = {}
+        for d in docs:
+            mode = (d.get("state_data") or {}).get("mode", "Unknown") or "Unknown"
+            # Normalise
+            if "IPL" in mode:       key = "IPL"
+            elif "Test" in mode:    key = "Test"
+            elif "FIFA" in mode:    key = "FIFA"
+            elif "WWE" in mode:     key = "WWE"
+            elif "PKL" in mode or "Kabaddi" in mode: key = "PKL"
+            else:                   key = "ODI"
+            mode_counts[key] = mode_counts.get(key, 0) + 1
+        return len(docs), mode_counts
+
+    users, cards, (total_active, mode_counts) = await _asyncio.gather(
+        _count_users(), _count_cards(), _count_active_matches()
+    )
+    return {
+        "total_users":   users,
+        "total_cards":   cards,
+        "active_total":  total_active,
+        "active_modes":  mode_counts,
+        "cache_size":    len(_player_cache),
+        "cache_max":     CACHE_MAX_SIZE,
+    }
+
 
