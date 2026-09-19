@@ -24,16 +24,24 @@ def _get_lock(user_id: int) -> asyncio.Lock:
 # ── Display helpers ───────────────────────────────────────────────────────────
 RARITY_EMOJI = {"common": "⚪", "rare": "🔵", "epic": "🟣", "legend": "🟡"}
 PACK_EMOJI   = {"basic": "🟦", "premium": "🟣", "elite": "🟡"}
-SPORT_EMOJI  = {"cricket": "🏏", "football": "⚽", "wwe": "🤼"}
-SPORT_LABEL  = {"cricket": "Cricket", "football": "FIFA", "wwe": "WWE Men"}
-FORMAT_LABEL = {"ipl": "IPL", "odi": "ODI", "test": "Test", "wwe": "WWE", "fifa": "FIFA"}
+SPORT_EMOJI  = {"cricket": "🏏", "football": "⚽", "wwe": "🤼", "kabaddi": "🤸"}
+SPORT_LABEL  = {"cricket": "Cricket", "football": "FIFA", "wwe": "WWE Men", "kabaddi": "PKL"}
+FORMAT_LABEL = {"ipl": "IPL", "odi": "ODI", "test": "Test", "wwe": "WWE", "fifa": "FIFA", "pkl": "PKL"}
 PACK_PRICES  = {"basic": 250, "premium": 550, "elite": 1200}
 PACK_ODDS_TEXT = {
     "basic":   "60% Common | 35% Rare | 5% Epic | 0% Legend",
     "premium": "15% Common | 45% Rare | 35% Epic | 5% Legend",
     "elite":   "0% Common | 15% Rare | 55% Epic | 30% Legend",
 }
-CARDS_PER_PAGE = 10
+CARDS_PER_PAGE    = 10
+CARDS_PER_PAGE_DM = 20  # Larger page in private chats
+
+SORT_LABELS = {
+    "rarity": "Rarity ⬇️",
+    "ovr":    "OVR ⬇️",
+    "dupe":   "Dupes First",
+    "name":   "A–Z",
+}
 
 def esc(t): return escape_markdown(str(t), version=1)
 
@@ -48,6 +56,20 @@ async def _get_raw_inv(user_id: int) -> dict:
     db = get_db()
     doc = await db.users.find_one({"user_id": user_id}, {"pack_inventory": 1})
     return doc.get("pack_inventory", {}) if doc else {}
+
+def _sort_cards(cards: list, sort_key: str) -> list:
+    """Sort a card list by the given sort_key."""
+    rarity_order = {"legend": 0, "epic": 1, "rare": 2, "common": 3}
+    if sort_key == "rarity":
+        return sorted(cards, key=lambda c: (rarity_order.get(c["rarity"], 9), c["name"]))
+    elif sort_key == "ovr":
+        return sorted(cards, key=lambda c: -c.get("ovr", 0))
+    elif sort_key == "dupe":
+        return sorted(cards, key=lambda c: (-c.get("quantity", 1), rarity_order.get(c["rarity"], 9), c["name"]))
+    elif sort_key == "name":
+        return sorted(cards, key=lambda c: c["name"].lower())
+    # Default fallback
+    return sorted(cards, key=lambda c: (rarity_order.get(c["rarity"], 9), c["name"]))
 
 # ─────────────────────────────────────────────────────────────────────────────
 # /pack
@@ -67,6 +89,7 @@ async def handle_pack(update: Update, context: ContextTypes.DEFAULT_TYPE):
         InlineKeyboardButton("🏏 Cricket", callback_data=f"pack_sport|{user.id}|cricket"),
         InlineKeyboardButton("⚽ FIFA",    callback_data=f"pack_sport|{user.id}|football"),
         InlineKeyboardButton("🤼 WWE Men", callback_data=f"pack_sport|{user.id}|wwe"),
+        InlineKeyboardButton("🤸 PKL",     callback_data=f"pack_sport|{user.id}|kabaddi"),
     ]])
     await update.effective_message.reply_text(
         "🃏 *Pack Store*\nChoose a sport:",
@@ -79,7 +102,9 @@ async def cb_pack_sport(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if str(query.from_user.id) != owner_id:
         await query.answer("⛔ Not your menu.", show_alert=True); return
     await query.answer()
-    text = f"🃏 *Pack Store — {SPORT_EMOJI[sport]} {SPORT_LABEL[sport]}*\n\nEach pack contains *3 cards* from this sport's players.\n\n"
+    sport_label = SPORT_LABEL.get(sport, sport.title())
+    sport_emoji = SPORT_EMOJI.get(sport, "🃏")
+    text = f"🃏 *Pack Store — {sport_emoji} {sport_label}*\n\nEach pack contains *3 cards* from this sport's players.\n\n"
     for tier in ["basic", "premium", "elite"]:
         text += f"{PACK_EMOJI[tier]} *{tier.title()} Pack* — {PACK_PRICES[tier]}🪙\n`{PACK_ODDS_TEXT[tier]}`\n\n"
     keyboard = InlineKeyboardMarkup([
@@ -290,57 +315,85 @@ async def cb_inv_open(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # ─────────────────────────────────────────────────────────────────────────────
 async def handle_mycards(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
-    await _show_mycards(update.effective_message, user.id, user.id, sport_filter=None, page=0, edit=False)
+    await _show_mycards(update.effective_message, user.id, user.id,
+                        sport_filter=None, page=0, edit=False,
+                        is_dm=(update.effective_chat.type == "private"),
+                        context=context)
 
-async def _show_mycards(message_or_query, owner_id: int, viewer_id: int, sport_filter, page: int, edit: bool):
-    from database import get_user_cards, count_user_cards
+async def _show_mycards(message_or_query, owner_id: int, viewer_id: int,
+                        sport_filter, page: int, edit: bool,
+                        is_dm: bool = False, context=None):
+    from database import get_user_cards
     cards = await get_user_cards(owner_id, sport_filter=sport_filter)
-    # Sort: legend first, then epic, rare, common
-    rarity_order = {"legend": 0, "epic": 1, "rare": 2, "common": 3}
-    cards.sort(key=lambda c: (rarity_order.get(c["rarity"], 9), c["name"]))
-    total = sum(c["quantity"] for c in cards)
-    start = page * CARDS_PER_PAGE
-    page_cards = cards[start:start + CARDS_PER_PAGE]
-    total_pages = max(1, (len(cards) + CARDS_PER_PAGE - 1) // CARDS_PER_PAGE)
+
+    # Determine sort from user_data session (if context available)
+    sort_key = "rarity"
+    if context is not None:
+        sort_key = context.user_data.get(f"sort_{owner_id}", "rarity")
+
+    cards = _sort_cards(cards, sort_key)
+
+    page_size  = CARDS_PER_PAGE_DM if is_dm else CARDS_PER_PAGE
+    total_unique = len(cards)
+    start        = page * page_size
+    page_cards   = cards[start:start + page_size]
+    total_pages  = max(1, (total_unique + page_size - 1) // page_size)
+
     if not cards:
         text = "🃏 *Your Collection*\n━━━━━━━━━━━━━━━━━━\nNo cards yet! Use /pack to buy packs."
     else:
         filter_tag = f" ({SPORT_LABEL.get(sport_filter, sport_filter.title())})" if sport_filter else ""
-        lines = [f"🃏 *Your Collection*{filter_tag}\n━━━━━━━━━━━━━━━━━━"]
+        sort_label = SORT_LABELS.get(sort_key, sort_key)
+        lines = [f"🃏 *Your Collection*{filter_tag}  _{sort_label}_\n━━━━━━━━━━━━━━━━━━"]
         for idx, c in enumerate(page_cards, start=start + 1):
             r_emoji = RARITY_EMOJI.get(c["rarity"], "⚪")
             f_label = FORMAT_LABEL.get(c["format"], c["format"].upper())
-            qty_str = f" ×{c['quantity']}" if c["quantity"] > 1 else ""
-            lines.append(f"`{idx}.` {r_emoji} {esc(c['name'])} ({f_label}){qty_str}")
+            qty_str = f" ×{c['quantity']}" if c.get("quantity", 1) > 1 else ""
+            ovr_str = f" OVR {c['ovr']}" if sort_key == "ovr" and c.get("ovr") else ""
+            lines.append(f"`{idx}.` {r_emoji} {esc(c['name'])} ({f_label}){qty_str}{ovr_str}")
         lines.append(f"━━━━━━━━━━━━━━━━━━\nPage {page+1}/{total_pages}")
         text = "\n".join(lines)
-    # Navigation + filter buttons
+
+    sf  = sport_filter or "all"
+    # Navigation buttons
     nav = []
     if total_pages > 10 and page > 0:
-        nav.append(InlineKeyboardButton("⏮ -10", callback_data=f"mc_page|{owner_id}|{sport_filter or 'all'}|{max(0, page-10)}"))
+        nav.append(InlineKeyboardButton("⏮ -10", callback_data=f"mc_page|{owner_id}|{sf}|{max(0, page-10)}"))
     if total_pages > 5 and page > 0:
-        nav.append(InlineKeyboardButton("⏪ -5", callback_data=f"mc_page|{owner_id}|{sport_filter or 'all'}|{max(0, page-5)}"))
+        nav.append(InlineKeyboardButton("⏪ -5", callback_data=f"mc_page|{owner_id}|{sf}|{max(0, page-5)}"))
     if page > 0:
-        nav.append(InlineKeyboardButton("◀️", callback_data=f"mc_page|{owner_id}|{sport_filter or 'all'}|{page-1}"))
+        nav.append(InlineKeyboardButton("◀️", callback_data=f"mc_page|{owner_id}|{sf}|{page-1}"))
     if page < total_pages - 1:
-        nav.append(InlineKeyboardButton("▶️", callback_data=f"mc_page|{owner_id}|{sport_filter or 'all'}|{page+1}"))
+        nav.append(InlineKeyboardButton("▶️", callback_data=f"mc_page|{owner_id}|{sf}|{page+1}"))
     if total_pages > 5 and page < total_pages - 1:
-        nav.append(InlineKeyboardButton("+5 ⏩", callback_data=f"mc_page|{owner_id}|{sport_filter or 'all'}|{min(total_pages-1, page+5)}"))
+        nav.append(InlineKeyboardButton("+5 ⏩", callback_data=f"mc_page|{owner_id}|{sf}|{min(total_pages-1, page+5)}"))
     if total_pages > 10 and page < total_pages - 1:
-        nav.append(InlineKeyboardButton("+10 ⏭", callback_data=f"mc_page|{owner_id}|{sport_filter or 'all'}|{min(total_pages-1, page+10)}"))
+        nav.append(InlineKeyboardButton("+10 ⏭", callback_data=f"mc_page|{owner_id}|{sf}|{min(total_pages-1, page+10)}"))
+
+    # Sport filter buttons
     filters = [
-        InlineKeyboardButton("All",     callback_data=f"mc_page|{owner_id}|all|0"),
-        InlineKeyboardButton("🏏",      callback_data=f"mc_page|{owner_id}|cricket|0"),
-        InlineKeyboardButton("⚽",      callback_data=f"mc_page|{owner_id}|football|0"),
-        InlineKeyboardButton("🤼",      callback_data=f"mc_page|{owner_id}|wwe|0"),
+        InlineKeyboardButton("All",  callback_data=f"mc_page|{owner_id}|all|0"),
+        InlineKeyboardButton("🏏",   callback_data=f"mc_page|{owner_id}|cricket|0"),
+        InlineKeyboardButton("⚽",   callback_data=f"mc_page|{owner_id}|football|0"),
+        InlineKeyboardButton("🤼",   callback_data=f"mc_page|{owner_id}|wwe|0"),
+        InlineKeyboardButton("🤸",   callback_data=f"mc_page|{owner_id}|kabaddi|0"),
+    ]
+    # Sort buttons (one row)
+    sort_row = [
+        InlineKeyboardButton(f"{'✅' if sort_key=='rarity' else ''}⭐Rarity", callback_data=f"mc_sort|{owner_id}|rarity|{sf}"),
+        InlineKeyboardButton(f"{'✅' if sort_key=='ovr'    else ''}📊OVR",    callback_data=f"mc_sort|{owner_id}|ovr|{sf}"),
+        InlineKeyboardButton(f"{'✅' if sort_key=='dupe'   else ''}🔁Dupes",  callback_data=f"mc_sort|{owner_id}|dupe|{sf}"),
+        InlineKeyboardButton(f"{'✅' if sort_key=='name'   else ''}🔤A-Z",    callback_data=f"mc_sort|{owner_id}|name|{sf}"),
     ]
     collections_row = [InlineKeyboardButton("📊 Collections", callback_data=f"mc_collections|{owner_id}")]
-    kb = InlineKeyboardMarkup([filters] + ([nav] if nav else []) + [collections_row])
+    rows = [filters, sort_row] + ([nav] if nav else []) + [collections_row]
+    kb = InlineKeyboardMarkup(rows)
 
     if edit:
         await message_or_query.edit_message_text(text, reply_markup=kb, parse_mode="Markdown")
     else:
         await message_or_query.reply_text(text, reply_markup=kb, parse_mode="Markdown")
+
 
 async def cb_mc_page(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -350,7 +403,56 @@ async def cb_mc_page(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.answer("⛔ Not your menu.", show_alert=True); return
     await query.answer()
     sport_filter = None if sport_str == "all" else sport_str
-    await _show_mycards(query, int(owner_id), query.from_user.id, sport_filter, int(page_str), edit=True)
+    is_dm = (update.effective_chat.type == "private")
+    await _show_mycards(query, int(owner_id), query.from_user.id,
+                        sport_filter, int(page_str), edit=True,
+                        is_dm=is_dm, context=context)
+
+
+async def cb_mc_sort(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Sort button callback: set user's sort preference and refresh mycards."""
+    query = update.callback_query
+    _, owner_id, new_sort, sport_str = query.data.split("|")
+    if str(query.from_user.id) != owner_id:
+        await query.answer("⛔ Not your menu.", show_alert=True); return
+    await query.answer(f"Sorted by: {SORT_LABELS.get(new_sort, new_sort)}")
+    # Store in session
+    context.user_data[f"sort_{owner_id}"] = new_sort
+    sport_filter = None if sport_str == "all" else sport_str
+    is_dm = (update.effective_chat.type == "private")
+    await _show_mycards(query, int(owner_id), query.from_user.id,
+                        sport_filter, 0, edit=True,
+                        is_dm=is_dm, context=context)
+
+
+async def handle_sort(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """/sort [rarity|ovr|dupe|name] — Set sort preference for /mycards."""
+    user = update.effective_user
+    args = context.args
+    valid = {"rarity", "ovr", "dupe", "name", "duplicate"}
+    alias = {"duplicate": "dupe"}
+
+    if not args or args[0].lower() not in valid:
+        current = context.user_data.get(f"sort_{user.id}", "rarity")
+        await update.effective_message.reply_text(
+            f"📊 *Sort Preference*\n\n"
+            f"Current: *{SORT_LABELS.get(current, current)}*\n\n"
+            f"Options:\n"
+            f"• `/sort rarity` — Legend → Common (default)\n"
+            f"• `/sort ovr` — Highest OVR first\n"
+            f"• `/sort dupe` — Duplicates first\n"
+            f"• `/sort name` — A to Z",
+            parse_mode="Markdown"
+        )
+        return
+
+    key = alias.get(args[0].lower(), args[0].lower())
+    context.user_data[f"sort_{user.id}"] = key
+    await update.effective_message.reply_text(
+        f"✅ Sort set to: *{SORT_LABELS.get(key, key)}*\n_Your /mycards will now use this order._",
+        parse_mode="Markdown"
+    )
+
 
 async def cb_mc_collections(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Show full collection breakdown: rarity counts per format with total available n."""
@@ -367,9 +469,10 @@ async def cb_mc_collections(update: Update, context: ContextTypes.DEFAULT_TYPE):
     cat_grand      = cat_totals.get("grand_total", 0)
 
     # Group by sport → format → rarity
-    FORMAT_TO_SPORT = {"ipl": "Cricket", "odi": "Cricket", "test": "Cricket", "fifa": "FIFA", "wwe": "WWE"}
-    SPORT_EMOJI_MAP = {"Cricket": "🏏", "FIFA": "⚽", "WWE": "🤼"}
-    FORMAT_ORDER = ["ipl", "odi", "test", "fifa", "wwe"]
+    FORMAT_TO_SPORT = {"ipl": "Cricket", "odi": "Cricket", "test": "Cricket",
+                       "fifa": "FIFA", "wwe": "WWE", "pkl": "PKL"}
+    SPORT_EMOJI_MAP = {"Cricket": "🏏", "FIFA": "⚽", "WWE": "🤼", "PKL": "🤸"}
+    FORMAT_ORDER = ["ipl", "odi", "test", "pkl", "fifa", "wwe"]
     RARITY_ORDER = ["legend", "epic", "rare", "common"]
 
     # Unique owned cards per format and rarity
