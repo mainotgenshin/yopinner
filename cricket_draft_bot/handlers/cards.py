@@ -51,14 +51,11 @@ PACK_ODDS_TEXT = {
 CARDS_PER_PAGE    = 10
 CARDS_PER_PAGE_DM = 20  # Larger page in private chats
 
-def get_user_sort(context, user_id: int) -> tuple:
-    """Return (criteria, order) for user. Defaults to ('rarity', 'desc')."""
-    crit = "rarity"
-    order = "desc"
-    if context is not None and hasattr(context, "user_data") and context.user_data is not None:
-        crit = context.user_data.get(f"sort_crit_{user_id}", "rarity")
-        order = context.user_data.get(f"sort_dir_{user_id}", "desc")
-    return crit, order
+async def get_user_sort(context_or_uid, user_id: int = None) -> tuple:
+    """Return (criteria, order) for user. Reads from persistent DB cache."""
+    uid = user_id if user_id is not None else context_or_uid
+    from database import get_user_card_sort
+    return await get_user_card_sort(uid)
 
 def get_sort_label(criteria: str, order: str) -> str:
     order = (order or "desc").lower()
@@ -365,10 +362,21 @@ async def handle_mycards(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = user.id if user else (update.effective_chat.id if update.effective_chat else 0)
     chat = update.effective_chat
     is_dm = (chat.type == "private") if chat else False
+    sport_filter = None
+    if context.args:
+        arg = context.args[0].lower()
+        if arg in ("ipl", "odi", "test", "cricket"):
+            sport_filter = "cricket"
+        elif arg in ("fifa", "football"):
+            sport_filter = "football"
+        elif arg in ("wwe",):
+            sport_filter = "wwe"
+        elif arg in ("pkl", "kabaddi"):
+            sport_filter = "kabaddi"
+
     await _show_mycards(update.effective_message, user_id, user_id,
-                        sport_filter=None, page=0, edit=False,
-                        is_dm=is_dm,
-                        context=context)
+                        sport_filter=sport_filter, page=0, edit=False,
+                        is_dm=is_dm)
 
 async def _show_mycards(message_or_query, owner_id: int, viewer_id: int,
                         sport_filter, page: int, edit: bool,
@@ -376,8 +384,8 @@ async def _show_mycards(message_or_query, owner_id: int, viewer_id: int,
     from database import get_user_cards
     cards = await get_user_cards(owner_id, sport_filter=sport_filter)
 
-    # Determine sort from user_data session
-    crit, order = get_user_sort(context, owner_id)
+    # Determine sort from persistent user preference
+    crit, order = await get_user_sort(owner_id)
     cards = _sort_cards(cards, crit, order)
 
     page_size  = CARDS_PER_PAGE_DM if is_dm else CARDS_PER_PAGE
@@ -413,7 +421,7 @@ async def _show_mycards(message_or_query, owner_id: int, viewer_id: int,
         lines.append(f"━━━━━━━━━━━━━━━━━━\nPage {page+1}/{total_pages}")
         text = "\n".join(lines)
 
-    # Navigation buttons
+    # Clean navigation buttons ONLY — no sluggish sport or collections buttons
     nav = []
     if total_pages > 10 and page > 0:
         nav.append(InlineKeyboardButton("⏮ -10", callback_data=f"mc_page|{owner_id}|{sf}|{max(0, page-10)}"))
@@ -428,21 +436,14 @@ async def _show_mycards(message_or_query, owner_id: int, viewer_id: int,
     if total_pages > 10 and page < total_pages - 1:
         nav.append(InlineKeyboardButton("+10 ⏭", callback_data=f"mc_page|{owner_id}|{sf}|{min(total_pages-1, page+10)}"))
 
-    # Sport filter buttons with active indicator
-    filters = [
-        InlineKeyboardButton("• All •" if sf == "all" else "All", callback_data=f"mc_page|{owner_id}|all|0"),
-        InlineKeyboardButton("• 🏏 •" if sf == "cricket" else "🏏", callback_data=f"mc_page|{owner_id}|cricket|0"),
-        InlineKeyboardButton("• ⚽ •" if sf in ("football", "fifa") else "⚽", callback_data=f"mc_page|{owner_id}|football|0"),
-        InlineKeyboardButton("• 🤼 •" if sf == "wwe" else "🤼", callback_data=f"mc_page|{owner_id}|wwe|0"),
-        InlineKeyboardButton("• 🤸 •" if sf in ("kabaddi", "pkl") else "🤸", callback_data=f"mc_page|{owner_id}|kabaddi|0"),
-    ]
-    collections_row = [InlineKeyboardButton("📊 Collections", callback_data=f"mc_collections|{owner_id}")]
-    rows = [filters] + ([nav] if nav else []) + [collections_row]
-    kb = InlineKeyboardMarkup(rows)
+    kb = InlineKeyboardMarkup([nav]) if nav else None
 
     if edit:
         try:
-            await message_or_query.edit_message_text(text, reply_markup=kb, parse_mode="HTML")
+            if kb:
+                await message_or_query.edit_message_text(text, reply_markup=kb, parse_mode="HTML")
+            else:
+                await message_or_query.edit_message_text(text, parse_mode="HTML")
         except Exception as e:
             err_str = str(e).lower()
             if "message is not modified" in err_str:
@@ -450,15 +451,24 @@ async def _show_mycards(message_or_query, owner_id: int, viewer_id: int,
             else:
                 logger.warning(f"_show_mycards HTML edit error: {e}, falling back to plain text")
                 try:
-                    await message_or_query.edit_message_text(text, reply_markup=kb)
+                    if kb:
+                        await message_or_query.edit_message_text(text, reply_markup=kb)
+                    else:
+                        await message_or_query.edit_message_text(text)
                 except Exception:
                     pass
     else:
         try:
-            await message_or_query.reply_text(text, reply_markup=kb, parse_mode="HTML")
+            if kb:
+                await message_or_query.reply_text(text, reply_markup=kb, parse_mode="HTML")
+            else:
+                await message_or_query.reply_text(text, parse_mode="HTML")
         except Exception as e:
             logger.warning(f"_show_mycards reply error: {e}, falling back to plain text")
-            await message_or_query.reply_text(text, reply_markup=kb)
+            if kb:
+                await message_or_query.reply_text(text, reply_markup=kb)
+            else:
+                await message_or_query.reply_text(text)
 
 
 async def cb_mc_page(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -517,9 +527,10 @@ async def cb_mc_sort(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except (ValueError, TypeError):
         oid_int = query.from_user.id
 
-    context.user_data[f"sort_crit_{query.from_user.id}"] = new_sort
-    order = context.user_data.get(f"sort_dir_{query.from_user.id}", "desc")
-    await query.answer(f"Sorted by: {get_sort_label(new_sort, order)}")
+    _, cur_order = await get_user_sort(oid_int)
+    from database import save_user_card_sort
+    await save_user_card_sort(oid_int, new_sort, cur_order)
+    await query.answer(f"Sorted by: {get_sort_label(new_sort, cur_order)}")
     sport_filter = None if sport_str == "all" else sport_str
     chat = update.effective_chat
     is_dm = (chat.type == "private") if chat else False
@@ -555,7 +566,7 @@ async def handle_sort(update: Update, context: ContextTypes.DEFAULT_TYPE):
     crit_alias = {"duplicate": "dupe", "dupes": "dupe", "alphabetical": "name"}
     dir_alias  = {"ascending": "asc", "des": "desc", "descending": "desc"}
 
-    cur_crit, cur_order = get_user_sort(context, user.id)
+    cur_crit, cur_order = await get_user_sort(user.id)
 
     if not args:
         cur_label = get_sort_label(cur_crit, cur_order)
@@ -602,8 +613,8 @@ async def handle_sort(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if new_crit and not new_dir:
         new_dir = "asc" if new_crit == "name" else "desc"
 
-    context.user_data[f"sort_crit_{user.id}"] = new_crit
-    context.user_data[f"sort_dir_{user.id}"]  = new_dir
+    from database import save_user_card_sort
+    await save_user_card_sort(user.id, new_crit, new_dir)
 
     label = get_sort_label(new_crit, new_dir)
     await update.effective_message.reply_text(
@@ -612,36 +623,9 @@ async def handle_sort(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
 
-async def cb_mc_collections(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Show full collection breakdown: rarity counts per format with total available n."""
-    query = update.callback_query
-    if not query:
-        return
-    parts = query.data.split("|")
-    if len(parts) < 2:
-        await query.answer()
-        return
-    _, owner_id = parts
-
-    if not _check_card_cooldown(query.from_user.id, "mc_collections", 0.3):
-        await query.answer("Slow down!", show_alert=False)
-        return
-
-    if str(owner_id) not in ("1087968824", "777000") and str(query.from_user.id) != str(owner_id):
-        await query.answer("⛔ Not your menu.", show_alert=True)
-        return
-
-    await query.answer()
-
-    try:
-        oid_int = int(owner_id)
-        if oid_int in (1087968824, 777000):
-            oid_int = query.from_user.id
-    except (ValueError, TypeError):
-        oid_int = query.from_user.id
-
+async def _get_collections_text(owner_id: int) -> str:
     from database import get_user_cards, get_catalog_totals
-    all_cards = await get_user_cards(oid_int)
+    all_cards = await get_user_cards(owner_id)
     cat_totals = await get_catalog_totals()
     cat_fmt_rarity = cat_totals.get("by_format_rarity", {})
     cat_fmt_total  = cat_totals.get("by_format", {})
@@ -685,8 +669,50 @@ async def cb_mc_collections(update: Update, context: ContextTypes.DEFAULT_TYPE):
     grand_unique = len(all_cards)
     lines.append(f"\n━━━━━━━━━━━━━━━━━━")
     lines.append(f"🃏 Grand Total: <b>{grand_unique}/{cat_grand} cards</b>")
+    return "\n".join(lines)
 
-    text = "\n".join(lines)
+
+async def handle_collections(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Command /collections - view collection statistics."""
+    user = update.effective_user
+    if not user:
+        return
+    text = await _get_collections_text(user.id)
+    try:
+        await update.effective_message.reply_text(text, parse_mode="HTML")
+    except Exception:
+        await update.effective_message.reply_text(text)
+
+
+async def cb_mc_collections(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Show full collection breakdown: rarity counts per format with total available n."""
+    query = update.callback_query
+    if not query:
+        return
+    parts = query.data.split("|")
+    if len(parts) < 2:
+        await query.answer()
+        return
+    _, owner_id = parts
+
+    if not _check_card_cooldown(query.from_user.id, "mc_collections", 0.3):
+        await query.answer("Slow down!", show_alert=False)
+        return
+
+    if str(owner_id) not in ("1087968824", "777000") and str(query.from_user.id) != str(owner_id):
+        await query.answer("⛔ Not your menu.", show_alert=True)
+        return
+
+    await query.answer()
+
+    try:
+        oid_int = int(owner_id)
+        if oid_int in (1087968824, 777000):
+            oid_int = query.from_user.id
+    except (ValueError, TypeError):
+        oid_int = query.from_user.id
+
+    text = await _get_collections_text(oid_int)
     back_kb = InlineKeyboardMarkup([[InlineKeyboardButton("◀️ Back to Cards", callback_data=f"mc_page|{owner_id}|all|0")]])
     try:
         await query.edit_message_text(text, reply_markup=back_kb, parse_mode="HTML")
@@ -1173,7 +1199,7 @@ async def handle_trade_card(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not my_cards:
         await msg.reply_text("❌ You have no cards to offer in a trade.")
         return
-    crit, order = get_user_sort(context, user.id)
+    crit, order = await get_user_sort(user.id)
     my_cards = _sort_cards(my_cards, crit, order)
     # Show card picker for initiator (paginated, page 0)
     await _show_trade_picker(msg, user.id, target.id, target.first_name, my_cards, page=0, edit=False)
@@ -1223,7 +1249,7 @@ async def cb_tr_page(update: Update, context: ContextTypes.DEFAULT_TYPE):
     db = get_db()
     target_id_int = int(target_id)
     cards = await get_user_cards(int(initiator_id))
-    crit, order = get_user_sort(context, int(initiator_id))
+    crit, order = await get_user_sort(int(initiator_id))
     cards = _sort_cards(cards, crit, order)
     await _show_trade_picker(query, int(initiator_id), target_id_int, f"User {target_id}", cards, int(page_str), edit=True)
 
@@ -1287,7 +1313,7 @@ async def cb_tr_offer(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f_label = FORMAT_LABEL.get(fmt, fmt.upper())
         r_emoji = RARITY_EMOJI.get(offered["rarity"], "⚪")
         # ── Show target's paginated picker (page 0) ──────────────────────────
-        crit, order = get_user_sort(context, int(target_id))
+        crit, order = await get_user_sort(int(target_id))
         matching_rarity = _sort_cards(matching_rarity, crit, order)
         header = (
             f"♻️ *Trade Request*\n"
@@ -1352,7 +1378,7 @@ async def cb_tr_tpage(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.answer("❌ Trade expired (5 min timeout).", show_alert=True); return
     target_cards = await get_user_cards(int(target_id))
     matching_rarity = [c for c in target_cards if c["rarity"] == trade["offered_rarity"]]
-    crit, order = get_user_sort(context, int(target_id))
+    crit, order = await get_user_sort(int(target_id))
     matching_rarity = _sort_cards(matching_rarity, crit, order)
     r_emoji = RARITY_EMOJI.get(trade["offered_rarity"], "⚪")
     f_label = FORMAT_LABEL.get(trade.get("offered_format", ""), trade.get("offered_format", ""))
@@ -1767,7 +1793,7 @@ async def handle_multi_sell(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     # Fetch current cards (using active user sort order)
     from database import get_user_cards, get_fav_card
-    crit, order = get_user_sort(context, user.id)
+    crit, order = await get_user_sort(user.id)
     all_cards = await get_user_cards(user.id, sport_filter=None)
     all_cards = _sort_cards(all_cards, crit, order)
 
@@ -1904,7 +1930,7 @@ async def cb_msell_ok(update: Update, context: ContextTypes.DEFAULT_TYPE):
     lock = _get_lock(user_id)
     async with lock:
         # Re-fetch cards to ensure snapshot is fully accurate
-        crit, order = get_user_sort(context, user_id)
+        crit, order = await get_user_sort(user_id)
         all_cards = await get_user_cards(user_id, sport_filter=None)
         all_cards = _sort_cards(all_cards, crit, order)
 
