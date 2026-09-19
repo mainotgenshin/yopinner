@@ -677,6 +677,36 @@ async def get_player_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await message.reply_text(msg, parse_mode="Markdown")
         return
 
+    # ── PKL / Kabaddi ────────────────────────────────────────────────────────
+    if sport == 'kabaddi':
+        ps = stats.get('pkl', {})
+        def k(key): return ps.get(key, 'N/A')
+        card_pkl = cards.get('pkl')
+        if card_pkl and 'ovr' in card_pkl:
+            r = card_pkl.get('rarity', 'common').lower()
+            cat_pkl = f"\n\n🃏 *Card Catalog:*\n  PKL: OVR {card_pkl.get('ovr')} | {RARITY_EMOJI.get(r, '⚪')} {r.title()}"
+        else:
+            cat_pkl = "\n\n🃏 *Card Catalog:*\n  PKL: Not added yet"
+        msg = (
+            f"🤸 *{esc(p['name'])}* (PKL)\n"
+            f"━━━━━━━━━━━━━━━\n"
+            f"⚔️ Captain:        {k('captain')}\n"
+            f"🏃 Raider:         {k('raider')}\n"
+            f"🛡️ Left Defender:  {k('left_defender')}\n"
+            f"🛡️ Right Defender: {k('right_defender')}\n"
+            f"🧠 All Rounder:    {k('all_rounder')}"
+            f"{cat_pkl}"
+        )
+        img_url = p.get('cards', {}).get('pkl', {}).get('image') or p.get('image_url')
+        if img_url and str(img_url).startswith('http'):
+            try:
+                href_text = f'<a href="{img_url}">&#8205;</a>' + msg
+                await message.reply_text(href_text, parse_mode="HTML", disable_web_page_preview=False)
+                return
+            except Exception:
+                pass
+        await message.reply_text(msg, parse_mode="Markdown")
+        return
 
     # ── Cricket ───────────────────────────────────────────────────────────────
     roles      = p.get('roles', [])
@@ -1266,6 +1296,39 @@ async def set_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
             return
         stats['wwe'] = wwe_stats
+
+    # ── PKL / Kabaddi path ───────────────────────────────────────────────────
+    elif sport == 'kabaddi':
+        pkl_key_map = {
+            'cap': 'captain', 'captain': 'captain',
+            'raider': 'raider', 'raid': 'raider',
+            'ldef': 'left_defender', 'left_defender': 'left_defender', 'leftdefender': 'left_defender',
+            'rdef': 'right_defender', 'right_defender': 'right_defender', 'rightdefender': 'right_defender',
+            'ar': 'all_rounder', 'all_rounder': 'all_rounder', 'allrounder': 'all_rounder',
+        }
+        pkl_stats = stats.get('pkl', {})
+        has_updates = False
+        for k, v in kwargs.items():
+            if k in ('format', 'sport'): continue
+            sk = pkl_key_map.get(k)
+            if not sk: continue
+            try:
+                val = max(1, min(100, int(v)))
+                old = pkl_stats.get(sk, 'N/A')
+                pkl_stats[sk] = val
+                changes.append(f"PKL {sk}: {old} → {val}")
+                has_updates = True
+            except ValueError:
+                await update.message.reply_text(f"❌ Invalid value for {k}: `{v}` (must be 1-100)", parse_mode="Markdown")
+                return
+        if not has_updates:
+            await update.message.reply_text(
+                "⚠️ No valid PKL stats found.\n"
+                "Keys: cap, raider, ldef, rdef, ar",
+                parse_mode="Markdown"
+            )
+            return
+        stats['pkl'] = pkl_stats
 
     # ── Cricket path ──────────────────────────────────────────────────────────
     else:
@@ -2236,23 +2299,25 @@ async def player_list_ipl(update, context):
 # ═══════════════════════════════════════════════════════════════════
 
 async def handle_banner(update, context):
-    """/banner <mode> <url>  (mode: ipl|odi|test|fifa|wwe|all)"""
+    """/banner <mode> <url>  (mode: ipl|odi|test|fifa|wwe|pkl|all)"""
     if not await check_admin(update): return
     args = context.args
     if len(args) < 2:
         await update.message.reply_text(
-            "Usage: `/banner <mode> <url>`\nModes: ipl · odi · test · fifa · wwe · all",
+            "Usage: `/banner <mode> <url>`\nModes: ipl · odi · test · fifa · wwe · pkl · all",
             parse_mode="Markdown"
         )
         return
     mode, url = args[0].lower(), args[1].strip()
-    valid_modes = {"ipl", "odi", "test", "fifa", "wwe", "all"}
+    if mode == "kabaddi":
+        mode = "pkl"
+    valid_modes = {"ipl", "odi", "test", "fifa", "wwe", "pkl", "all"}
     if mode not in valid_modes:
-        await update.message.reply_text(f"❌ Invalid mode `{mode}`.", parse_mode="Markdown")
+        await update.message.reply_text(f"❌ Invalid mode `{mode}`. Valid modes: ipl, odi, test, fifa, wwe, pkl, all", parse_mode="Markdown")
         return
     from database import set_banner
     if mode == "all":
-        for m in ("ipl", "odi", "test", "fifa", "wwe"):
+        for m in ("ipl", "odi", "test", "fifa", "wwe", "pkl"):
             await set_banner(m, url)
         await update.message.reply_text(f"✅ All banners updated!", parse_mode="Markdown")
     else:
@@ -2262,8 +2327,17 @@ async def handle_banner(update, context):
 
 async def get_current_banner(mode: str) -> str:
     from database import get_banner
-    from config import DRAFT_BANNER_IPL, DRAFT_BANNER_ODI, DRAFT_BANNER_TEST, DRAFT_BANNER_FIFA, DRAFT_BANNER_WWE
-    defaults = {"ipl": DRAFT_BANNER_IPL, "odi": DRAFT_BANNER_ODI, "test": DRAFT_BANNER_TEST, "intl": DRAFT_BANNER_ODI, "fifa": DRAFT_BANNER_FIFA, "wwe": DRAFT_BANNER_WWE}
+    from config import DRAFT_BANNER_IPL, DRAFT_BANNER_ODI, DRAFT_BANNER_TEST, DRAFT_BANNER_FIFA, DRAFT_BANNER_WWE, DRAFT_BANNER_PKL
+    defaults = {
+        "ipl": DRAFT_BANNER_IPL,
+        "odi": DRAFT_BANNER_ODI,
+        "test": DRAFT_BANNER_TEST,
+        "intl": DRAFT_BANNER_ODI,
+        "fifa": DRAFT_BANNER_FIFA,
+        "wwe": DRAFT_BANNER_WWE,
+        "pkl": DRAFT_BANNER_PKL,
+        "kabaddi": DRAFT_BANNER_PKL,
+    }
     override = await get_banner(mode)
     return override if override else defaults.get(mode, DRAFT_BANNER_ODI)
 
