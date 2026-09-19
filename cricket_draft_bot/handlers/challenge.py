@@ -270,7 +270,7 @@ async def challenge_ipl(update: Update, context: ContextTypes.DEFAULT_TYPE):
     from utils.banners import get_banner_for_mode
     owner_id = update.effective_user.id
     chat_id = update.effective_chat.id
-    # ─ Match limit check ─────────────────────────────────────
+    # ─ Match limit check
     _reply_obj = getattr(update, 'effective_message', None) or getattr(update, 'callback_query', None)
     if not await _check_match_limit(owner_id, _reply_obj):
         return
@@ -694,18 +694,19 @@ async def challenge_unified(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not context.args:
         keyboard = [
             [
-                InlineKeyboardButton("\U0001f3cf IPL",  callback_data=f"challenge_pick_IPL_{owner_id}"),
-                InlineKeyboardButton("\U0001f30d ODI",  callback_data=f"challenge_pick_ODI_{owner_id}"),
-                InlineKeyboardButton("\U0001f3df Test", callback_data=f"challenge_pick_Test_{owner_id}"),
+                InlineKeyboardButton("🏏 IPL",  callback_data=f"challenge_pick_IPL_{owner_id}"),
+                InlineKeyboardButton("🌍 ODI",  callback_data=f"challenge_pick_ODI_{owner_id}"),
+                InlineKeyboardButton("🏟 Test", callback_data=f"challenge_pick_Test_{owner_id}"),
             ],
             [
-                InlineKeyboardButton("\u26bd FIFA", callback_data=f"challenge_pick_FIFA_{owner_id}"),
-                InlineKeyboardButton("\U0001f93c WWE",  callback_data=f"challenge_pick_WWE_{owner_id}"),
+                InlineKeyboardButton("⚽ FIFA", callback_data=f"challenge_pick_FIFA_{owner_id}"),
+                InlineKeyboardButton("🤼 WWE",  callback_data=f"challenge_pick_WWE_{owner_id}"),
+                InlineKeyboardButton("🤸 PKL",  callback_data=f"challenge_pick_PKL_{owner_id}"),
             ]
         ]
         try:
             await update.effective_message.reply_text(
-                "\U0001f3ae <b>Choose a game mode to challenge:</b>",
+                "🎮 <b>Choose a game mode to challenge:</b>",
                 reply_markup=InlineKeyboardMarkup(keyboard),
                 parse_mode="HTML"
             )
@@ -731,9 +732,12 @@ async def challenge_unified(update: Update, context: ContextTypes.DEFAULT_TYPE):
     elif mode_arg in ('wwe', 'wrestling'):
         await send_wwe_gender_selector(update, context, owner_id)
         return
+    elif mode_arg in ('pkl', 'kabaddi'):
+        await challenge_pkl(update, context)
+        return
     else:
         await update.effective_message.reply_text(
-            f"\u274c Unknown mode: {mode_arg}\nUse: `odi`, `test`, `ipl`, `fifa`, `wwe`.",
+            f"❌ Unknown mode: {mode_arg}\nUse: `odi`, `test`, `ipl`, `fifa`, `wwe`, `pkl`.",
             parse_mode="Markdown"
         )
         return
@@ -858,6 +862,7 @@ async def handle_mode_pick_callback(update: Update, context: ContextTypes.DEFAUL
             "Test": challenge_test,
             "FIFA": challenge_fifa,
             "WWE": challenge_wwe,
+            "PKL": challenge_pkl,
         }
         fn = dispatch.get(mode)
         if fn:
@@ -958,15 +963,8 @@ async def handle_join(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if task and not task.done():
             task.cancel()
 
-        
+
     # Start Match
-    # Verify Owner Name (from DB or context? We don't have it easily here if stateless)
-    # We'll use "Player 1" if unknown, but better to fetch.
-    # Actually create_match_state usually takes ID and Name.
-    # We can get names from User objects if we had them.
-    # The challenger's name is in the caption, but parsing it is brittle.
-    # Let's use "Challenger" / "Acceptor" or fetch from TG API (get_chat_member)
-    
     try:
         # Extract challenger name from message caption — no extra API call needed
         text = query.message.caption or query.message.text or ""
@@ -978,20 +976,20 @@ async def handle_join(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 break
     except Exception:
         challenger_name = "Player 1"
-        
+
     joiner_name = query.from_user.first_name
-    
+
     # Initialize Match
     match = await create_match_state(
         chat_id=update.effective_chat.id,
         mode=real_mode, 
         owner_id=owner_id, 
         challenger_id=query.from_user.id,
-        owner_name=challenger_name, # In state.py owner_name is param 5
-        challenger_name=joiner_name, # In state.py challenger_name is param 6
+        owner_name=challenger_name,
+        challenger_name=joiner_name,
         draft_message_id=query.message.message_id
     )
-    
+
     # Start Draft (Update the message)
     from handlers.draft import format_draft_board, update_draft_message
     from utils.banners import get_banner_for_mode
@@ -1010,6 +1008,8 @@ async def handle_join(update: Update, context: ContextTypes.DEFAULT_TYPE):
         banner = await get_banner_for_mode("wwe" if mode == "WWE" else "wwe_women")
     elif mode == "Test":
         banner = await get_banner_for_mode("test")
+    elif mode in ("PKL", "Kabaddi"):
+        banner = await get_banner_for_mode("pkl")
     else:  # ODI (and legacy International)
         banner = await get_banner_for_mode("odi")
 
