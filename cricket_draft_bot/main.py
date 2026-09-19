@@ -199,11 +199,6 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not update.callback_query:
         return
     query = update.callback_query
-    data = query.data or ""
-    u = query.from_user
-    logger = logging.getLogger("DEBUG_CALLBACK")
-    logger.info(f"🎯 [HANDLE_CALLBACK] Router processing: data='{data}' | user_id={u.id} ({u.first_name})")
-
     if update.effective_user:
         from database import is_user_banned
         if await is_user_banned(update.effective_user.id):
@@ -212,6 +207,9 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             except Exception:
                 pass
             return
+    data = query.data or ""
+    u = query.from_user
+    logging.getLogger("DEBUG_CALLBACK").info(f"🎯 [HANDLE_CALLBACK] Router processing: data='{data}' | user_id={u.id} ({u.first_name})")
 
     try:
         if data.startswith("join_"):
@@ -222,7 +220,7 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             
         elif data.startswith("ready_"):
             await handle_ready(update, context)
-            
+
         elif data.startswith("map_"):
             from handlers.admin import handle_map_stats_callback
             await handle_map_stats_callback(update, context)
@@ -258,19 +256,23 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             from handlers.admin import handle_check_callback
             await handle_check_callback(update, context)
         else:
-            logger.warning(f"⚠️ [HANDLE_CALLBACK UNHANDLED] No router rule matched data='{data}'")
             try:
                 await query.answer()
             except Exception:
                 pass
-    except Exception as cb_err:
-        logger.error(f"💥 [HANDLE_CALLBACK ERROR] Exception handling '{data}': {cb_err}", exc_info=True)
+    except Exception as e:
+        logging.getLogger(__name__).error(f"Error in handle_callback for '{data}': {e}", exc_info=True)
         try:
-            await query.answer("⚠️ An error occurred while processing this action.", show_alert=False)
+            await query.answer("⚠️ Action failed or expired.", show_alert=False)
         except Exception:
             pass
 
 async def post_init(application):
+    try:
+        await application.bot.delete_webhook(drop_pending_updates=True)
+    except Exception as _wh_e:
+        logging.getLogger(__name__).warning(f"delete_webhook on startup: {_wh_e}")
+
     from database import init_db, get_db, warmup_card_pools
     await init_db()
     # Pre-warm card pools into memory on startup (0ms cold cache for users)
@@ -725,9 +727,9 @@ if __name__ == '__main__':
         .token(BOT_TOKEN)
         .rate_limiter(AIORateLimiter(
             max_retries=3,
-            overall_max_rate=25,     # Global: 25/sec safely under Telegram's 30/sec hard limit
+            overall_max_rate=30,     # Global Telegram limit
             overall_time_period=1,
-            group_max_rate=18,       # Per-chat: 18/min (debouncer sliding gate handles the real 16/min enforcement)
+            group_max_rate=60,       # Generous limit so buttons and cards never queue into 20s freeze
             group_time_period=60,
         ))
 
@@ -839,6 +841,16 @@ if __name__ == '__main__':
     application.add_handler(CommandHandler('bban',        wrap_admin_logging(handle_ban_command, "Ban User")))
     application.add_handler(CommandHandler('unbban',      wrap_admin_logging(handle_unban_command, "Unban User")))
 
+    # ── PKL Admin Commands ────────────────────────────────────────────────────
+    from handlers.admin import add_player_pkl, remove_player_pkl, update_image_pkl, handle_botstatus, handle_add_achievement, handle_rem_achievement
+    application.add_handler(CommandHandler('add_playerpkl',    wrap_admin_logging(add_player_pkl,    "Add PKL Player")))
+    application.add_handler(CommandHandler('rem_playerpkl',    wrap_admin_logging(remove_player_pkl, "Remove PKL Player")))
+    application.add_handler(CommandHandler('update_imagepkl',  wrap_admin_logging(update_image_pkl,  "Update Player Image (PKL)")))
+    application.add_handler(CommandHandler('updateimagepkl',   wrap_admin_logging(update_image_pkl,  "Update Player Image (PKL)")))
+    application.add_handler(CommandHandler('botstatus',        handle_botstatus))
+    application.add_handler(CommandHandler('add_achievement',  handle_add_achievement))
+    application.add_handler(CommandHandler('rem_achievement',  handle_rem_achievement))
+
 
 
 
@@ -863,9 +875,16 @@ if __name__ == '__main__':
     application.add_handler(CommandHandler('challengewwe',   challenge_wwe))
     application.add_handler(CommandHandler('challenge_wwe',  challenge_wwe))
 
+    # PKL challenge commands
+    from handlers.challenge import challenge_pkl
+    application.add_handler(CommandHandler('challenge_pkl',  challenge_pkl))
+    application.add_handler(CommandHandler('challengepkl',   challenge_pkl))
+
     # User Profile
-    from handlers.profile import handle_profile
+    from handlers.profile import handle_profile, cb_profile_achievements, cb_profile_back
     application.add_handler(CommandHandler('myprofile', handle_profile))
+    application.add_handler(CallbackQueryHandler(cb_profile_achievements, pattern=r"^profile_ach\|"))
+    application.add_handler(CallbackQueryHandler(cb_profile_back,         pattern=r"^profile_back\|"))
 
     # ── Card System ───────────────────────────────────────────────
     from handlers.cards import (
@@ -874,7 +893,7 @@ if __name__ == '__main__':
         handle_ggive, handle_h2h, handle_multi_sell,
         cb_pack_sport, cb_pack_tier, cb_pack_confirm, cb_pack_back,
         cb_inv_packs, cb_inv_open,
-        cb_mc_page, cb_mc_collections,
+        cb_mc_page, cb_mc_collections, cb_mc_sort,
         cb_vc_fmt, cb_vc_name, cb_vc_fav, cb_vc_unfav, cb_vc_sell, cb_vc_sell_ok,
         cb_tr_page, cb_tr_offer, cb_tr_pick, cb_tr_confirm, cb_tr_decline, cb_tr_cancel,
         cb_tr_tpage,
@@ -895,6 +914,16 @@ if __name__ == '__main__':
     # Coin Flip Bet
     application.add_handler(CommandHandler('bbet', handle_bbet))
 
+
+    # ── Check-In ─────────────────────────────────────────────────────────────
+    from handlers.checkin import handle_checkin
+    application.add_handler(CommandHandler('checkin', handle_checkin))
+
+    # ── Sort & Collections ───────────────────────────────────────────────────
+    from handlers.cards import handle_sort, handle_collections
+    application.add_handler(CommandHandler('sort', handle_sort))
+    application.add_handler(CommandHandler('collections', handle_collections))
+    application.add_handler(CommandHandler('collection',  handle_collections))
 
     # Standings / Leaderboard
     from handlers.standings import handle_standings, handle_standings_callback
@@ -920,6 +949,7 @@ if __name__ == '__main__':
     application.add_handler(CallbackQueryHandler(cb_inv_open,     pattern=r"^inv_open\|"))
     application.add_handler(CallbackQueryHandler(cb_mc_page,      pattern=r"^mc_page\|"))
     application.add_handler(CallbackQueryHandler(cb_mc_collections, pattern=r"^mc_collections\|"))
+    application.add_handler(CallbackQueryHandler(cb_mc_sort,      pattern=r"^mc_sort\|"))
     application.add_handler(CallbackQueryHandler(cb_vc_fmt,       pattern=r"^vc_fmt\|"))
     application.add_handler(CallbackQueryHandler(cb_vc_name,      pattern=r"^vc_name\|"))
     application.add_handler(CallbackQueryHandler(cb_vc_fav,       pattern=r"^vc_fav\|"))
@@ -970,6 +1000,15 @@ if __name__ == '__main__':
     async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
         err = context.error
         err_str = str(err)
+        # Auto-recover if webhook was set externally or during container overlap
+        if "can't use getUpdates method while webhook is active" in err_str or "Conflict: terminated by setWebhook" in err_str:
+            try:
+                await context.bot.delete_webhook(drop_pending_updates=True)
+                logging.getLogger(__name__).warning("Resolved Telegram Conflict: deleted active webhook and cleared pending updates.")
+            except Exception as e:
+                logging.getLogger(__name__).error(f"Failed to auto-delete webhook: {e}")
+            return
+
         # Silently ignore known benign post-restart / network noise
         _IGNORE_ERRORS = (
             "Query is too old",
@@ -986,6 +1025,19 @@ if __name__ == '__main__':
     # Trade System
     
     application.add_error_handler(error_handler)
+
+    # Clear any lingering webhook directly via Telegram API before polling starts.
+    # This prevents the 'Conflict: can't use getUpdates method while webhook is active' error
+    # after container restarts or deployment overlaps.
+    try:
+        import urllib.request
+        import json
+        _wh_url = f"https://api.telegram.org/bot{BOT_TOKEN}/deleteWebhook?drop_pending_updates=true"
+        with urllib.request.urlopen(_wh_url, timeout=10) as _resp:
+            _wh_data = json.loads(_resp.read().decode())
+            logging.getLogger(__name__).info(f"Startup deleteWebhook check: {_wh_data}")
+    except Exception as _wh_err:
+        logging.getLogger(__name__).warning(f"Startup deleteWebhook check skipped or failed: {_wh_err}")
 
     print("Bot is running (Polling mode, Free tier compatible)...")
     # drop_pending_updates=True: on restart, skip all queued updates that
