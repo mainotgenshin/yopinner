@@ -202,7 +202,12 @@ async def cb_profile_achievements(update, context):
     query = update.callback_query
     _, owner_id_str = query.data.split("|")
     viewer_id = query.from_user.id
-    owner_id  = int(owner_id_str)
+    try:
+        owner_id = int(owner_id_str)
+        if owner_id in (1087968824, 777000):
+            owner_id = viewer_id
+    except (ValueError, TypeError):
+        owner_id = viewer_id
 
     if viewer_id != owner_id:
         await query.answer("⛔ You can only view your own achievements.", show_alert=True)
@@ -234,8 +239,10 @@ async def cb_profile_achievements(update, context):
             await query.edit_message_caption(caption=text, parse_mode="HTML", reply_markup=kb)
         else:
             await query.edit_message_text(text, parse_mode="HTML", reply_markup=kb)
-    except Exception:
-        pass
+    except Exception as e:
+        import logging
+        if "message is not modified" not in str(e).lower():
+            logging.getLogger(__name__).warning(f"cb_profile_achievements edit error: {e}")
 
 
 async def cb_profile_back(update, context):
@@ -243,7 +250,12 @@ async def cb_profile_back(update, context):
     query = update.callback_query
     _, owner_id_str = query.data.split("|")
     viewer_id = query.from_user.id
-    owner_id  = int(owner_id_str)
+    try:
+        owner_id = int(owner_id_str)
+        if owner_id in (1087968824, 777000):
+            owner_id = viewer_id
+    except (ValueError, TypeError):
+        owner_id = viewer_id
 
     if viewer_id != owner_id:
         await query.answer("⛔ Not your profile.", show_alert=True)
@@ -270,5 +282,7 @@ async def cb_profile_back(update, context):
                 disable_web_page_preview=False,
                 reply_markup=kb
             )
-    except Exception:
-        pass
+    except Exception as e:
+        import logging
+        if "message is not modified" not in str(e).lower():
+            logging.getLogger(__name__).warning(f"cb_profile_back edit error: {e}")
