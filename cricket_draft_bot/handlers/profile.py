@@ -1,16 +1,34 @@
-from telegram import Update
+import time
+from telegram import Update, InlineKeyboardMarkup, InlineKeyboardButton
 from telegram.ext import ContextTypes
 from database import get_db
 from telegram.helpers import escape_markdown
+import html
+
+_PROFILE_CLICK_TIMES: dict = {}
+
+def _check_profile_click(user_id: int, debounce_secs: float = 1.0) -> bool:
+    now = time.time()
+    if now - _PROFILE_CLICK_TIMES.get(user_id, 0) < debounce_secs:
+        return False
+    _PROFILE_CLICK_TIMES[user_id] = now
+    if len(_PROFILE_CLICK_TIMES) > 200:
+        cutoff = now - 60
+        for k in list(_PROFILE_CLICK_TIMES.keys()):
+            if _PROFILE_CLICK_TIMES[k] < cutoff:
+                _PROFILE_CLICK_TIMES.pop(k, None)
+    return True
 
 def esc(t):
     return escape_markdown(str(t), version=1)
 
-async def handle_profile(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user = update.effective_user
-    user_id = user.id
-    name = user.first_name
+def _profile_kb(user_id: int) -> InlineKeyboardMarkup:
+    """Inline keyboard for profile — Achievements button."""
+    return InlineKeyboardMarkup([[
+        InlineKeyboardButton("🏅 Achievements", callback_data=f"profile_ach|{user_id}")
+    ]])
 
+async def _build_profile_data(user_id: int, name: str) -> dict:
     from database import get_user_stats
     stats = await get_user_stats(user_id)
 
@@ -53,14 +71,13 @@ async def handle_profile(update: Update, context: ContextTypes.DEFAULT_TYPE):
             joined_str = dt.strftime("%d %b %Y")
         except Exception:
             joined_str = "—"
-
     else:
         joined_str = "—"
 
     # Streak emoji
     streak_emoji = "🔥" if current_streak >= 3 else "⚡" if current_streak >= 1 else "💤"
 
-    # Get global rank (lightweight count query, reuses standings cache)
+    # Get global rank
     rank = None
     try:
         from handlers.standings import _get_user_rank
@@ -68,12 +85,10 @@ async def handle_profile(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except Exception:
         pass
 
-    import html
     name_html = html.escape(name or "Player")
     rank_line_html = f"🏆 Global Rank: <b>#{rank}</b>\n" if rank else ""
-    rank_line_md   = f"🏆 Global Rank: *#{rank}*\n" if rank else ""
 
-    # Clean HTML version (for href text preview)
+    # Clean HTML version
     body_html = (
         "━━━━━━━━━━━━━━━━━━\n"
         f"    👤 <b>{name_html}</b>\n"
@@ -93,25 +108,10 @@ async def handle_profile(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "━━━━━━━━━━━━━━━━━━"
     )
 
-    # Markdown version (for photo caption or text fallback)
-    body_md = (
-        "━━━━━━━━━━━━━━━━━━\n"
-        f"    👤 *{esc(name)}*\n"
-        "━━━━━━━━━━━━━━━━━━\n"
-        f"{rank_line_md}"
-        f"📅 Joined: `{joined_str}`\n"
-        "━━━━━━━━━━━━━━━━━━\n"
-        f"🔘 matches : `{total_matches}`\n"
-        f"🟢 wins    : `{wins}`\n"
-        f"🔴 losses : `{losses}`\n"
-        f"⚪ draws  : `{draws}`\n"
-        f"📊 win %  : `{win_rate:.1f}%`\n\n"
-        f"{streak_emoji} *Win Streak*\n"
-        f"Current: `{current_streak}` | Best: `{best_streak}`\n\n"
-        "📈 *Recent Matches*\n"
-        f"{recent_str}\n"
-        "━━━━━━━━━━━━━━━━━━"
-    )
+    image_url = None
+    image_fid = None
+    href_text = None
+    full_caption = None
 
     # Show favorite card image if available
     try:
@@ -121,58 +121,168 @@ async def handle_profile(update: Update, context: ContextTypes.DEFAULT_TYPE):
             player_doc = await get_player(fav["player_id"])
             if player_doc:
                 fmt = fav["format"]
-                image_url = _get_card_image_url(player_doc, fmt)  # web URL for href
-                image_fid = _get_card_image(player_doc, fmt)      # file_id fallback
+                image_url = _get_card_image_url(player_doc, fmt)
+                image_fid = _get_card_image(player_doc, fmt)
 
                 card_data = player_doc.get("cards", {}).get(fmt, {})
-                fmt_labels = {"ipl": "IPL", "odi": "ODI", "test": "Test", "wwe": "WWE", "fifa": "FIFA"}
+                fmt_labels = {"ipl": "IPL", "odi": "ODI", "test": "Test", "wwe": "WWE", "fifa": "FIFA", "pkl": "PKL"}
                 RARITY_EMOJI_MAP = {"common": "⚪", "rare": "🔵", "epic": "🟣", "legend": "🟡"}
                 rarity = card_data.get("rarity", "")
                 ovr    = card_data.get("ovr", "")
                 p_name_safe = html.escape(player_doc.get("name", "Unknown"))
-                fav_line_html = f"\n\n⭐ <b>Fav Card:</b> {p_name_safe} ({fmt_labels.get(fmt, fmt)}) {RARITY_EMOJI_MAP.get(rarity, '')} OVR {ovr}"
-                fav_line_md   = f"\n\n⭐ *Fav Card:* {esc(player_doc.get('name', 'Unknown'))} ({fmt_labels.get(fmt, fmt)}) {RARITY_EMOJI_MAP.get(rarity, '')} OVR {ovr}"
+                fav_line_html = f"\n\n⭐ <b>Fav Card:</b> {p_name_safe} ({fmt_labels.get(fmt, fmt.upper())}) {RARITY_EMOJI_MAP.get(rarity, '')} OVR {ovr}"
 
                 if image_url:
-                    # Fast href approach: zero-width joiner entity &#8205; + clean HTML
                     href_text = f'<a href="{image_url}">&#8205;</a>' + body_html + fav_line_html
-                    try:
-                        await update.effective_message.reply_text(
-                            href_text,
-                            parse_mode="HTML",
-                            disable_web_page_preview=False
-                        )
-                        return
-                    except Exception:
-                        pass  # Fall through to photo fallback
-
-                if image_fid:
-                    full_caption = body_html + fav_line_html
-                    try:
-                        await update.effective_message.reply_photo(
-                            photo=image_fid,
-                            caption=full_caption,
-                            parse_mode="HTML"
-                        )
-                        return
-                    except Exception:
-                        pass  # Fall through to text-only
+                full_caption = body_html + fav_line_html
     except Exception:
-        pass  # Never break profile due to card system errors
+        pass
+
+    return {
+        "body_html": body_html,
+        "href_text": href_text,
+        "full_caption": full_caption or body_html,
+        "image_url": image_url,
+        "image_fid": image_fid,
+    }
+
+
+async def handle_profile(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user = update.effective_user
+    if not user:
+        return
+    user_id = user.id
+    if not _check_profile_click(user_id, 2.0):
+        return
+    name = user.first_name
+
+    data = await _build_profile_data(user_id, name)
+    kb = _profile_kb(user_id)
+
+    if data["image_url"]:
+        try:
+            await update.effective_message.reply_text(
+                data["href_text"],
+                parse_mode="HTML",
+                disable_web_page_preview=False,
+                reply_markup=kb
+            )
+            return
+        except Exception:
+            pass
+
+    if data["image_fid"]:
+        try:
+            await update.effective_message.reply_photo(
+                photo=data["image_fid"],
+                caption=data["full_caption"],
+                parse_mode="HTML",
+                reply_markup=kb
+            )
+            return
+        except Exception:
+            pass
 
     try:
-        await update.effective_message.reply_text(body_html, parse_mode="HTML")
+        await update.effective_message.reply_text(data["body_html"], parse_mode="HTML", reply_markup=kb)
     except Exception:
-        # Original message deleted (e.g. bot restarted) — send without reply
         try:
             await context.bot.send_message(
                 chat_id=update.effective_chat.id,
-                text=body_html,
-                parse_mode="HTML"
+                text=data["body_html"],
+                parse_mode="HTML",
+                reply_markup=kb
             )
         except Exception:
             pass
 
 
+async def cb_profile_achievements(update, context):
+    """Callback: show achievements for the user who owns the profile."""
+    query = update.callback_query
+    _, owner_id_str = query.data.split("|")
+    viewer_id = query.from_user.id
+    try:
+        owner_id = int(owner_id_str)
+        if owner_id in (1087968824, 777000):
+            owner_id = viewer_id
+    except (ValueError, TypeError):
+        owner_id = viewer_id
+
+    if viewer_id != owner_id:
+        await query.answer("⛔ You can only view your own achievements.", show_alert=True)
+        return
+
+    if not _check_profile_click(viewer_id, 1.0):
+        await query.answer()
+        return
+
+    await query.answer()
+    from database import get_achievements
+    achievements = await get_achievements(owner_id)
+
+    if not achievements:
+        text = "🏅 <b>Your Achievements</b>\n━━━━━━━━━━━━━━━━━━\n<i>No achievements yet. Keep playing!</i>\n━━━━━━━━━━━━━━━━━━"
+    else:
+        lines = ["🏅 <b>Your Achievements</b>", "━━━━━━━━━━━━━━━━━━"]
+        for i, ach in enumerate(achievements, 1):
+            lines.append(f"<code>{i}.</code> {html.escape(str(ach))}")
+        lines.append("━━━━━━━━━━━━━━━━━━")
+        text = "\n".join(lines)
+
+    kb = InlineKeyboardMarkup([[
+        InlineKeyboardButton("◀️ Back", callback_data=f"profile_back|{owner_id}")
+    ]])
+
+    try:
+        if query.message.photo:
+            await query.edit_message_caption(caption=text, parse_mode="HTML", reply_markup=kb)
+        else:
+            await query.edit_message_text(text, parse_mode="HTML", reply_markup=kb)
+    except Exception as e:
+        import logging
+        if "message is not modified" not in str(e).lower():
+            logging.getLogger(__name__).warning(f"cb_profile_achievements edit error: {e}")
 
 
+async def cb_profile_back(update, context):
+    """Callback: go back to main profile view."""
+    query = update.callback_query
+    _, owner_id_str = query.data.split("|")
+    viewer_id = query.from_user.id
+    try:
+        owner_id = int(owner_id_str)
+        if owner_id in (1087968824, 777000):
+            owner_id = viewer_id
+    except (ValueError, TypeError):
+        owner_id = viewer_id
+
+    if viewer_id != owner_id:
+        await query.answer("⛔ Not your profile.", show_alert=True)
+        return
+
+    if not _check_profile_click(viewer_id, 1.0):
+        await query.answer()
+        return
+
+    await query.answer()
+    name = query.from_user.first_name
+    data = await _build_profile_data(owner_id, name)
+    kb = _profile_kb(owner_id)
+
+    try:
+        if query.message.photo:
+            caption = data["full_caption"] if data["full_caption"] else data["body_html"]
+            await query.edit_message_caption(caption=caption, parse_mode="HTML", reply_markup=kb)
+        else:
+            text_to_show = data["href_text"] if data["href_text"] else data["body_html"]
+            await query.edit_message_text(
+                text=text_to_show,
+                parse_mode="HTML",
+                disable_web_page_preview=False,
+                reply_markup=kb
+            )
+    except Exception as e:
+        import logging
+        if "message is not modified" not in str(e).lower():
+            logging.getLogger(__name__).warning(f"cb_profile_back edit error: {e}")
