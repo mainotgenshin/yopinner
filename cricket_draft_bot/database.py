@@ -682,31 +682,59 @@ async def get_user_cards(user_id: int, sport_filter: str = None) -> list:
     result = []
     for card in cards:
         pid = card["player_id"]
-        fmt = card["format"]
+        fmt = card.get("format", "")
         p = players_by_id.get(pid)
         if not p:
             continue
-        card_data = p.get("cards", {}).get(fmt, {})
-        if not card_data:
-            continue
-        p_sport = p.get("sport", "cricket")
-        if sport_filter == "cricket" and p_sport != "cricket":
-            continue
-        if sport_filter == "football" and p_sport != "football":
-            continue
-        if sport_filter == "wwe" and p_sport != "wwe":
-            continue
-        if sport_filter == "kabaddi" and p_sport != "kabaddi":
-            continue
+
+        # Determine canonical sport for this card from format first, then player doc
+        if fmt in ("ipl", "odi", "test"):
+            card_sport = "cricket"
+        elif fmt == "fifa":
+            card_sport = "football"
+        elif fmt == "pkl":
+            card_sport = "kabaddi"
+        elif fmt == "wwe":
+            card_sport = "wwe"
+        else:
+            ps = str(p.get("sport") or "").lower()
+            if ps in ("fifa", "football"):
+                card_sport = "football"
+            elif ps in ("pkl", "kabaddi"):
+                card_sport = "kabaddi"
+            elif ps == "wwe":
+                card_sport = "wwe"
+            else:
+                card_sport = "cricket"
+
+        if sport_filter and sport_filter != "all":
+            sf = str(sport_filter).lower()
+            if sf in ("cricket", "ipl", "odi", "test"):
+                target_sport = "cricket"
+            elif sf in ("football", "fifa"):
+                target_sport = "football"
+            elif sf in ("kabaddi", "pkl"):
+                target_sport = "kabaddi"
+            elif sf == "wwe":
+                target_sport = "wwe"
+            else:
+                target_sport = sf
+            if card_sport != target_sport:
+                continue
+
+        cards_dict = p.get("cards") if isinstance(p.get("cards"), dict) else {}
+        card_data = cards_dict.get(fmt, {}) if isinstance(cards_dict.get(fmt), dict) else {}
+        rarity = card_data.get("rarity") or p.get("rarity") or "common"
+        ovr = card_data.get("ovr") or p.get("ovr") or 70
         image = _get_card_image(p, fmt)
         result.append({
             "user_id":   user_id,
             "player_id": pid,
             "format":    fmt,
-            "quantity":  card["quantity"],
-            "name":      p["name"],
-            "rarity":    card_data.get("rarity", "common"),
-            "ovr":       card_data.get("ovr", 0),
+            "quantity":  card.get("quantity", 1),
+            "name":      p.get("name", "Unknown"),
+            "rarity":    rarity,
+            "ovr":       ovr,
             "image":     image,
         })
     return result
@@ -742,7 +770,9 @@ def _get_card_image(player_doc: dict, fmt: str) -> Optional[str]:
                 player_doc.get("fifa_image_url") or
                 player_doc.get("image_url"))
     elif fmt == "pkl":
-        return (player_doc.get("cards", {}).get("pkl", {}).get("image") or
+        cards_dict = player_doc.get("cards") if isinstance(player_doc.get("cards"), dict) else {}
+        pkl_card = cards_dict.get("pkl") if isinstance(cards_dict.get("pkl"), dict) else {}
+        return (pkl_card.get("image") or
                 player_doc.get("pkl_image_url") or
                 player_doc.get("image_url") or
                 player_doc.get("image_file_id"))
@@ -767,7 +797,9 @@ def _get_card_image_url(player_doc: dict, fmt: str) -> Optional[str]:
             return None
         return url if url and str(url).startswith("http") else None
     elif fmt == "pkl":
-        url = (player_doc.get("cards", {}).get("pkl", {}).get("image") or
+        cards_dict = player_doc.get("cards") if isinstance(player_doc.get("cards"), dict) else {}
+        pkl_card = cards_dict.get("pkl") if isinstance(cards_dict.get("pkl"), dict) else {}
+        url = (pkl_card.get("image") or
                player_doc.get("pkl_image_url") or
                player_doc.get("image_url"))
     else:
