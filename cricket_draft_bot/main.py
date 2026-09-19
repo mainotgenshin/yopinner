@@ -813,9 +813,11 @@ if __name__ == '__main__':
     application.add_handler(CommandHandler('unbban',      wrap_admin_logging(handle_unban_command, "Unban User")))
 
     # ── PKL Admin Commands ────────────────────────────────────────────────────
-    from handlers.admin import add_player_pkl, remove_player_pkl, handle_botstatus, handle_add_achievement, handle_rem_achievement
+    from handlers.admin import add_player_pkl, remove_player_pkl, update_image_pkl, handle_botstatus, handle_add_achievement, handle_rem_achievement
     application.add_handler(CommandHandler('add_playerpkl',    wrap_admin_logging(add_player_pkl,    "Add PKL Player")))
     application.add_handler(CommandHandler('rem_playerpkl',    wrap_admin_logging(remove_player_pkl, "Remove PKL Player")))
+    application.add_handler(CommandHandler('update_imagepkl',  wrap_admin_logging(update_image_pkl,  "Update Player Image (PKL)")))
+    application.add_handler(CommandHandler('updateimagepkl',   wrap_admin_logging(update_image_pkl,  "Update Player Image (PKL)")))
     application.add_handler(CommandHandler('botstatus',        handle_botstatus))
     application.add_handler(CommandHandler('add_achievement',  handle_add_achievement))
     application.add_handler(CommandHandler('rem_achievement',  handle_rem_achievement))
