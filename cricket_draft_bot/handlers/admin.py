@@ -2202,7 +2202,7 @@ async def add_player_test(update, context):
 
 
 async def update_image_command(update, context):
-    """/update_image Name [format=ipl|odi|test] URL"""
+    """/update_image Name [format=ipl|odi|test|pkl] URL"""
     if not await check_admin(update): return
     import re
 
@@ -2217,28 +2217,35 @@ async def update_image_command(update, context):
 
     parts = text.rsplit(" ", 1)
     if len(parts) < 2:
-        await msg.reply_text("Usage: /update_image Name [format=ipl|odi|test] URL")
+        await msg.reply_text("Usage: /update_image Name [format=ipl|odi|test|pkl] URL")
         return
     rest, url = parts[0].strip(), parts[1].strip()
 
     # Match format
-    fmt_m = re.search(r"format=(ipl|odi|test)", rest, re.IGNORECASE)
+    fmt_m = re.search(r"format=(ipl|odi|test|pkl|kabaddi)", rest, re.IGNORECASE)
     if fmt_m:
         target_format = fmt_m.group(1).lower()
-        name = re.sub(r"format=(ipl|odi|test)", "", rest, flags=re.IGNORECASE).strip()
+        if target_format == "kabaddi":
+            target_format = "pkl"
+        name = re.sub(r"format=(ipl|odi|test|pkl|kabaddi)", "", rest, flags=re.IGNORECASE).strip()
     else:
-        # Check if rest ends with a space followed by ipl, odi, or test
-        last_word_match = re.search(r"\s+(ipl|odi|test)$", rest, re.IGNORECASE)
+        # Check if rest ends with a space followed by ipl, odi, test, or pkl
+        last_word_match = re.search(r"\s+(ipl|odi|test|pkl|kabaddi)$", rest, re.IGNORECASE)
         if last_word_match:
             target_format = last_word_match.group(1).lower()
+            if target_format == "kabaddi":
+                target_format = "pkl"
             name = rest[:last_word_match.start()].strip()
         else:
             target_format = "odi"
             name = rest
-    from database import get_player_by_name, save_player
-    p = await get_player_by_name(name)
+    from database import get_player_by_name, get_player_by_name_and_sport, save_player, clear_player_cache
+    if target_format == "pkl":
+        p = await get_player_by_name_and_sport(name, "kabaddi") or await get_player_by_name(name)
+    else:
+        p = await get_player_by_name(name)
     if not p:
-        await msg.reply_text("Player not found.")
+        await msg.reply_text(f"Player not found: {name}")
         return
     try:
         sent = await context.bot.send_photo(chat_id=update.effective_chat.id, photo=url, caption=f"Updated {target_format.upper()} image for {p['name']}")
@@ -2250,12 +2257,22 @@ async def update_image_command(update, context):
         elif target_format == "test":
             p["test_image_url"] = url
             p["image_url"] = url
+        elif target_format == "pkl":
+            if "cards" not in p or not isinstance(p["cards"], dict):
+                p["cards"] = {}
+            if "pkl" not in p["cards"] or not isinstance(p["cards"]["pkl"], dict):
+                p["cards"]["pkl"] = {}
+            p["cards"]["pkl"]["image"] = url
+            p["pkl_image_url"] = url
+            p["image_url"] = url
+            p["image_file_id"] = fid
         else:
             p["image_file_id"] = fid
             p["odi_image_file_id"] = fid
             p["odi_image_url"] = url
             p["image_url"] = url
         await save_player(p)
+        clear_player_cache()
         from database import _invalidate_card_pool_cache
         _invalidate_card_pool_cache()
         await msg.reply_text(f"✅ {target_format.upper()} image & Web URL updated for *{esc(p['name'])}*.", parse_mode="Markdown")
@@ -2866,6 +2883,63 @@ async def remove_player_pkl(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.effective_message.reply_text(f"✅ *{name}* removed from PKL pool.", parse_mode="Markdown")
     else:
         await update.effective_message.reply_text(f"❌ PKL player *{name}* not found.", parse_mode="Markdown")
+
+
+async def update_image_pkl(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """/update_imagepkl Name URL (or send photo with caption /update_imagepkl Name)"""
+    if not await check_admin(update): return
+    msg = update.effective_message
+    if not msg: return
+    raw_text = msg.caption or msg.text or ""
+    text = raw_text.replace("/update_imagepkl", "").replace("/updateimagepkl", "").strip()
+    import re
+    text = re.sub(r"^@\S+\s*", "", text).strip()
+
+    photo_fid = None
+    url = None
+    if msg.photo:
+        photo_fid = msg.photo[-1].file_id
+        name = text
+    else:
+        parts = text.rsplit(" ", 1)
+        if len(parts) < 2:
+            await msg.reply_text("Usage: /update_imagepkl Name URL (or attach photo with caption)")
+            return
+        name, url = parts[0].strip(), parts[1].strip()
+        try:
+            m = await context.bot.send_photo(
+                chat_id=update.effective_chat.id,
+                photo=url, caption=f"Updated PKL image: {name}"
+            )
+            photo_fid = m.photo[-1].file_id
+        except Exception as e:
+            await msg.reply_text(f"❌ Failed to load image: {e}")
+            return
+
+    from database import get_player_by_name_and_sport, get_player_by_name, save_player, _invalidate_card_pool_cache, clear_player_cache
+    p = await get_player_by_name_and_sport(name, "kabaddi") or await get_player_by_name(name)
+    if not p:
+        await msg.reply_text(f"❌ PKL player not found: {name}")
+        return
+
+    if "cards" not in p or not isinstance(p["cards"], dict):
+        p["cards"] = {}
+    if "pkl" not in p["cards"] or not isinstance(p["cards"]["pkl"], dict):
+        p["cards"]["pkl"] = {}
+
+    if photo_fid:
+        p["image_file_id"] = photo_fid
+    if url:
+        p["cards"]["pkl"]["image"] = url
+        p["pkl_image_url"] = url
+        p["image_url"] = url
+    elif photo_fid:
+        p["cards"]["pkl"]["image"] = photo_fid
+
+    await save_player(p)
+    clear_player_cache()
+    _invalidate_card_pool_cache()
+    await msg.reply_text(f"✅ Updated PKL image & Web URL for *{esc(p['name'])}*.", parse_mode="Markdown")
 
 
 # ═══════════════════════════════════════════════════════════════════════════
