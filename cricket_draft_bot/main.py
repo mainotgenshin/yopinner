@@ -807,6 +807,14 @@ if __name__ == '__main__':
     application.add_handler(CommandHandler('bban',        wrap_admin_logging(handle_ban_command, "Ban User")))
     application.add_handler(CommandHandler('unbban',      wrap_admin_logging(handle_unban_command, "Unban User")))
 
+    # ── PKL Admin Commands ────────────────────────────────────────────────────
+    from handlers.admin import add_player_pkl, remove_player_pkl, handle_botstatus, handle_add_achievement, handle_rem_achievement
+    application.add_handler(CommandHandler('add_playerpkl',    wrap_admin_logging(add_player_pkl,    "Add PKL Player")))
+    application.add_handler(CommandHandler('rem_playerpkl',    wrap_admin_logging(remove_player_pkl, "Remove PKL Player")))
+    application.add_handler(CommandHandler('botstatus',        handle_botstatus))
+    application.add_handler(CommandHandler('add_achievement',  handle_add_achievement))
+    application.add_handler(CommandHandler('rem_achievement',  handle_rem_achievement))
+
 
 
 
@@ -831,9 +839,16 @@ if __name__ == '__main__':
     application.add_handler(CommandHandler('challengewwe',   challenge_wwe))
     application.add_handler(CommandHandler('challenge_wwe',  challenge_wwe))
 
+    # PKL challenge commands
+    from handlers.challenge import challenge_pkl
+    application.add_handler(CommandHandler('challenge_pkl',  challenge_pkl))
+    application.add_handler(CommandHandler('challengepkl',   challenge_pkl))
+
     # User Profile
-    from handlers.profile import handle_profile
+    from handlers.profile import handle_profile, cb_profile_achievements, cb_profile_back
     application.add_handler(CommandHandler('myprofile', handle_profile))
+    application.add_handler(CallbackQueryHandler(cb_profile_achievements, pattern=r"^profile_ach\|"))
+    application.add_handler(CallbackQueryHandler(cb_profile_back,         pattern=r"^profile_back\|"))
 
     # ── Card System ───────────────────────────────────────────────
     from handlers.cards import (
@@ -842,7 +857,7 @@ if __name__ == '__main__':
         handle_ggive, handle_h2h, handle_multi_sell,
         cb_pack_sport, cb_pack_tier, cb_pack_confirm, cb_pack_back,
         cb_inv_packs, cb_inv_open,
-        cb_mc_page, cb_mc_collections,
+        cb_mc_page, cb_mc_collections, cb_mc_sort,
         cb_vc_fmt, cb_vc_name, cb_vc_fav, cb_vc_unfav, cb_vc_sell, cb_vc_sell_ok,
         cb_tr_page, cb_tr_offer, cb_tr_pick, cb_tr_confirm, cb_tr_decline, cb_tr_cancel,
         cb_tr_tpage,
@@ -863,6 +878,14 @@ if __name__ == '__main__':
     # Coin Flip Bet
     application.add_handler(CommandHandler('bbet', handle_bbet))
 
+
+    # ── Check-In ─────────────────────────────────────────────────────────────
+    from handlers.checkin import handle_checkin
+    application.add_handler(CommandHandler('checkin', handle_checkin))
+
+    # ── Sort ─────────────────────────────────────────────────────────────────
+    from handlers.cards import handle_sort
+    application.add_handler(CommandHandler('sort', handle_sort))
 
     # Standings / Leaderboard
     from handlers.standings import handle_standings, handle_standings_callback
@@ -888,6 +911,7 @@ if __name__ == '__main__':
     application.add_handler(CallbackQueryHandler(cb_inv_open,     pattern=r"^inv_open\|"))
     application.add_handler(CallbackQueryHandler(cb_mc_page,      pattern=r"^mc_page\|"))
     application.add_handler(CallbackQueryHandler(cb_mc_collections, pattern=r"^mc_collections\|"))
+    application.add_handler(CallbackQueryHandler(cb_mc_sort,      pattern=r"^mc_sort\|"))
     application.add_handler(CallbackQueryHandler(cb_vc_fmt,       pattern=r"^vc_fmt\|"))
     application.add_handler(CallbackQueryHandler(cb_vc_name,      pattern=r"^vc_name\|"))
     application.add_handler(CallbackQueryHandler(cb_vc_fav,       pattern=r"^vc_fav\|"))
