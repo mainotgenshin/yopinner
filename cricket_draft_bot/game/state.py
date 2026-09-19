@@ -49,7 +49,7 @@ async def create_match_state(chat_id: int, mode: str, owner_id: int, challenger_
     import random
     first_drafter = random.choice([owner_id, challenger_id])
     
-    from config import POSITIONS_T20, POSITIONS_TEST, POSITIONS_FIFA, POSITIONS_WWE, POSITIONS_PKL
+    from config import POSITIONS_T20, POSITIONS_TEST, POSITIONS_FIFA, POSITIONS_WWE
     
     # Select Slots
     if mode and "Test" in mode:
@@ -58,8 +58,6 @@ async def create_match_state(chat_id: int, mode: str, owner_id: int, challenger_
         slot_keys = POSITIONS_FIFA
     elif mode in ("WWE", "WWE Women"):
         slot_keys = POSITIONS_WWE
-    elif mode in ("PKL", "Kabaddi"):
-        slot_keys = POSITIONS_PKL
     else:
         slot_keys = POSITIONS_T20
         
