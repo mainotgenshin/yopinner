@@ -4,6 +4,7 @@ Card System handlers: /pack, /inventory, /mycards, /viewcard, /trade_card, /ques
 All coin/card mutations are protected with per-user asyncio locks.
 """
 import asyncio
+import html
 import logging
 import time
 import uuid
@@ -15,25 +16,66 @@ logger = logging.getLogger(__name__)
 
 # ── Per-user anti-spam lock ───────────────────────────────────────────────────
 _CARD_LOCKS: dict[int, asyncio.Lock] = {}
+_CARD_CMD_COOLDOWNS: dict = {}
 
 def _get_lock(user_id: int) -> asyncio.Lock:
     if user_id not in _CARD_LOCKS:
         _CARD_LOCKS[user_id] = asyncio.Lock()
     return _CARD_LOCKS[user_id]
 
+def _check_card_cooldown(user_id: int, action: str, cooldown_secs: float = 2.0) -> bool:
+    now = time.time()
+    key = f"{user_id}_{action}"
+    if now - _CARD_CMD_COOLDOWNS.get(key, 0) < cooldown_secs:
+        return False
+    _CARD_CMD_COOLDOWNS[key] = now
+    if len(_CARD_CMD_COOLDOWNS) > 500:
+        cutoff = now - 60
+        for k in list(_CARD_CMD_COOLDOWNS.keys()):
+            if _CARD_CMD_COOLDOWNS[k] < cutoff:
+                _CARD_CMD_COOLDOWNS.pop(k, None)
+    return True
+
 # ── Display helpers ───────────────────────────────────────────────────────────
 RARITY_EMOJI = {"common": "⚪", "rare": "🔵", "epic": "🟣", "legend": "🟡"}
 PACK_EMOJI   = {"basic": "🟦", "premium": "🟣", "elite": "🟡"}
-SPORT_EMOJI  = {"cricket": "🏏", "football": "⚽", "wwe": "🤼"}
-SPORT_LABEL  = {"cricket": "Cricket", "football": "FIFA", "wwe": "WWE Men"}
-FORMAT_LABEL = {"ipl": "IPL", "odi": "ODI", "test": "Test", "wwe": "WWE", "fifa": "FIFA"}
+SPORT_EMOJI  = {"cricket": "🏏", "football": "⚽", "wwe": "🤼", "kabaddi": "🤸"}
+SPORT_LABEL  = {"cricket": "Cricket", "football": "FIFA", "wwe": "WWE Men", "kabaddi": "PKL"}
+FORMAT_LABEL = {"ipl": "IPL", "odi": "ODI", "test": "Test", "wwe": "WWE", "fifa": "FIFA", "pkl": "PKL"}
 PACK_PRICES  = {"basic": 250, "premium": 550, "elite": 1200}
 PACK_ODDS_TEXT = {
     "basic":   "60% Common | 35% Rare | 5% Epic | 0% Legend",
     "premium": "15% Common | 45% Rare | 35% Epic | 5% Legend",
     "elite":   "0% Common | 15% Rare | 55% Epic | 30% Legend",
 }
-CARDS_PER_PAGE = 10
+CARDS_PER_PAGE    = 10
+CARDS_PER_PAGE_DM = 20  # Larger page in private chats
+
+async def get_user_sort(context_or_uid, user_id: int = None) -> tuple:
+    """Return (criteria, order) for user. Reads from persistent DB cache."""
+    uid = user_id if user_id is not None else context_or_uid
+    from database import get_user_card_sort
+    return await get_user_card_sort(uid)
+
+def get_sort_label(criteria: str, order: str) -> str:
+    order = (order or "desc").lower()
+    if order in ("des", "descending"): order = "desc"
+    if order in ("ascending",): order = "asc"
+    criteria = (criteria or "rarity").lower()
+
+    if criteria == "rarity":
+        desc = "Legend ➔ Common" if order == "desc" else "Common ➔ Legend"
+        return f"⭐ Rarity ({desc})"
+    elif criteria == "ovr":
+        desc = "Highest ➔ Lowest" if order == "desc" else "Lowest ➔ Highest"
+        return f"📊 OVR ({desc})"
+    elif criteria == "dupe":
+        desc = "Most ➔ Fewest" if order == "desc" else "Fewest ➔ Most"
+        return f"🔁 Dupes ({desc})"
+    elif criteria == "name":
+        desc = "A ➔ Z" if order == "asc" else "Z ➔ A"
+        return f"🔤 Name ({desc})"
+    return f"{criteria.title()} ({order.upper()})"
 
 def esc(t): return escape_markdown(str(t), version=1)
 
@@ -48,6 +90,30 @@ async def _get_raw_inv(user_id: int) -> dict:
     db = get_db()
     doc = await db.users.find_one({"user_id": user_id}, {"pack_inventory": 1})
     return doc.get("pack_inventory", {}) if doc else {}
+
+def _sort_cards(cards: list, criteria: str = "rarity", order: str = "desc") -> list:
+    """Sort a card list by criteria and order ('asc' or 'desc')."""
+    rarity_desc = {"legend": 0, "epic": 1, "rare": 2, "common": 3}
+    rarity_asc  = {"common": 0, "rare": 1, "epic": 2, "legend": 3}
+
+    criteria = (criteria or "rarity").lower()
+    order = (order or "desc").lower()
+    if order in ("des", "descending"): order = "desc"
+    if order in ("ascending",): order = "asc"
+
+    if criteria == "rarity":
+        r_map = rarity_asc if order == "asc" else rarity_desc
+        return sorted(cards, key=lambda c: (r_map.get(str(c.get("rarity", "common")).lower(), 9), c.get("name", "").lower()))
+    elif criteria == "ovr":
+        mult = 1 if order == "asc" else -1
+        return sorted(cards, key=lambda c: (mult * int(c.get("ovr", 0) or 0), c.get("name", "").lower()))
+    elif criteria == "dupe":
+        mult = 1 if order == "asc" else -1
+        return sorted(cards, key=lambda c: (mult * int(c.get("quantity", 1) or 1), rarity_desc.get(str(c.get("rarity", "common")).lower(), 9), c.get("name", "").lower()))
+    elif criteria == "name":
+        rev = (order == "desc")
+        return sorted(cards, key=lambda c: c.get("name", "").lower(), reverse=rev)
+    return sorted(cards, key=lambda c: (rarity_desc.get(str(c.get("rarity", "common")).lower(), 9), c.get("name", "").lower()))
 
 # ─────────────────────────────────────────────────────────────────────────────
 # /pack
@@ -67,6 +133,7 @@ async def handle_pack(update: Update, context: ContextTypes.DEFAULT_TYPE):
         InlineKeyboardButton("🏏 Cricket", callback_data=f"pack_sport|{user.id}|cricket"),
         InlineKeyboardButton("⚽ FIFA",    callback_data=f"pack_sport|{user.id}|football"),
         InlineKeyboardButton("🤼 WWE Men", callback_data=f"pack_sport|{user.id}|wwe"),
+        InlineKeyboardButton("🤸 PKL",     callback_data=f"pack_sport|{user.id}|kabaddi"),
     ]])
     await update.effective_message.reply_text(
         "🃏 *Pack Store*\nChoose a sport:",
@@ -79,7 +146,9 @@ async def cb_pack_sport(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if str(query.from_user.id) != owner_id:
         await query.answer("⛔ Not your menu.", show_alert=True); return
     await query.answer()
-    text = f"🃏 *Pack Store — {SPORT_EMOJI[sport]} {SPORT_LABEL[sport]}*\n\nEach pack contains *3 cards* from this sport's players.\n\n"
+    sport_label = SPORT_LABEL.get(sport, sport.title())
+    sport_emoji = SPORT_EMOJI.get(sport, "🃏")
+    text = f"🃏 *Pack Store — {sport_emoji} {sport_label}*\n\nEach pack contains *3 cards* from this sport's players.\n\n"
     for tier in ["basic", "premium", "elite"]:
         text += f"{PACK_EMOJI[tier]} *{tier.title()} Pack* — {PACK_PRICES[tier]}🪙\n`{PACK_ODDS_TEXT[tier]}`\n\n"
     keyboard = InlineKeyboardMarkup([
@@ -290,91 +359,295 @@ async def cb_inv_open(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # ─────────────────────────────────────────────────────────────────────────────
 async def handle_mycards(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
-    await _show_mycards(update.effective_message, user.id, user.id, sport_filter=None, page=0, edit=False)
+    user_id = user.id if user else (update.effective_chat.id if update.effective_chat else 0)
+    chat = update.effective_chat
+    is_dm = (chat.type == "private") if chat else False
+    sport_filter = None
+    if context.args:
+        arg = context.args[0].lower()
+        if arg in ("ipl", "odi", "test", "cricket"):
+            sport_filter = "cricket"
+        elif arg in ("fifa", "football"):
+            sport_filter = "football"
+        elif arg in ("wwe",):
+            sport_filter = "wwe"
+        elif arg in ("pkl", "kabaddi"):
+            sport_filter = "kabaddi"
 
-async def _show_mycards(message_or_query, owner_id: int, viewer_id: int, sport_filter, page: int, edit: bool):
-    from database import get_user_cards, count_user_cards
+    await _show_mycards(update.effective_message, user_id, user_id,
+                        sport_filter=sport_filter, page=0, edit=False,
+                        is_dm=is_dm)
+
+async def _show_mycards(message_or_query, owner_id: int, viewer_id: int,
+                        sport_filter, page: int, edit: bool,
+                        is_dm: bool = False, context=None):
+    from database import get_user_cards
     cards = await get_user_cards(owner_id, sport_filter=sport_filter)
-    # Sort: legend first, then epic, rare, common
-    rarity_order = {"legend": 0, "epic": 1, "rare": 2, "common": 3}
-    cards.sort(key=lambda c: (rarity_order.get(c["rarity"], 9), c["name"]))
-    total = sum(c["quantity"] for c in cards)
-    start = page * CARDS_PER_PAGE
-    page_cards = cards[start:start + CARDS_PER_PAGE]
-    total_pages = max(1, (len(cards) + CARDS_PER_PAGE - 1) // CARDS_PER_PAGE)
+
+    # Determine sort from persistent user preference
+    crit, order = await get_user_sort(owner_id)
+    cards = _sort_cards(cards, crit, order)
+
+    page_size  = CARDS_PER_PAGE_DM if is_dm else CARDS_PER_PAGE
+    total_unique = len(cards)
+    start        = page * page_size
+    page_cards   = cards[start:start + page_size]
+    total_pages  = max(1, (total_unique + page_size - 1) // page_size)
+
+    sf = (sport_filter or "all").lower()
+    sport_name = SPORT_LABEL.get(sf, sf.title()) if sf != "all" else ""
+
     if not cards:
-        text = "🃏 *Your Collection*\n━━━━━━━━━━━━━━━━━━\nNo cards yet! Use /pack to buy packs."
+        if sf != "all":
+            text = (
+                f"🃏 <b>Your Collection ({html.escape(sport_name)})</b>\n"
+                f"━━━━━━━━━━━━━━━━━━\n"
+                f"No {html.escape(sport_name)} cards yet!\n"
+                f"Use /pack to buy {html.escape(sport_name)} packs."
+            )
+        else:
+            text = "🃏 <b>Your Collection</b>\n━━━━━━━━━━━━━━━━━━\nNo cards yet! Use /pack to buy packs."
     else:
-        filter_tag = f" ({SPORT_LABEL.get(sport_filter, sport_filter.title())})" if sport_filter else ""
-        lines = [f"🃏 *Your Collection*{filter_tag}\n━━━━━━━━━━━━━━━━━━"]
+        filter_tag = f" ({html.escape(sport_name)})" if sport_name else ""
+        sort_label = html.escape(get_sort_label(crit, order))
+        lines = [f"🃏 <b>Your Collection</b>{filter_tag}  <i>{sort_label}</i>\n━━━━━━━━━━━━━━━━━━"]
         for idx, c in enumerate(page_cards, start=start + 1):
-            r_emoji = RARITY_EMOJI.get(c["rarity"], "⚪")
-            f_label = FORMAT_LABEL.get(c["format"], c["format"].upper())
-            qty_str = f" ×{c['quantity']}" if c["quantity"] > 1 else ""
-            lines.append(f"`{idx}.` {r_emoji} {esc(c['name'])} ({f_label}){qty_str}")
+            r_emoji = RARITY_EMOJI.get(c.get("rarity"), "⚪")
+            f_label = FORMAT_LABEL.get(c.get("format"), str(c.get("format", "")).upper())
+            qty_str = f" ×{c['quantity']}" if c.get("quantity", 1) > 1 else ""
+            ovr_str = f" OVR {c['ovr']}" if crit == "ovr" and c.get("ovr") else ""
+            c_name = html.escape(str(c.get('name', 'Unknown')))
+            lines.append(f"<code>{idx}.</code> {r_emoji} {c_name} ({f_label}){qty_str}{ovr_str}")
         lines.append(f"━━━━━━━━━━━━━━━━━━\nPage {page+1}/{total_pages}")
         text = "\n".join(lines)
-    # Navigation + filter buttons
+
+    # Navigation buttons
     nav = []
     if total_pages > 10 and page > 0:
-        nav.append(InlineKeyboardButton("⏮ -10", callback_data=f"mc_page|{owner_id}|{sport_filter or 'all'}|{max(0, page-10)}"))
+        nav.append(InlineKeyboardButton("⏮ -10", callback_data=f"mc_page|{owner_id}|{sf}|{max(0, page-10)}"))
     if total_pages > 5 and page > 0:
-        nav.append(InlineKeyboardButton("⏪ -5", callback_data=f"mc_page|{owner_id}|{sport_filter or 'all'}|{max(0, page-5)}"))
+        nav.append(InlineKeyboardButton("⏪ -5", callback_data=f"mc_page|{owner_id}|{sf}|{max(0, page-5)}"))
     if page > 0:
-        nav.append(InlineKeyboardButton("◀️", callback_data=f"mc_page|{owner_id}|{sport_filter or 'all'}|{page-1}"))
+        nav.append(InlineKeyboardButton("◀️", callback_data=f"mc_page|{owner_id}|{sf}|{page-1}"))
     if page < total_pages - 1:
-        nav.append(InlineKeyboardButton("▶️", callback_data=f"mc_page|{owner_id}|{sport_filter or 'all'}|{page+1}"))
+        nav.append(InlineKeyboardButton("▶️", callback_data=f"mc_page|{owner_id}|{sf}|{page+1}"))
     if total_pages > 5 and page < total_pages - 1:
-        nav.append(InlineKeyboardButton("+5 ⏩", callback_data=f"mc_page|{owner_id}|{sport_filter or 'all'}|{min(total_pages-1, page+5)}"))
+        nav.append(InlineKeyboardButton("+5 ⏩", callback_data=f"mc_page|{owner_id}|{sf}|{min(total_pages-1, page+5)}"))
     if total_pages > 10 and page < total_pages - 1:
-        nav.append(InlineKeyboardButton("+10 ⏭", callback_data=f"mc_page|{owner_id}|{sport_filter or 'all'}|{min(total_pages-1, page+10)}"))
+        nav.append(InlineKeyboardButton("+10 ⏭", callback_data=f"mc_page|{owner_id}|{sf}|{min(total_pages-1, page+10)}"))
+
     filters = [
-        InlineKeyboardButton("All",     callback_data=f"mc_page|{owner_id}|all|0"),
-        InlineKeyboardButton("🏏",      callback_data=f"mc_page|{owner_id}|cricket|0"),
-        InlineKeyboardButton("⚽",      callback_data=f"mc_page|{owner_id}|football|0"),
-        InlineKeyboardButton("🤼",      callback_data=f"mc_page|{owner_id}|wwe|0"),
+        InlineKeyboardButton("All", callback_data=f"mc_page|{owner_id}|all|0"),
+        InlineKeyboardButton("🏏",  callback_data=f"mc_page|{owner_id}|cricket|0"),
+        InlineKeyboardButton("⚽",  callback_data=f"mc_page|{owner_id}|football|0"),
+        InlineKeyboardButton("🤼",  callback_data=f"mc_page|{owner_id}|wwe|0"),
+        InlineKeyboardButton("🤸",  callback_data=f"mc_page|{owner_id}|kabaddi|0"),
     ]
     collections_row = [InlineKeyboardButton("📊 Collections", callback_data=f"mc_collections|{owner_id}")]
-    kb = InlineKeyboardMarkup([filters] + ([nav] if nav else []) + [collections_row])
+    rows = [filters]
+    if nav:
+        rows.append(nav)
+    rows.append(collections_row)
+    kb = InlineKeyboardMarkup(rows)
 
     if edit:
-        await message_or_query.edit_message_text(text, reply_markup=kb, parse_mode="Markdown")
+        try:
+            if kb:
+                await message_or_query.edit_message_text(text, reply_markup=kb, parse_mode="HTML")
+            else:
+                await message_or_query.edit_message_text(text, parse_mode="HTML")
+        except Exception as e:
+            err_str = str(e).lower()
+            if "message is not modified" in err_str:
+                pass
+            else:
+                logger.warning(f"_show_mycards HTML edit error: {e}, falling back to plain text")
+                try:
+                    if kb:
+                        await message_or_query.edit_message_text(text, reply_markup=kb)
+                    else:
+                        await message_or_query.edit_message_text(text)
+                except Exception:
+                    pass
     else:
-        await message_or_query.reply_text(text, reply_markup=kb, parse_mode="Markdown")
+        try:
+            if kb:
+                await message_or_query.reply_text(text, reply_markup=kb, parse_mode="HTML")
+            else:
+                await message_or_query.reply_text(text, parse_mode="HTML")
+        except Exception as e:
+            logger.warning(f"_show_mycards reply error: {e}, falling back to plain text")
+            if kb:
+                await message_or_query.reply_text(text, reply_markup=kb)
+            else:
+                await message_or_query.reply_text(text)
+
 
 async def cb_mc_page(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
-    logging.getLogger("DEBUG_CARDS").info(f"🃏 [CB_MC_PAGE] Clicked data='{query.data}' | clicker={query.from_user.id} ({query.from_user.first_name})")
+    if not query:
+        return
     parts = query.data.split("|")
+    if len(parts) < 4:
+        await query.answer()
+        return
     _, owner_id, sport_str, page_str = parts
-    if str(query.from_user.id) != owner_id:
-        logging.getLogger("DEBUG_CARDS").warning(f"⚠️ [CB_MC_PAGE] Owner mismatch! clicker={query.from_user.id} != owner={owner_id}")
-        await query.answer("⛔ Not your menu.", show_alert=True); return
+
+    if not _check_card_cooldown(query.from_user.id, "mc_page", 0.3):
+        await query.answer("Slow down!", show_alert=False)
+        return
+
+    if str(owner_id) not in ("1087968824", "777000") and str(query.from_user.id) != str(owner_id):
+        await query.answer("⛔ Not your menu.", show_alert=True)
+        return
+
     await query.answer()
     sport_filter = None if sport_str == "all" else sport_str
-    await _show_mycards(query, int(owner_id), query.from_user.id, sport_filter, int(page_str), edit=True)
+    chat = update.effective_chat
+    is_dm = (chat.type == "private") if chat else False
+    try:
+        oid_int = int(owner_id)
+        if oid_int in (1087968824, 777000):
+            oid_int = query.from_user.id
+    except (ValueError, TypeError):
+        oid_int = query.from_user.id
 
-async def cb_mc_collections(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Show full collection breakdown: rarity counts per format with total available n."""
+    await _show_mycards(query, oid_int, query.from_user.id,
+                        sport_filter, int(page_str), edit=True,
+                        is_dm=is_dm, context=context)
+
+
+async def cb_mc_sort(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Sort button callback (backward-compat if old message button clicked)."""
     query = update.callback_query
-    logging.getLogger("DEBUG_CARDS").info(f"📊 [CB_MC_COLLECTIONS] Clicked data='{query.data}' | clicker={query.from_user.id} ({query.from_user.first_name})")
+    if not query:
+        return
     parts = query.data.split("|")
-    _, owner_id = parts
-    if str(query.from_user.id) != owner_id:
-        logging.getLogger("DEBUG_CARDS").warning(f"⚠️ [CB_MC_COLLECTIONS] Owner mismatch! clicker={query.from_user.id} != owner={owner_id}")
-        await query.answer("⛔ Not your menu.", show_alert=True); return
-    await query.answer()
+    if len(parts) < 4:
+        await query.answer()
+        return
+    _, owner_id, new_sort, sport_str = parts
+
+    if str(owner_id) not in ("1087968824", "777000") and str(query.from_user.id) != str(owner_id):
+        await query.answer("⛔ Not your menu.", show_alert=True)
+        return
+
+    try:
+        oid_int = int(owner_id)
+        if oid_int in (1087968824, 777000):
+            oid_int = query.from_user.id
+    except (ValueError, TypeError):
+        oid_int = query.from_user.id
+
+    _, cur_order = await get_user_sort(oid_int)
+    from database import save_user_card_sort
+    await save_user_card_sort(oid_int, new_sort, cur_order)
+    await query.answer(f"Sorted by: {get_sort_label(new_sort, cur_order)}")
+    sport_filter = None if sport_str == "all" else sport_str
+    chat = update.effective_chat
+    is_dm = (chat.type == "private") if chat else False
+    await _show_mycards(query, oid_int, query.from_user.id,
+                        sport_filter, 0, edit=True,
+                        is_dm=is_dm, context=context)
+
+
+async def handle_sort(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """
+    /sort [criteria] [asc|des]
+    Examples:
+      /sort rarity
+      /sort rarity asc
+      /sort asc
+      /sort des
+      /sort ovr
+      /sort ovr des
+      /sort name
+      /sort name des
+      /sort dupe
+    """
+    user = update.effective_user
+    if not user:
+        return
+    if not _check_card_cooldown(user.id, "sort", 2.0):
+        return
+    args = [a.lower() for a in (context.args or [])]
+
+    crit_keys = {"rarity", "ovr", "dupe", "duplicate", "dupes", "name", "alphabetical"}
+    dir_keys  = {"asc", "ascending", "des", "desc", "descending"}
+
+    crit_alias = {"duplicate": "dupe", "dupes": "dupe", "alphabetical": "name"}
+    dir_alias  = {"ascending": "asc", "des": "desc", "descending": "desc"}
+
+    cur_crit, cur_order = await get_user_sort(user.id)
+
+    if not args:
+        cur_label = get_sort_label(cur_crit, cur_order)
+        await update.effective_message.reply_text(
+            f"📊 <b>Card Sorting Options</b>\n\n"
+            f"Current: <b>{cur_label}</b>\n\n"
+            f"<b>Criteria:</b>\n"
+            f"• <code>/sort rarity</code> — Legend ➔ Common (default)\n"
+            f"• <code>/sort rarity asc</code> — Common ➔ Legend\n"
+            f"• <code>/sort ovr</code> — Highest OVR first\n"
+            f"• <code>/sort ovr asc</code> — Lowest OVR first\n"
+            f"• <code>/sort dupe</code> — Most duplicates first\n"
+            f"• <code>/sort name</code> — A ➔ Z\n\n"
+            f"<b>Direction Only:</b>\n"
+            f"• <code>/sort asc</code> — Ascending order\n"
+            f"• <code>/sort des</code> — Descending order\n\n"
+            f"<i>Sort applies across /mycards, /multi_sell, and trade.</i>",
+            parse_mode="HTML"
+        )
+        return
+
+    new_crit = None
+    new_dir  = None
+
+    for arg in args:
+        if arg in crit_keys:
+            new_crit = crit_alias.get(arg, arg)
+        elif arg in dir_keys:
+            new_dir = dir_alias.get(arg, arg)
+
+    if not new_crit and not new_dir:
+        await update.effective_message.reply_text(
+            "❌ Unknown sort option.\nUse <code>/sort rarity</code>, <code>/sort ovr</code>, <code>/sort dupe</code>, <code>/sort name</code>, <code>/sort asc</code>, or <code>/sort des</code>.",
+            parse_mode="HTML"
+        )
+        return
+
+    # If only direction given, keep current criteria
+    if new_dir and not new_crit:
+        new_crit = cur_crit
+
+    # If only criteria given, default direction:
+    # name defaults to 'asc', others default to 'desc'
+    if new_crit and not new_dir:
+        new_dir = "asc" if new_crit == "name" else "desc"
+
+    from database import save_user_card_sort
+    await save_user_card_sort(user.id, new_crit, new_dir)
+
+    label = get_sort_label(new_crit, new_dir)
+    await update.effective_message.reply_text(
+        f"✅ Sort set to: <b>{label}</b>\n\n<i>Your /mycards, /multi_sell, and trades will now display in this order.</i>",
+        parse_mode="HTML"
+    )
+
+
+async def _get_collections_text(owner_id: int) -> str:
     from database import get_user_cards, get_catalog_totals
-    all_cards = await get_user_cards(int(owner_id))
+    all_cards = await get_user_cards(owner_id)
     cat_totals = await get_catalog_totals()
     cat_fmt_rarity = cat_totals.get("by_format_rarity", {})
     cat_fmt_total  = cat_totals.get("by_format", {})
     cat_grand      = cat_totals.get("grand_total", 0)
 
     # Group by sport → format → rarity
-    FORMAT_TO_SPORT = {"ipl": "Cricket", "odi": "Cricket", "test": "Cricket", "fifa": "FIFA", "wwe": "WWE"}
-    SPORT_EMOJI_MAP = {"Cricket": "🏏", "FIFA": "⚽", "WWE": "🤼"}
-    FORMAT_ORDER = ["ipl", "odi", "test", "fifa", "wwe"]
+    FORMAT_TO_SPORT = {"ipl": "Cricket", "odi": "Cricket", "test": "Cricket",
+                       "fifa": "FIFA", "wwe": "WWE", "pkl": "PKL"}
+    SPORT_EMOJI_MAP = {"Cricket": "🏏", "FIFA": "⚽", "WWE": "🤼", "PKL": "🤸"}
+    FORMAT_ORDER = ["ipl", "odi", "test", "pkl", "fifa", "wwe"]
     RARITY_ORDER = ["legend", "epic", "rare", "common"]
 
     # Unique owned cards per format and rarity
@@ -386,7 +659,7 @@ async def cb_mc_collections(update: Update, context: ContextTypes.DEFAULT_TYPE):
             counts[fmt] = {"common": 0, "rare": 0, "epic": 0, "legend": 0}
         counts[fmt][rarity] = counts[fmt].get(rarity, 0) + 1
 
-    lines = ["📊 *Your Collections*", "━━━━━━━━━━━━━━━━━━"]
+    lines = ["📊 <b>Your Collections</b>", "━━━━━━━━━━━━━━━━━━"]
 
     for fmt in FORMAT_ORDER:
         if fmt not in counts:
@@ -397,21 +670,71 @@ async def cb_mc_collections(update: Update, context: ContextTypes.DEFAULT_TYPE):
         fmt_owned = sum(counts[fmt].get(r, 0) for r in RARITY_ORDER)
         tot_fmt = cat_fmt_total.get(fmt, 0)
 
-        lines.append(f"\n{emoji} *{f_label}*")
+        lines.append(f"\n{emoji} <b>{f_label}</b>")
         for r in RARITY_ORDER:
             owned_r = counts[fmt].get(r, 0)
             tot_r = cat_fmt_rarity.get((fmt, r), 0)
             if owned_r > 0:
-                lines.append(f"  {RARITY_EMOJI.get(r, '⚪')} {r.title()}: *{owned_r}/{tot_r}*")
-        lines.append(f"  Total: *{fmt_owned}/{tot_fmt} cards*")
+                lines.append(f"  {RARITY_EMOJI.get(r, '⚪')} {r.title()}: <b>{owned_r}/{tot_r}</b>")
+        lines.append(f"  Total: <b>{fmt_owned}/{tot_fmt} cards</b>")
 
     grand_unique = len(all_cards)
     lines.append(f"\n━━━━━━━━━━━━━━━━━━")
-    lines.append(f"🃏 Grand Total: *{grand_unique}/{cat_grand} cards*")
+    lines.append(f"🃏 Grand Total: <b>{grand_unique}/{cat_grand} cards</b>")
+    return "\n".join(lines)
 
-    text = "\n".join(lines)
+
+async def handle_collections(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Command /collections - view collection statistics."""
+    user = update.effective_user
+    if not user:
+        return
+    text = await _get_collections_text(user.id)
+    try:
+        await update.effective_message.reply_text(text, parse_mode="HTML")
+    except Exception:
+        await update.effective_message.reply_text(text)
+
+
+async def cb_mc_collections(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Show full collection breakdown: rarity counts per format with total available n."""
+    query = update.callback_query
+    if not query:
+        return
+    parts = query.data.split("|")
+    if len(parts) < 2:
+        await query.answer()
+        return
+    _, owner_id = parts
+
+    if not _check_card_cooldown(query.from_user.id, "mc_collections", 0.3):
+        await query.answer("Slow down!", show_alert=False)
+        return
+
+    if str(owner_id) not in ("1087968824", "777000") and str(query.from_user.id) != str(owner_id):
+        await query.answer("⛔ Not your menu.", show_alert=True)
+        return
+
+    await query.answer()
+
+    try:
+        oid_int = int(owner_id)
+        if oid_int in (1087968824, 777000):
+            oid_int = query.from_user.id
+    except (ValueError, TypeError):
+        oid_int = query.from_user.id
+
+    text = await _get_collections_text(oid_int)
     back_kb = InlineKeyboardMarkup([[InlineKeyboardButton("◀️ Back to Cards", callback_data=f"mc_page|{owner_id}|all|0")]])
-    await query.edit_message_text(text, reply_markup=back_kb, parse_mode="Markdown")
+    try:
+        await query.edit_message_text(text, reply_markup=back_kb, parse_mode="HTML")
+    except Exception as e:
+        if "message is not modified" not in str(e).lower():
+            logger.warning(f"cb_mc_collections edit error: {e}, falling back to plain text")
+            try:
+                await query.edit_message_text(text, reply_markup=back_kb)
+            except Exception:
+                pass
 
 # ─────────────────────────────────────────────────────────────────────────────
 # /viewcard
@@ -851,6 +1174,10 @@ async def cb_vc_sell_ok(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def handle_trade_card(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Initiate a trade by replying to the target user's message."""
     user = update.effective_user
+    if not user:
+        return
+    if not _check_card_cooldown(user.id, "trade_cmd", 3.0):
+        return
     msg = update.effective_message
     if not msg.reply_to_message:
         await msg.reply_text("♻️ Reply to the target user's message to trade.\nExample: reply to their message then send /trade_card")
@@ -884,12 +1211,12 @@ async def handle_trade_card(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not my_cards:
         await msg.reply_text("❌ You have no cards to offer in a trade.")
         return
+    crit, order = await get_user_sort(user.id)
+    my_cards = _sort_cards(my_cards, crit, order)
     # Show card picker for initiator (paginated, page 0)
     await _show_trade_picker(msg, user.id, target.id, target.first_name, my_cards, page=0, edit=False)
 
 async def _show_trade_picker(msg_or_q, initiator_id: int, target_id: int, target_name: str, cards: list, page: int, edit: bool):
-    rarity_order = {"legend": 0, "epic": 1, "rare": 2, "common": 3}
-    cards = sorted(cards, key=lambda c: (rarity_order.get(c["rarity"], 9), c["name"]))
     start = page * 8
     page_cards = cards[start:start + 8]
     total_pages = max(1, (len(cards) + 7) // 8)
@@ -932,9 +1259,10 @@ async def cb_tr_page(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await query.answer()
     from database import get_user_cards, get_db
     db = get_db()
-    target_doc = None  # get target name from trade or just use id
     target_id_int = int(target_id)
     cards = await get_user_cards(int(initiator_id))
+    crit, order = await get_user_sort(int(initiator_id))
+    cards = _sort_cards(cards, crit, order)
     await _show_trade_picker(query, int(initiator_id), target_id_int, f"User {target_id}", cards, int(page_str), edit=True)
 
 async def cb_tr_offer(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -997,8 +1325,8 @@ async def cb_tr_offer(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f_label = FORMAT_LABEL.get(fmt, fmt.upper())
         r_emoji = RARITY_EMOJI.get(offered["rarity"], "⚪")
         # ── Show target's paginated picker (page 0) ──────────────────────────
-        rarity_order = {"legend": 0, "epic": 1, "rare": 2, "common": 3}
-        matching_rarity.sort(key=lambda c: (rarity_order.get(c["rarity"], 9), c["name"]))
+        crit, order = await get_user_sort(int(target_id))
+        matching_rarity = _sort_cards(matching_rarity, crit, order)
         header = (
             f"♻️ *Trade Request*\n"
             f"━━━━━━━━━━━━━━━━━━\n"
@@ -1062,8 +1390,8 @@ async def cb_tr_tpage(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.answer("❌ Trade expired (5 min timeout).", show_alert=True); return
     target_cards = await get_user_cards(int(target_id))
     matching_rarity = [c for c in target_cards if c["rarity"] == trade["offered_rarity"]]
-    rarity_order = {"legend": 0, "epic": 1, "rare": 2, "common": 3}
-    matching_rarity.sort(key=lambda c: (rarity_order.get(c["rarity"], 9), c["name"]))
+    crit, order = await get_user_sort(int(target_id))
+    matching_rarity = _sort_cards(matching_rarity, crit, order)
     r_emoji = RARITY_EMOJI.get(trade["offered_rarity"], "⚪")
     f_label = FORMAT_LABEL.get(trade.get("offered_format", ""), trade.get("offered_format", ""))
     header = (
@@ -1421,6 +1749,7 @@ async def handle_h2h(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # /multi_sell
 # ─────────────────────────────────────────────────────────────────────────────
 _PENDING_MULTI_SELLS: dict[str, dict] = {}
+_COMPLETED_MULTI_SELLS: set[str] = set()
 
 async def handle_multi_sell(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """
@@ -1431,6 +1760,10 @@ async def handle_multi_sell(update: Update, context: ContextTypes.DEFAULT_TYPE):
       /multi_sell 1 3 5  → preview selling cards at positions 1, 3, 5
     """
     user = update.effective_user
+    if not user:
+        return
+    if not _check_card_cooldown(user.id, "multi_sell", 3.0):
+        return
     args = context.args
 
     if not args:
@@ -1470,11 +1803,11 @@ async def handle_multi_sell(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.effective_message.reply_text("❌ No valid card numbers provided.")
         return
 
-    # Fetch current cards (same order as /mycards all mode)
+    # Fetch current cards (using active user sort order)
     from database import get_user_cards, get_fav_card
-    rarity_order = {"legend": 0, "epic": 1, "rare": 2, "common": 3}
+    crit, order = await get_user_sort(user.id)
     all_cards = await get_user_cards(user.id, sport_filter=None)
-    all_cards.sort(key=lambda c: (rarity_order.get(c["rarity"], 9), c["name"]))
+    all_cards = _sort_cards(all_cards, crit, order)
 
     SELL_VALUES = {"common": 25, "rare": 75, "epic": 200, "legend": 600}
 
@@ -1582,6 +1915,10 @@ async def cb_msell_ok(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.answer("⛔ Not your menu.", show_alert=True)
         return
 
+    if sell_id in _COMPLETED_MULTI_SELLS:
+        await query.answer("Already processed.", show_alert=False)
+        return
+
     session = _PENDING_MULTI_SELLS.pop(sell_id, None)
     if not session or (time.time() - session.get("created_at", 0) > 300):
         await query.answer("⌛ This sell request has expired. Please run /multi_sell again.", show_alert=True)
@@ -1590,6 +1927,10 @@ async def cb_msell_ok(update: Update, context: ContextTypes.DEFAULT_TYPE):
         except Exception:
             pass
         return
+
+    _COMPLETED_MULTI_SELLS.add(sell_id)
+    if len(_COMPLETED_MULTI_SELLS) > 200:
+        _COMPLETED_MULTI_SELLS.pop()
 
     await query.answer("Selling cards...")
 
@@ -1601,8 +1942,9 @@ async def cb_msell_ok(update: Update, context: ContextTypes.DEFAULT_TYPE):
     lock = _get_lock(user_id)
     async with lock:
         # Re-fetch cards to ensure snapshot is fully accurate
+        crit, order = await get_user_sort(user_id)
         all_cards = await get_user_cards(user_id, sport_filter=None)
-        all_cards.sort(key=lambda c: (rarity_order.get(c["rarity"], 9), c["name"]))
+        all_cards = _sort_cards(all_cards, crit, order)
 
         fav = await get_fav_card(user_id)
         fav_key = (fav.get("player_id"), fav.get("format")) if fav else (None, None)
