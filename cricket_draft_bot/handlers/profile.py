@@ -1,8 +1,23 @@
+import time
 from telegram import Update, InlineKeyboardMarkup, InlineKeyboardButton
 from telegram.ext import ContextTypes
 from database import get_db
 from telegram.helpers import escape_markdown
 import html
+
+_PROFILE_CLICK_TIMES: dict = {}
+
+def _check_profile_click(user_id: int, debounce_secs: float = 1.0) -> bool:
+    now = time.time()
+    if now - _PROFILE_CLICK_TIMES.get(user_id, 0) < debounce_secs:
+        return False
+    _PROFILE_CLICK_TIMES[user_id] = now
+    if len(_PROFILE_CLICK_TIMES) > 200:
+        cutoff = now - 60
+        for k in list(_PROFILE_CLICK_TIMES.keys()):
+            if _PROFILE_CLICK_TIMES[k] < cutoff:
+                _PROFILE_CLICK_TIMES.pop(k, None)
+    return True
 
 def esc(t):
     return escape_markdown(str(t), version=1)
@@ -134,7 +149,11 @@ async def _build_profile_data(user_id: int, name: str) -> dict:
 
 async def handle_profile(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
+    if not user:
+        return
     user_id = user.id
+    if not _check_profile_click(user_id, 2.0):
+        return
     name = user.first_name
 
     data = await _build_profile_data(user_id, name)
@@ -189,6 +208,10 @@ async def cb_profile_achievements(update, context):
         await query.answer("⛔ You can only view your own achievements.", show_alert=True)
         return
 
+    if not _check_profile_click(viewer_id, 1.0):
+        await query.answer()
+        return
+
     await query.answer()
     from database import get_achievements
     achievements = await get_achievements(owner_id)
@@ -224,6 +247,10 @@ async def cb_profile_back(update, context):
 
     if viewer_id != owner_id:
         await query.answer("⛔ Not your profile.", show_alert=True)
+        return
+
+    if not _check_profile_click(viewer_id, 1.0):
+        await query.answer()
         return
 
     await query.answer()
