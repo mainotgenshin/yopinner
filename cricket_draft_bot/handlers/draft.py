@@ -9,11 +9,7 @@ from game.state import load_match_state, save_match_state, draw_player_for_turn,
 from game.models import Match, Player
 from database import get_player
 from utils.validators import validate_draft_action
-from config import (
-    MAX_REDRAWS, POSITIONS_T20, POSITIONS_TEST, POSITIONS_FIFA, POSITIONS_WWE, POSITIONS_PKL,
-    DRAFT_BANNER_URL, DRAFT_BANNER_ODI, DRAFT_BANNER_INTL, DRAFT_BANNER_IPL,
-    DRAFT_BANNER_TEST, DRAFT_BANNER_FIFA, DRAFT_BANNER_WWE, DRAFT_BANNER_PKL
-)
+from config import MAX_REDRAWS, POSITIONS_T20, POSITIONS_TEST, POSITIONS_FIFA, POSITIONS_WWE, DRAFT_BANNER_URL, DRAFT_BANNER_ODI, DRAFT_BANNER_INTL, DRAFT_BANNER_IPL, DRAFT_BANNER_TEST, DRAFT_BANNER_FIFA, DRAFT_BANNER_WWE
 from utils.banners import get_banner_for_match, get_banner_for_mode
 from telegram.helpers import escape_markdown
 
@@ -490,8 +486,6 @@ async def _refresh_draft_ui_for_terminate(update: Update, context: ContextTypes.
                 active_positions = POSITIONS_WWE
             elif "Test" in match.mode:
                 active_positions = POSITIONS_TEST
-            elif match.mode in ("PKL", "Kabaddi"):
-                active_positions = POSITIONS_PKL
             else:
                 active_positions = POSITIONS_T20
 
@@ -534,10 +528,6 @@ async def _refresh_draft_ui_for_terminate(update: Update, context: ContextTypes.
             elif "IPL" in match.mode:
                 media = (p_data.get("ipl_image_url") or p_data.get("image_url") or
                          p_data.get("ipl_image_file_id") or p_data.get("image_file_id") or DRAFT_BANNER_IPL)
-            elif match.mode in ("PKL", "Kabaddi"):
-                media = (p_data.get("cards", {}).get("pkl", {}).get("image") or
-                         p_data.get("pkl_image_url") or p_data.get("image_url") or
-                         p_data.get("image_file_id") or DRAFT_BANNER_PKL)
             else:
                 media = (p_data.get("odi_image_url") or p_data.get("image_url") or
                          p_data.get("odi_image_file_id") or p_data.get("image_file_id") or DRAFT_BANNER_ODI)
@@ -593,8 +583,6 @@ async def handle_draw(update: Update, context: ContextTypes.DEFAULT_TYPE, match:
         active_positions = POSITIONS_WWE
     elif "Test" in match.mode:
         active_positions = POSITIONS_TEST
-    elif match.mode in ("PKL", "Kabaddi"):
-        active_positions = POSITIONS_PKL
     else:
         active_positions = POSITIONS_T20
         
@@ -649,11 +637,6 @@ async def handle_draw(update: Update, context: ContextTypes.DEFAULT_TYPE, match:
         media = (p_data.get("ipl_image_url") or p_data.get("image_url") or
                  p_data.get("ipl_image_file_id") or p_data.get("image_file_id") or DRAFT_BANNER_IPL)
         default_banner = DRAFT_BANNER_IPL
-    elif match.mode in ("PKL", "Kabaddi"):
-        media = (p_data.get("cards", {}).get("pkl", {}).get("image") or
-                 p_data.get("pkl_image_url") or p_data.get("image_url") or
-                 p_data.get("image_file_id") or DRAFT_BANNER_PKL)
-        default_banner = DRAFT_BANNER_PKL
     else:  # ODI / International
         media = (p_data.get("odi_image_url") or p_data.get("image_url") or
                  p_data.get("odi_image_file_id") or p_data.get("image_file_id") or DRAFT_BANNER_ODI)
@@ -908,10 +891,6 @@ async def handle_replace_start(update: Update, context: ContextTypes.DEFAULT_TYP
     elif "IPL" in match.mode:
         media = (player.get("ipl_image_url") or player.get("image_url") or
                  player.get("ipl_image_file_id") or player.get("image_file_id") or DRAFT_BANNER_IPL)
-    elif match.mode in ("PKL", "Kabaddi"):
-        media = (player.get("cards", {}).get("pkl", {}).get("image") or
-                 player.get("pkl_image_url") or player.get("image_url") or
-                 player.get("image_file_id") or DRAFT_BANNER_PKL)
     else:  # ODI / International
         media = (player.get("odi_image_url") or player.get("image_url") or
                  player.get("odi_image_file_id") or player.get("image_file_id") or DRAFT_BANNER_ODI)
