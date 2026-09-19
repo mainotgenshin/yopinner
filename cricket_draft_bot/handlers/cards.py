@@ -4,6 +4,7 @@ Card System handlers: /pack, /inventory, /mycards, /viewcard, /trade_card, /ques
 All coin/card mutations are protected with per-user asyncio locks.
 """
 import asyncio
+import html
 import logging
 import time
 import uuid
@@ -361,9 +362,12 @@ async def cb_inv_open(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # ─────────────────────────────────────────────────────────────────────────────
 async def handle_mycards(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
-    await _show_mycards(update.effective_message, user.id, user.id,
+    user_id = user.id if user else (update.effective_chat.id if update.effective_chat else 0)
+    chat = update.effective_chat
+    is_dm = (chat.type == "private") if chat else False
+    await _show_mycards(update.effective_message, user_id, user_id,
                         sport_filter=None, page=0, edit=False,
-                        is_dm=(update.effective_chat.type == "private"),
+                        is_dm=is_dm,
                         context=context)
 
 async def _show_mycards(message_or_query, owner_id: int, viewer_id: int,
@@ -388,23 +392,24 @@ async def _show_mycards(message_or_query, owner_id: int, viewer_id: int,
     if not cards:
         if sf != "all":
             text = (
-                f"🃏 *Your Collection ({sport_name})*\n"
+                f"🃏 <b>Your Collection ({html.escape(sport_name)})</b>\n"
                 f"━━━━━━━━━━━━━━━━━━\n"
-                f"No {sport_name} cards yet!\n"
-                f"Use /pack to buy {sport_name} packs."
+                f"No {html.escape(sport_name)} cards yet!\n"
+                f"Use /pack to buy {html.escape(sport_name)} packs."
             )
         else:
-            text = "🃏 *Your Collection*\n━━━━━━━━━━━━━━━━━━\nNo cards yet! Use /pack to buy packs."
+            text = "🃏 <b>Your Collection</b>\n━━━━━━━━━━━━━━━━━━\nNo cards yet! Use /pack to buy packs."
     else:
-        filter_tag = f" ({sport_name})" if sport_name else ""
-        sort_label = get_sort_label(crit, order)
-        lines = [f"🃏 *Your Collection*{filter_tag}  _{sort_label}_\n━━━━━━━━━━━━━━━━━━"]
+        filter_tag = f" ({html.escape(sport_name)})" if sport_name else ""
+        sort_label = html.escape(get_sort_label(crit, order))
+        lines = [f"🃏 <b>Your Collection</b>{filter_tag}  <i>{sort_label}</i>\n━━━━━━━━━━━━━━━━━━"]
         for idx, c in enumerate(page_cards, start=start + 1):
             r_emoji = RARITY_EMOJI.get(c.get("rarity"), "⚪")
             f_label = FORMAT_LABEL.get(c.get("format"), str(c.get("format", "")).upper())
             qty_str = f" ×{c['quantity']}" if c.get("quantity", 1) > 1 else ""
             ovr_str = f" OVR {c['ovr']}" if crit == "ovr" and c.get("ovr") else ""
-            lines.append(f"`{idx}.` {r_emoji} {esc(c.get('name', 'Unknown'))} ({f_label}){qty_str}{ovr_str}")
+            c_name = html.escape(str(c.get('name', 'Unknown')))
+            lines.append(f"<code>{idx}.</code> {r_emoji} {c_name} ({f_label}){qty_str}{ovr_str}")
         lines.append(f"━━━━━━━━━━━━━━━━━━\nPage {page+1}/{total_pages}")
         text = "\n".join(lines)
 
@@ -437,43 +442,55 @@ async def _show_mycards(message_or_query, owner_id: int, viewer_id: int,
 
     if edit:
         try:
-            await message_or_query.edit_message_text(text, reply_markup=kb, parse_mode="Markdown")
+            await message_or_query.edit_message_text(text, reply_markup=kb, parse_mode="HTML")
         except Exception as e:
             err_str = str(e).lower()
             if "message is not modified" in err_str:
                 pass
-            elif "can't parse entities" in err_str or "parse" in err_str:
-                logger.warning(f"_show_mycards Markdown parse error: {e}, falling back to plain text")
+            else:
+                logger.warning(f"_show_mycards HTML edit error: {e}, falling back to plain text")
                 try:
                     await message_or_query.edit_message_text(text, reply_markup=kb)
                 except Exception:
                     pass
-            else:
-                logger.error(f"_show_mycards edit error: {e}")
     else:
         try:
-            await message_or_query.reply_text(text, reply_markup=kb, parse_mode="Markdown")
+            await message_or_query.reply_text(text, reply_markup=kb, parse_mode="HTML")
         except Exception as e:
-            if "can't parse entities" in str(e).lower() or "parse" in str(e).lower():
-                logger.warning(f"_show_mycards reply Markdown error: {e}, falling back to plain text")
-                await message_or_query.reply_text(text, reply_markup=kb)
-            else:
-                raise
+            logger.warning(f"_show_mycards reply error: {e}, falling back to plain text")
+            await message_or_query.reply_text(text, reply_markup=kb)
 
 
 async def cb_mc_page(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
+    if not query:
+        return
     parts = query.data.split("|")
+    if len(parts) < 4:
+        await query.answer()
+        return
     _, owner_id, sport_str, page_str = parts
-    if str(query.from_user.id) != owner_id:
-        await query.answer("⛔ Not your menu.", show_alert=True); return
-    if not _check_card_cooldown(query.from_user.id, "mc_page", 0.4):
+
+    if not _check_card_cooldown(query.from_user.id, "mc_page", 0.3):
         await query.answer("Slow down!", show_alert=False)
         return
+
+    if str(owner_id) not in ("1087968824", "777000") and str(query.from_user.id) != str(owner_id):
+        await query.answer("⛔ Not your menu.", show_alert=True)
+        return
+
     await query.answer()
     sport_filter = None if sport_str == "all" else sport_str
-    is_dm = (update.effective_chat.type == "private")
-    await _show_mycards(query, int(owner_id), query.from_user.id,
+    chat = update.effective_chat
+    is_dm = (chat.type == "private") if chat else False
+    try:
+        oid_int = int(owner_id)
+        if oid_int in (1087968824, 777000):
+            oid_int = query.from_user.id
+    except (ValueError, TypeError):
+        oid_int = query.from_user.id
+
+    await _show_mycards(query, oid_int, query.from_user.id,
                         sport_filter, int(page_str), edit=True,
                         is_dm=is_dm, context=context)
 
@@ -481,15 +498,32 @@ async def cb_mc_page(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def cb_mc_sort(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Sort button callback (backward-compat if old message button clicked)."""
     query = update.callback_query
-    _, owner_id, new_sort, sport_str = query.data.split("|")
-    if str(query.from_user.id) != owner_id:
-        await query.answer("⛔ Not your menu.", show_alert=True); return
-    context.user_data[f"sort_crit_{owner_id}"] = new_sort
-    order = context.user_data.get(f"sort_dir_{owner_id}", "desc")
+    if not query:
+        return
+    parts = query.data.split("|")
+    if len(parts) < 4:
+        await query.answer()
+        return
+    _, owner_id, new_sort, sport_str = parts
+
+    if str(owner_id) not in ("1087968824", "777000") and str(query.from_user.id) != str(owner_id):
+        await query.answer("⛔ Not your menu.", show_alert=True)
+        return
+
+    try:
+        oid_int = int(owner_id)
+        if oid_int in (1087968824, 777000):
+            oid_int = query.from_user.id
+    except (ValueError, TypeError):
+        oid_int = query.from_user.id
+
+    context.user_data[f"sort_crit_{query.from_user.id}"] = new_sort
+    order = context.user_data.get(f"sort_dir_{query.from_user.id}", "desc")
     await query.answer(f"Sorted by: {get_sort_label(new_sort, order)}")
     sport_filter = None if sport_str == "all" else sport_str
-    is_dm = (update.effective_chat.type == "private")
-    await _show_mycards(query, int(owner_id), query.from_user.id,
+    chat = update.effective_chat
+    is_dm = (chat.type == "private") if chat else False
+    await _show_mycards(query, oid_int, query.from_user.id,
                         sport_filter, 0, edit=True,
                         is_dm=is_dm, context=context)
 
@@ -581,12 +615,33 @@ async def handle_sort(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def cb_mc_collections(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Show full collection breakdown: rarity counts per format with total available n."""
     query = update.callback_query
-    _, owner_id = query.data.split("|")
-    if str(query.from_user.id) != owner_id:
-        await query.answer("⛔ Not your menu.", show_alert=True); return
+    if not query:
+        return
+    parts = query.data.split("|")
+    if len(parts) < 2:
+        await query.answer()
+        return
+    _, owner_id = parts
+
+    if not _check_card_cooldown(query.from_user.id, "mc_collections", 0.3):
+        await query.answer("Slow down!", show_alert=False)
+        return
+
+    if str(owner_id) not in ("1087968824", "777000") and str(query.from_user.id) != str(owner_id):
+        await query.answer("⛔ Not your menu.", show_alert=True)
+        return
+
     await query.answer()
+
+    try:
+        oid_int = int(owner_id)
+        if oid_int in (1087968824, 777000):
+            oid_int = query.from_user.id
+    except (ValueError, TypeError):
+        oid_int = query.from_user.id
+
     from database import get_user_cards, get_catalog_totals
-    all_cards = await get_user_cards(int(owner_id))
+    all_cards = await get_user_cards(oid_int)
     cat_totals = await get_catalog_totals()
     cat_fmt_rarity = cat_totals.get("by_format_rarity", {})
     cat_fmt_total  = cat_totals.get("by_format", {})
@@ -608,7 +663,7 @@ async def cb_mc_collections(update: Update, context: ContextTypes.DEFAULT_TYPE):
             counts[fmt] = {"common": 0, "rare": 0, "epic": 0, "legend": 0}
         counts[fmt][rarity] = counts[fmt].get(rarity, 0) + 1
 
-    lines = ["📊 *Your Collections*", "━━━━━━━━━━━━━━━━━━"]
+    lines = ["📊 <b>Your Collections</b>", "━━━━━━━━━━━━━━━━━━"]
 
     for fmt in FORMAT_ORDER:
         if fmt not in counts:
@@ -619,21 +674,29 @@ async def cb_mc_collections(update: Update, context: ContextTypes.DEFAULT_TYPE):
         fmt_owned = sum(counts[fmt].get(r, 0) for r in RARITY_ORDER)
         tot_fmt = cat_fmt_total.get(fmt, 0)
 
-        lines.append(f"\n{emoji} *{f_label}*")
+        lines.append(f"\n{emoji} <b>{f_label}</b>")
         for r in RARITY_ORDER:
             owned_r = counts[fmt].get(r, 0)
             tot_r = cat_fmt_rarity.get((fmt, r), 0)
             if owned_r > 0:
-                lines.append(f"  {RARITY_EMOJI.get(r, '⚪')} {r.title()}: *{owned_r}/{tot_r}*")
-        lines.append(f"  Total: *{fmt_owned}/{tot_fmt} cards*")
+                lines.append(f"  {RARITY_EMOJI.get(r, '⚪')} {r.title()}: <b>{owned_r}/{tot_r}</b>")
+        lines.append(f"  Total: <b>{fmt_owned}/{tot_fmt} cards</b>")
 
     grand_unique = len(all_cards)
     lines.append(f"\n━━━━━━━━━━━━━━━━━━")
-    lines.append(f"🃏 Grand Total: *{grand_unique}/{cat_grand} cards*")
+    lines.append(f"🃏 Grand Total: <b>{grand_unique}/{cat_grand} cards</b>")
 
     text = "\n".join(lines)
     back_kb = InlineKeyboardMarkup([[InlineKeyboardButton("◀️ Back to Cards", callback_data=f"mc_page|{owner_id}|all|0")]])
-    await query.edit_message_text(text, reply_markup=back_kb, parse_mode="Markdown")
+    try:
+        await query.edit_message_text(text, reply_markup=back_kb, parse_mode="HTML")
+    except Exception as e:
+        if "message is not modified" not in str(e).lower():
+            logger.warning(f"cb_mc_collections edit error: {e}, falling back to plain text")
+            try:
+                await query.edit_message_text(text, reply_markup=back_kb)
+            except Exception:
+                pass
 
 # ─────────────────────────────────────────────────────────────────────────────
 # /viewcard
