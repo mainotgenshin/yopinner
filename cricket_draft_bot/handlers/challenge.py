@@ -1039,4 +1039,46 @@ async def handle_join(update: Update, context: ContextTypes.DEFAULT_TYPE):
     asyncio.create_task(_bg_pin())
 
 
+# ── PKL Challenge ─────────────────────────────────────────────────────────────
 
+async def challenge_pkl(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Start a Pro Kabaddi League draft challenge."""
+    if _is_stale_command(update): return
+    if update.effective_chat.type == "private":
+        await update.effective_message.reply_text(
+            "🤸 PKL Challenges can only be started in *group chats*!",
+            parse_mode="Markdown"
+        )
+        return
+
+    from utils.banners import get_banner_for_mode
+    owner_id = update.effective_user.id
+    chat_id  = update.effective_chat.id
+
+    _reply_obj = getattr(update, 'effective_message', None) or getattr(update, 'callback_query', None)
+    if not await _check_match_limit(owner_id, _reply_obj):
+        return
+
+    key      = f"join_PKL_{owner_id}"
+    keyboard = [[InlineKeyboardButton("⚔️ Join Game", callback_data=key)]]
+    name     = html.escape(update.effective_user.first_name)
+    caption  = (
+        f"🤸 <b>PKL Challenge!</b>\n"
+        f"User: {name}\nMode: Pro Kabaddi League\n"
+        f"Waiting for opponent... <i>(expires in 2 min)</i>"
+    )
+    banner   = await get_banner_for_mode("pkl")
+    href_text = f'<a href="{banner}">&#8205;</a>' + caption if banner and str(banner).startswith("http") else caption
+
+    msg = await _send_challenge_msg(context.bot, chat_id, href_text, caption,
+                                    banner, InlineKeyboardMarkup(keyboard))
+    if not msg:
+        return
+
+    _ch_key = f"{owner_id}_PKL_{msg.message_id}"
+    task = asyncio.create_task(_expire_challenge(_ch_key, owner_id, chat_id, msg.message_id, context.bot))
+    _pending_challenges[_ch_key] = {'task': task, 'chat_id': chat_id, 'message_id': msg.message_id}
+    try:
+        await save_pending_challenge(owner_id, chat_id, msg.message_id, "PKL")
+    except Exception:
+        pass
