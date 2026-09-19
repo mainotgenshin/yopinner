@@ -1655,3 +1655,37 @@ async def get_botstatus_data() -> dict:
     }
 
 
+# ── User Card Sorting Preference ─────────────────────────────────────────────
+_USER_SORT_CACHE: dict[int, tuple[str, str]] = {}
+
+async def get_user_card_sort(user_id: int) -> tuple[str, str]:
+    """Returns (criteria, order) for user_id. Defaults to ('rarity', 'desc'). Cached in memory."""
+    if user_id in _USER_SORT_CACHE:
+        return _USER_SORT_CACHE[user_id]
+    db = get_db()
+    try:
+        doc = await db.users.find_one({"user_id": user_id}, {"card_sort": 1})
+        if doc and "card_sort" in doc:
+            cs = doc["card_sort"]
+            res = (cs.get("crit", "rarity"), cs.get("order", "desc"))
+            _USER_SORT_CACHE[user_id] = res
+            return res
+    except Exception:
+        pass
+    return ("rarity", "desc")
+
+async def save_user_card_sort(user_id: int, crit: str, order: str) -> None:
+    """Persists user's sort preference in MongoDB and updates memory cache."""
+    _USER_SORT_CACHE[user_id] = (crit, order)
+    db = get_db()
+    try:
+        await db.users.update_one(
+            {"user_id": user_id},
+            {"$set": {"card_sort": {"crit": crit, "order": order}}},
+            upsert=True
+        )
+    except Exception:
+        pass
+
+
+
