@@ -868,6 +868,8 @@ async def handle_mode_pick_callback(update: Update, context: ContextTypes.DEFAUL
 
 async def handle_join(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
+    logger = logging.getLogger("DEBUG_JOIN")
+    logger.info(f"⚔️ [HANDLE_JOIN] Clicked data='{query.data}' | clicker_user_id={query.from_user.id} ({query.from_user.first_name})")
     
     parts = query.data.split('_') # join, MODE, OWNER_ID, [TARGET_ID]
     mode = parts[1]
@@ -878,16 +880,19 @@ async def handle_join(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if len(parts) > 3:
         target_id = int(parts[3])
         if query.from_user.id != target_id:
+            logger.warning(f"⚠️ [HANDLE_JOIN] Not target user: clicker={query.from_user.id} != target={target_id}")
             await query.answer("⛔ This challenge is not for you!", show_alert=True)
             return
 
     # Check Self-Join FIRST — before touching the timer
     if query.from_user.id == owner_id:
+        logger.warning(f"⚠️ [HANDLE_JOIN] Self-join blocked: clicker={query.from_user.id} is the challenge owner {owner_id}")
         await query.answer("⛔ You cannot play against yourself!", show_alert=True)
         return
 
     from database import is_user_banned
     if await is_user_banned(query.from_user.id):
+        logger.warning(f"⚠️ [HANDLE_JOIN] Banned user blocked: {query.from_user.id}")
         await query.answer("⛔ You are banned from using this bot.", show_alert=True)
         return
 
@@ -900,10 +905,12 @@ async def handle_join(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
     if len(joiner_matches) >= 1:
+        logger.warning(f"⚠️ [HANDLE_JOIN] Joiner {query.from_user.id} already in active match: {joiner_matches}")
         # Re-use _check_match_limit just for the reply formatting
         await _check_match_limit(query.from_user.id, query)
         return
     if len(owner_matches) >= 1:
+        logger.warning(f"⚠️ [HANDLE_JOIN] Owner {owner_id} already in active match: {owner_matches}")
         await query.answer("⛔ The challenger already has an active match.", show_alert=True)
         return
 
@@ -912,6 +919,7 @@ async def handle_join(update: Update, context: ContextTypes.DEFAULT_TYPE):
     from database import find_and_delete_pending_challenge
     claimed = await find_and_delete_pending_challenge(owner_id, mode)
     if not claimed:
+        logger.warning(f"⚠️ [HANDLE_JOIN] Pending challenge not found/claimed for owner={owner_id}, mode={mode}")
         # Challenge is already accepted or expired.
         await query.answer("⚠️ Challenge has already been accepted or expired!", show_alert=True)
         try:
