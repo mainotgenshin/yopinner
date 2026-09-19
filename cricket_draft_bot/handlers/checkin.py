@@ -5,12 +5,16 @@ Daily check-in system: /checkin
 - Streak tracked day-by-day (UTC)
 - Every 7th consecutive day: 50 coins + random card (60% common, 30% rare, 10% epic)
 """
+import time
 import logging
 from telegram import Update
 from telegram.ext import ContextTypes
 from telegram.helpers import escape_markdown
 
 logger = logging.getLogger(__name__)
+
+_CHECKIN_COOLDOWNS: dict = {}
+_CHECKIN_COOLDOWN_SECS = 4.0
 
 RARITY_EMOJI = {"common": "⚪", "rare": "🔵", "epic": "🟣", "legend": "🟡"}
 FORMAT_LABEL  = {"ipl": "IPL", "odi": "ODI", "test": "Test",
@@ -22,8 +26,20 @@ def esc(t):
 
 async def handle_checkin(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user    = update.effective_user
+    if not user:
+        return
     user_id = user.id
     msg     = update.effective_message
+
+    now = time.time()
+    if now - _CHECKIN_COOLDOWNS.get(user_id, 0) < _CHECKIN_COOLDOWN_SECS:
+        return  # Drop rapid spam to protect group from rate limits
+    _CHECKIN_COOLDOWNS[user_id] = now
+    if len(_CHECKIN_COOLDOWNS) > 200:
+        cutoff = now - 60
+        for k in list(_CHECKIN_COOLDOWNS.keys()):
+            if _CHECKIN_COOLDOWNS[k] < cutoff:
+                _CHECKIN_COOLDOWNS.pop(k, None)
 
     from database import do_checkin, get_checkin_status
 
