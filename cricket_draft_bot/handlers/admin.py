@@ -2873,6 +2873,7 @@ async def remove_player_pkl(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # ═══════════════════════════════════════════════════════════════════════════
 
 _BOT_START_TIME: float = __import__("time").time()
+_BOTSTATUS_LAST_RUN: float = 0.0
 
 async def handle_botstatus(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """/botstatus — Show bot health metrics. Mod-only."""
@@ -2883,6 +2884,13 @@ async def handle_botstatus(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     import time, asyncio
+    global _BOTSTATUS_LAST_RUN
+    now = time.time()
+    if now - _BOTSTATUS_LAST_RUN < 5.0:
+        await update.effective_message.reply_text("⏳ Please wait 5s before checking /botstatus again.")
+        return
+    _BOTSTATUS_LAST_RUN = now
+
     from database import get_botstatus_data, get_db
 
     msg = await update.effective_message.reply_text("⏳ Fetching status…")
