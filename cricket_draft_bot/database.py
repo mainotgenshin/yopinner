@@ -91,7 +91,6 @@ async def init_db():
         await db.players.create_index([("cards.test.rarity", ASCENDING)])
         await db.players.create_index([("cards.wwe.rarity", ASCENDING)])
         await db.players.create_index([("cards.fifa.rarity", ASCENDING)])
-        await db.players.create_index([("cards.pkl.rarity", ASCENDING)])
         # H2H result lookups by player pair
         await db.match_results.create_index([("player_a_id", ASCENDING), ("player_b_id", ASCENDING)])
         await db.match_results.create_index([("played_at", ASCENDING)])
@@ -147,10 +146,6 @@ async def get_player_by_name_and_sport(name_query: str, sport: str) -> Optional[
     if sport == "cricket":
         # Old cricket players may not have a sport field — include both
         query = {"$and": [name_filter, {"$or": [{"sport": "cricket"}, {"sport": {"$exists": False}}]}]}
-    elif sport in ("kabaddi", "pkl"):
-        query = {"$and": [name_filter, {"$or": [{"sport": "kabaddi"}, {"sport": "pkl"}]}]}
-    elif sport in ("football", "fifa"):
-        query = {"$and": [name_filter, {"$or": [{"sport": "football"}, {"sport": "fifa"}]}]}
     else:
         query = {"$and": [name_filter, {"sport": sport}]}
 
@@ -246,8 +241,6 @@ async def get_eligible_players_for_mode(mode: str) -> List[str]:
     elif mode == "WWE Women":
         # WWE Women: Women superstars only
         query = {"sport": "wwe", "gender": "female"}
-    elif mode in ("PKL", "Kabaddi"):
-        query = {"sport": "kabaddi", "pkl_active": {"$ne": False}}
     else:
         # Cricket — map mode string to DB stats key
         _m = mode.lower()
@@ -686,59 +679,29 @@ async def get_user_cards(user_id: int, sport_filter: str = None) -> list:
     result = []
     for card in cards:
         pid = card["player_id"]
-        fmt = card.get("format", "")
+        fmt = card["format"]
         p = players_by_id.get(pid)
         if not p:
             continue
-
-        # Determine canonical sport for this card from format first, then player doc
-        if fmt in ("ipl", "odi", "test"):
-            card_sport = "cricket"
-        elif fmt == "fifa":
-            card_sport = "football"
-        elif fmt == "pkl":
-            card_sport = "kabaddi"
-        elif fmt == "wwe":
-            card_sport = "wwe"
-        else:
-            ps = str(p.get("sport") or "").lower()
-            if ps in ("fifa", "football"):
-                card_sport = "football"
-            elif ps in ("pkl", "kabaddi"):
-                card_sport = "kabaddi"
-            elif ps == "wwe":
-                card_sport = "wwe"
-            else:
-                card_sport = "cricket"
-
-        if sport_filter and sport_filter != "all":
-            sf = str(sport_filter).lower()
-            if sf in ("cricket", "ipl", "odi", "test"):
-                target_sport = "cricket"
-            elif sf in ("football", "fifa"):
-                target_sport = "football"
-            elif sf in ("kabaddi", "pkl"):
-                target_sport = "kabaddi"
-            elif sf == "wwe":
-                target_sport = "wwe"
-            else:
-                target_sport = sf
-            if card_sport != target_sport:
-                continue
-
-        cards_dict = p.get("cards") if isinstance(p.get("cards"), dict) else {}
-        card_data = cards_dict.get(fmt, {}) if isinstance(cards_dict.get(fmt), dict) else {}
-        rarity = card_data.get("rarity") or p.get("rarity") or "common"
-        ovr = card_data.get("ovr") or p.get("ovr") or 70
+        card_data = p.get("cards", {}).get(fmt, {})
+        if not card_data:
+            continue
+        p_sport = p.get("sport", "cricket")
+        if sport_filter == "cricket" and p_sport in ("wwe", "football"):
+            continue
+        if sport_filter == "football" and p_sport != "football":
+            continue
+        if sport_filter == "wwe" and p_sport != "wwe":
+            continue
         image = _get_card_image(p, fmt)
         result.append({
             "user_id":   user_id,
             "player_id": pid,
             "format":    fmt,
-            "quantity":  card.get("quantity", 1),
-            "name":      p.get("name", "Unknown"),
-            "rarity":    rarity,
-            "ovr":       ovr,
+            "quantity":  card["quantity"],
+            "name":      p["name"],
+            "rarity":    card_data.get("rarity", "common"),
+            "ovr":       card_data.get("ovr", 0),
             "image":     image,
         })
     return result
@@ -773,13 +736,6 @@ def _get_card_image(player_doc: dict, fmt: str) -> Optional[str]:
         return (player_doc.get("image_file_id") or
                 player_doc.get("fifa_image_url") or
                 player_doc.get("image_url"))
-    elif fmt == "pkl":
-        cards_dict = player_doc.get("cards") if isinstance(player_doc.get("cards"), dict) else {}
-        pkl_card = cards_dict.get("pkl") if isinstance(cards_dict.get("pkl"), dict) else {}
-        return (pkl_card.get("image") or
-                player_doc.get("pkl_image_url") or
-                player_doc.get("image_url") or
-                player_doc.get("image_file_id"))
     return player_doc.get("image_url") or player_doc.get("image_file_id")
 
 def _get_card_image_url(player_doc: dict, fmt: str) -> Optional[str]:
@@ -800,12 +756,6 @@ def _get_card_image_url(player_doc: dict, fmt: str) -> Optional[str]:
         if url and "ratings-images-prod.pulse.ea.com" in url and player_doc.get("image_file_id"):
             return None
         return url if url and str(url).startswith("http") else None
-    elif fmt == "pkl":
-        cards_dict = player_doc.get("cards") if isinstance(player_doc.get("cards"), dict) else {}
-        pkl_card = cards_dict.get("pkl") if isinstance(cards_dict.get("pkl"), dict) else {}
-        url = (pkl_card.get("image") or
-               player_doc.get("pkl_image_url") or
-               player_doc.get("image_url"))
     else:
         url = player_doc.get("image_url")
     return url if url and url.startswith("http") else None
@@ -1052,7 +1002,7 @@ async def _build_card_pool(sport: str) -> list:
     pool = []
 
     if sport == "cricket":
-        query = {"sport": {"$nin": ["wwe", "football", "kabaddi"]}, "cards": {"$exists": True}}
+        query = {"sport": {"$nin": ["wwe", "football"]}, "cards": {"$exists": True}}
         formats = ["ipl", "odi", "test"]
     elif sport == "wwe":
         query = {"sport": "wwe", "gender": {"$ne": "female"}, "cards": {"$exists": True}}
@@ -1060,9 +1010,6 @@ async def _build_card_pool(sport: str) -> list:
     elif sport == "football":
         query = {"sport": "football", "cards": {"$exists": True}}
         formats = ["fifa"]
-    elif sport in ("kabaddi", "pkl"):
-        query = {"sport": "kabaddi", "cards": {"$exists": True}}
-        formats = ["pkl"]
     else:
         return []
 
@@ -1070,7 +1017,7 @@ async def _build_card_pool(sport: str) -> list:
                                             "ipl_image_url": 1, "odi_image_url": 1, "image_url": 1,
                                             "ipl_image_file_id": 1, "image_file_id": 1,
                                             "wwe_image_url": 1, "fifa_image_url": 1,
-                                            "test_image_url": 1, "pkl_image_url": 1}):
+                                            "test_image_url": 1}):
 
         for fmt in formats:
             card_data = p.get("cards", {}).get(fmt)
@@ -1118,8 +1065,7 @@ async def get_catalog_totals() -> dict:
     pools = [
         await _build_card_pool("cricket"),
         await _build_card_pool("football"),
-        await _build_card_pool("wwe"),
-        await _build_card_pool("kabaddi")
+        await _build_card_pool("wwe")
     ]
     by_fmt_rarity = {}
     by_fmt = {}
@@ -1149,7 +1095,7 @@ async def warmup_card_pools() -> None:
     """
     import logging as _log
     _logger = _log.getLogger(__name__)
-    for sport in ("cricket", "football", "wwe", "kabaddi"):
+    for sport in ("cricket", "football", "wwe"):
         try:
             pool = await _build_card_pool(sport)
             _logger.debug(f"Card pool warmed: {sport} ({len(pool)} cards)")
@@ -1415,277 +1361,4 @@ async def unban_user(user_id: int) -> bool:
     )
     _banned_users_cache.discard(user_id)
     return True
-
-
-# ═══════════════════════════════════════════════════════════════════════════
-# DAILY CHECK-IN SYSTEM
-# ═══════════════════════════════════════════════════════════════════════════
-
-import datetime as _datetime
-
-def _checkin_day_key() -> str:
-    """Returns today's date string in UTC as YYYY-MM-DD for dedup."""
-    return _datetime.datetime.utcnow().strftime("%Y-%m-%d")
-
-async def get_checkin_status(user_id: int) -> dict:
-    """
-    Returns the user's check-in state:
-    {checkin_streak, last_checkin_day, checked_in_today}
-    """
-    db = get_db()
-    doc = await db.users.find_one(
-        {"user_id": user_id},
-        {"checkin_streak": 1, "last_checkin_day": 1, "_id": 0}
-    )
-    today = _checkin_day_key()
-    if not doc:
-        return {"checkin_streak": 0, "last_checkin_day": None, "checked_in_today": False}
-
-    last = doc.get("last_checkin_day")
-    streak = doc.get("checkin_streak", 0)
-    checked_in_today = (last == today)
-    return {
-        "checkin_streak": streak,
-        "last_checkin_day": last,
-        "checked_in_today": checked_in_today,
-    }
-
-
-async def do_checkin(user_id: int) -> dict:
-    """
-    Performs a daily check-in. Returns:
-    {
-      success: bool,           # False if already checked in today
-      coins_awarded: int,
-      new_streak: int,
-      milestone: bool,         # True if this is a 7-day milestone
-      card_awarded: dict|None  # {player_id, name, format, rarity, ovr} or None
-    }
-    """
-    import random as _random
-
-    db = get_db()
-    today = _checkin_day_key()
-
-    doc = await db.users.find_one(
-        {"user_id": user_id},
-        {"checkin_streak": 1, "last_checkin_day": 1, "_id": 0}
-    )
-
-    last_day = (doc or {}).get("last_checkin_day")
-    streak   = (doc or {}).get("checkin_streak", 0)
-
-    # Already checked in today?
-    if last_day == today:
-        return {"success": False, "coins_awarded": 0, "new_streak": streak,
-                "milestone": False, "card_awarded": None}
-
-    # Calculate yesterday
-    yesterday = (_datetime.datetime.utcnow() - _datetime.timedelta(days=1)).strftime("%Y-%m-%d")
-
-    if last_day == yesterday:
-        new_streak = streak + 1  # consecutive day
-    else:
-        new_streak = 1           # streak broken or first check-in
-
-    coins = 50
-    is_milestone = (new_streak % 7 == 0)
-    card_awarded = None
-
-    if is_milestone:
-        # Award a random card from the pool (common 60%, rare 30%, epic 10%)
-        rarity_roll = _random.random()
-        if rarity_roll < 0.60:
-            target_rarity = "common"
-        elif rarity_roll < 0.90:
-            target_rarity = "rare"
-        else:
-            target_rarity = "epic"
-
-        # Pick a random player with a card of that rarity (any format/sport)
-        # Try multiple formats, pick a random matching player
-        fmt_fields = [
-            ("cards.odi.rarity",  "odi"),
-            ("cards.ipl.rarity",  "ipl"),
-            ("cards.test.rarity", "test"),
-            ("cards.pkl.rarity",  "pkl"),
-            ("cards.wwe.rarity",  "wwe"),
-            ("cards.fifa.rarity", "fifa"),
-        ]
-        _random.shuffle(fmt_fields)
-
-        for rarity_field, fmt in fmt_fields:
-            candidates = await db.players.find(
-                {rarity_field: target_rarity},
-                {"player_id": 1, "name": 1, f"cards.{fmt}": 1, "_id": 0}
-            ).to_list(200)
-
-            if candidates:
-                chosen_player = _random.choice(candidates)
-                card_data = chosen_player.get("cards", {}).get(fmt, {})
-                card_awarded = {
-                    "player_id": chosen_player["player_id"],
-                    "name":      chosen_player["name"],
-                    "format":    fmt,
-                    "rarity":    card_data.get("rarity", target_rarity),
-                    "ovr":       card_data.get("ovr", 0),
-                }
-                # Add card to user inventory
-                await add_card_to_user(user_id, chosen_player["player_id"], fmt, 1)
-                break
-
-    # Persist check-in
-    await db.users.update_one(
-        {"user_id": user_id},
-        {"$set": {
-            "checkin_streak":   new_streak,
-            "last_checkin_day": today,
-        }},
-        upsert=True
-    )
-
-    # Award coins
-    await add_card_coins(user_id, coins)
-
-    return {
-        "success":       True,
-        "coins_awarded": coins,
-        "new_streak":    new_streak,
-        "milestone":     is_milestone,
-        "card_awarded":  card_awarded,
-    }
-
-
-# ═══════════════════════════════════════════════════════════════════════════
-# ACHIEVEMENT SYSTEM
-# ═══════════════════════════════════════════════════════════════════════════
-
-async def get_achievements(user_id: int) -> list:
-    """Returns list of achievement strings for a user."""
-    db = get_db()
-    doc = await db.users.find_one({"user_id": user_id}, {"achievements": 1, "_id": 0})
-    return (doc or {}).get("achievements", [])
-
-
-async def add_achievement(user_id: int, text: str) -> int:
-    """
-    Adds an achievement to a user. Returns total achievement count.
-    """
-    db = get_db()
-    result = await db.users.find_one_and_update(
-        {"user_id": user_id},
-        {"$push": {"achievements": text}},
-        upsert=True,
-        return_document=True
-    )
-    return len((result or {}).get("achievements", [text]))
-
-
-async def remove_achievement(user_id: int, index: int) -> tuple[bool, str]:
-    """
-    Removes achievement by 1-based index.
-    Returns (success, removed_text_or_error).
-    """
-    db = get_db()
-    doc = await db.users.find_one({"user_id": user_id}, {"achievements": 1, "_id": 0})
-    achievements = (doc or {}).get("achievements", [])
-
-    if not achievements:
-        return False, "No achievements found."
-    if index < 1 or index > len(achievements):
-        return False, f"Invalid number. Must be 1–{len(achievements)}."
-
-    removed = achievements[index - 1]
-    achievements.pop(index - 1)
-    await db.users.update_one(
-        {"user_id": user_id},
-        {"$set": {"achievements": achievements}}
-    )
-    return True, removed
-
-
-# ═══════════════════════════════════════════════════════════════════════════
-# BOT STATUS HELPERS
-# ═══════════════════════════════════════════════════════════════════════════
-
-async def get_botstatus_data() -> dict:
-    """
-    Returns a dict of bot status metrics for /botstatus command.
-    All DB calls run concurrently.
-    """
-    import asyncio as _asyncio
-    db = get_db()
-
-    async def _count_users():
-        return await db.users.count_documents({})
-
-    async def _count_cards():
-        return await db.user_cards.count_documents({})
-
-    async def _count_active_matches():
-        """Returns total active count + breakdown by mode."""
-        cursor = db.matches.find(
-            {"state_data.state": {"$in": ["DRAFTING", "ACTIVE", "IN_PROGRESS"]}},
-            {"state_data.mode": 1, "_id": 0}
-        )
-        docs = await cursor.to_list(500)
-        mode_counts: dict = {}
-        for d in docs:
-            mode = (d.get("state_data") or {}).get("mode", "Unknown") or "Unknown"
-            # Normalise
-            if "IPL" in mode:       key = "IPL"
-            elif "Test" in mode:    key = "Test"
-            elif "FIFA" in mode:    key = "FIFA"
-            elif "WWE" in mode:     key = "WWE"
-            elif "PKL" in mode or "Kabaddi" in mode: key = "PKL"
-            else:                   key = "ODI"
-            mode_counts[key] = mode_counts.get(key, 0) + 1
-        return len(docs), mode_counts
-
-    users, cards, (total_active, mode_counts) = await _asyncio.gather(
-        _count_users(), _count_cards(), _count_active_matches()
-    )
-    return {
-        "total_users":   users,
-        "total_cards":   cards,
-        "active_total":  total_active,
-        "active_modes":  mode_counts,
-        "cache_size":    len(_player_cache),
-        "cache_max":     CACHE_MAX_SIZE,
-    }
-
-
-# ── User Card Sorting Preference ─────────────────────────────────────────────
-_USER_SORT_CACHE: dict[int, tuple[str, str]] = {}
-
-async def get_user_card_sort(user_id: int) -> tuple[str, str]:
-    """Returns (criteria, order) for user_id. Defaults to ('rarity', 'desc'). Cached in memory."""
-    if user_id in _USER_SORT_CACHE:
-        return _USER_SORT_CACHE[user_id]
-    db = get_db()
-    try:
-        doc = await db.users.find_one({"user_id": user_id}, {"card_sort": 1})
-        if doc and "card_sort" in doc:
-            cs = doc["card_sort"]
-            res = (cs.get("crit", "rarity"), cs.get("order", "desc"))
-            _USER_SORT_CACHE[user_id] = res
-            return res
-    except Exception:
-        pass
-    return ("rarity", "desc")
-
-async def save_user_card_sort(user_id: int, crit: str, order: str) -> None:
-    """Persists user's sort preference in MongoDB and updates memory cache."""
-    _USER_SORT_CACHE[user_id] = (crit, order)
-    db = get_db()
-    try:
-        await db.users.update_one(
-            {"user_id": user_id},
-            {"$set": {"card_sort": {"crit": crit, "order": order}}},
-            upsert=True
-        )
-    except Exception:
-        pass
-
-
 
