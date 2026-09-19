@@ -698,9 +698,9 @@ if __name__ == '__main__':
         .token(BOT_TOKEN)
         .rate_limiter(AIORateLimiter(
             max_retries=3,
-            overall_max_rate=25,     # Global: 25/sec safely under Telegram's 30/sec hard limit
+            overall_max_rate=30,     # Global Telegram limit
             overall_time_period=1,
-            group_max_rate=18,       # Per-chat: 18/min (debouncer sliding gate handles the real 16/min enforcement)
+            group_max_rate=35,       # Increased to prevent 20s+ freezing on active group buttons/cards
             group_time_period=60,
         ))
 
@@ -890,9 +890,11 @@ if __name__ == '__main__':
     from handlers.checkin import handle_checkin
     application.add_handler(CommandHandler('checkin', handle_checkin))
 
-    # ── Sort ─────────────────────────────────────────────────────────────────
-    from handlers.cards import handle_sort
+    # ── Sort & Collections ───────────────────────────────────────────────────
+    from handlers.cards import handle_sort, handle_collections
     application.add_handler(CommandHandler('sort', handle_sort))
+    application.add_handler(CommandHandler('collections', handle_collections))
+    application.add_handler(CommandHandler('collection',  handle_collections))
 
     # Standings / Leaderboard
     from handlers.standings import handle_standings, handle_standings_callback
@@ -994,6 +996,19 @@ if __name__ == '__main__':
     # Trade System
     
     application.add_error_handler(error_handler)
+
+    # Clear any lingering webhook directly via Telegram API before polling starts.
+    # This prevents the 'Conflict: can't use getUpdates method while webhook is active' error
+    # after container restarts or deployment overlaps.
+    try:
+        import urllib.request
+        import json
+        _wh_url = f"https://api.telegram.org/bot{BOT_TOKEN}/deleteWebhook?drop_pending_updates=true"
+        with urllib.request.urlopen(_wh_url, timeout=10) as _resp:
+            _wh_data = json.loads(_resp.read().decode())
+            logging.getLogger(__name__).info(f"Startup deleteWebhook check: {_wh_data}")
+    except Exception as _wh_err:
+        logging.getLogger(__name__).warning(f"Startup deleteWebhook check skipped or failed: {_wh_err}")
 
     print("Bot is running (Polling mode, Free tier compatible)...")
     # drop_pending_updates=True: on restart, skip all queued updates that
