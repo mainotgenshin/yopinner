@@ -1052,7 +1052,7 @@ async def _build_card_pool(sport: str) -> list:
     pool = []
 
     if sport == "cricket":
-        query = {"sport": {"$nin": ["wwe", "football"]}, "cards": {"$exists": True}}
+        query = {"sport": {"$nin": ["wwe", "football", "kabaddi"]}, "cards": {"$exists": True}}
         formats = ["ipl", "odi", "test"]
     elif sport == "wwe":
         query = {"sport": "wwe", "gender": {"$ne": "female"}, "cards": {"$exists": True}}
@@ -1060,6 +1060,9 @@ async def _build_card_pool(sport: str) -> list:
     elif sport == "football":
         query = {"sport": "football", "cards": {"$exists": True}}
         formats = ["fifa"]
+    elif sport in ("kabaddi", "pkl"):
+        query = {"sport": "kabaddi", "cards": {"$exists": True}}
+        formats = ["pkl"]
     else:
         return []
 
@@ -1067,7 +1070,7 @@ async def _build_card_pool(sport: str) -> list:
                                             "ipl_image_url": 1, "odi_image_url": 1, "image_url": 1,
                                             "ipl_image_file_id": 1, "image_file_id": 1,
                                             "wwe_image_url": 1, "fifa_image_url": 1,
-                                            "test_image_url": 1}):
+                                            "test_image_url": 1, "pkl_image_url": 1}):
 
         for fmt in formats:
             card_data = p.get("cards", {}).get(fmt)
@@ -1115,7 +1118,8 @@ async def get_catalog_totals() -> dict:
     pools = [
         await _build_card_pool("cricket"),
         await _build_card_pool("football"),
-        await _build_card_pool("wwe")
+        await _build_card_pool("wwe"),
+        await _build_card_pool("kabaddi")
     ]
     by_fmt_rarity = {}
     by_fmt = {}
@@ -1145,7 +1149,7 @@ async def warmup_card_pools() -> None:
     """
     import logging as _log
     _logger = _log.getLogger(__name__)
-    for sport in ("cricket", "football", "wwe"):
+    for sport in ("cricket", "football", "wwe", "kabaddi"):
         try:
             pool = await _build_card_pool(sport)
             _logger.debug(f"Card pool warmed: {sport} ({len(pool)} cards)")
