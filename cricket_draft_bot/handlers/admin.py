@@ -2671,3 +2671,306 @@ async def handle_unban_command(update: Update, context: ContextTypes.DEFAULT_TYP
         parse_mode="HTML"
     )
 
+
+# ═══════════════════════════════════════════════════════════════════════════
+# PKL ADMIN COMMANDS
+# ═══════════════════════════════════════════════════════════════════════════
+
+async def add_player_pkl(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """
+    /add_playerpkl name=Pardeep Narwal cap=99 raider=99 ldef=75 rdef=75 ar=92 ovr=99 rarity=legend image=URL
+
+    Adds or updates a PKL player in the database.
+    stats are stored in stats.pkl.{captain,raider,left_defender,right_defender,all_rounder}
+    cards entry stored in cards.pkl.{rarity,ovr,image}
+    """
+    if not await check_admin(update):
+        return
+
+    text = update.effective_message.text
+    for cmd in ["/add_playerpkl", "/addplayerpkl"]:
+        text = text.replace(cmd, "").strip()
+
+    if not text or "=" not in text:
+        await update.effective_message.reply_text(
+            "⚠️ *PKL Player Usage:*\n\n"
+            "`/add_playerpkl name=Pardeep Narwal cap=99 raider=99 ldef=75 rdef=75 ar=92 ovr=99 rarity=legend image=URL`\n\n"
+            "Rarities: `common` `rare` `epic` `legend`",
+            parse_mode="Markdown"
+        )
+        return
+
+    import re
+    keys = "name|cap|raider|ldef|rdef|ar|ovr|rarity|image"
+    pattern = rf'({keys})\s*=\s*(.*?)(?=\s+(?:{keys})\s*=|$)'
+    raw = text + " "
+    parsed = {m.group(1).lower(): m.group(2).strip()
+              for m in re.finditer(pattern, raw, re.IGNORECASE | re.DOTALL)}
+
+    required = ["name", "ovr", "rarity", "image"]
+    missing = [k for k in required if k not in parsed]
+    if missing:
+        await update.effective_message.reply_text(f"❌ Missing fields: {', '.join(missing)}")
+        return
+
+    name    = parsed["name"]
+    ovr     = int(parsed["ovr"])
+    rarity  = parsed["rarity"].lower()
+    image   = parsed["image"]
+    cap     = int(parsed.get("cap",    0))
+    raider  = int(parsed.get("raider", 0))
+    ldef    = int(parsed.get("ldef",   0))
+    rdef    = int(parsed.get("rdef",   0))
+    ar      = int(parsed.get("ar",     0))
+
+    if rarity not in ("common", "rare", "epic", "legend"):
+        await update.effective_message.reply_text("❌ Rarity must be: common / rare / epic / legend")
+        return
+
+    # Build player_id
+    player_id = "PL_" + name.upper().replace(" ", "_")[:12]
+
+    from database import get_db, clear_player_cache
+    db = get_db()
+
+    player_doc = {
+        "player_id": player_id,
+        "name":      name,
+        "sport":     "kabaddi",
+        "stats": {
+            "pkl": {
+                "captain":        cap,
+                "raider":         raider,
+                "left_defender":  ldef,
+                "right_defender": rdef,
+                "all_rounder":    ar,
+            }
+        },
+        "cards": {
+            "pkl": {
+                "rarity": rarity,
+                "ovr":    ovr,
+                "image":  image,
+            }
+        },
+        "pkl_active": True,
+    }
+
+    await db.players.update_one(
+        {"player_id": player_id},
+        {"$set": player_doc},
+        upsert=True
+    )
+    clear_player_cache()
+
+    await update.effective_message.reply_text(
+        f"✅ *PKL Player saved!*\n"
+        f"🤸 *{name}* | OVR {ovr} | {rarity.title()}\n"
+        f"📋 Stats — Cap: {cap} | Raider: {raider} | L-Def: {ldef} | R-Def: {rdef} | AR: {ar}",
+        parse_mode="Markdown"
+    )
+
+
+async def remove_player_pkl(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """/rem_playerpkl <name> — Remove a PKL player (sets pkl_active=False)."""
+    if not await check_admin(update):
+        return
+    args = context.args
+    if not args:
+        await update.effective_message.reply_text("Usage: `/rem_playerpkl Player Name`", parse_mode="Markdown")
+        return
+
+    name = " ".join(args)
+    from database import get_db, clear_player_cache
+    db = get_db()
+    result = await db.players.update_one(
+        {"name": {"$regex": f"^{name}$", "$options": "i"}, "sport": "kabaddi"},
+        {"$set": {"pkl_active": False}}
+    )
+    clear_player_cache()
+    if result.modified_count:
+        await update.effective_message.reply_text(f"✅ *{name}* removed from PKL pool.", parse_mode="Markdown")
+    else:
+        await update.effective_message.reply_text(f"❌ PKL player *{name}* not found.", parse_mode="Markdown")
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# /botstatus — Mod-only bot health command
+# ═══════════════════════════════════════════════════════════════════════════
+
+_BOT_START_TIME: float = __import__("time").time()
+
+async def handle_botstatus(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """/botstatus — Show bot health metrics. Mod-only."""
+    user = update.effective_user
+    from database import is_admin
+    if not await is_admin(user.id):
+        await update.effective_message.reply_text("⛔ Mods only.")
+        return
+
+    import time, asyncio
+    from database import get_botstatus_data, get_db
+
+    msg = await update.effective_message.reply_text("⏳ Fetching status…")
+
+    try:
+        # DB ping
+        db = get_db()
+        t0 = time.perf_counter()
+        await db.command("ping")
+        ping_ms = int((time.perf_counter() - t0) * 1000)
+
+        # Bot status data (concurrent DB queries)
+        data = await get_botstatus_data()
+
+        # Uptime
+        uptime_secs = int(time.time() - _BOT_START_TIME)
+        hours, rem = divmod(uptime_secs, 3600)
+        mins  = rem // 60
+        uptime_str = f"{hours}h {mins}m"
+
+        # Active match breakdown
+        modes_order = ["ODI", "IPL", "Test", "FIFA", "WWE", "PKL"]
+        mode_lines = ""
+        if data["active_total"] > 0:
+            for m in modes_order:
+                cnt = data["active_modes"].get(m, 0)
+                if cnt:
+                    mode_lines += f"   {'🏏' if m in ('ODI','IPL','Test') else '⚽' if m=='FIFA' else '🤼' if m=='WWE' else '🤸'} {m}: {cnt}\n"
+        else:
+            mode_lines = "   _None_\n"
+
+        # Try CPU/memory (psutil)
+        perf_lines = ""
+        try:
+            import psutil
+            cpu = psutil.cpu_percent(interval=0.2)
+            mem_mb = psutil.Process().memory_info().rss // (1024 * 1024)
+            if cpu <= 60:
+                perf_lines = (
+                    f"\n⚙️ *Performance*\n"
+                    f"   🧠 CPU: `{cpu:.0f}%`\n"
+                    f"   💾 Memory: `{mem_mb} MB`\n"
+                    f"   🏓 DB Ping: `{ping_ms} ms`\n"
+                    f"   ⏱️ Uptime: `{uptime_str}`\n"
+                )
+            else:
+                perf_lines = (
+                    f"\n⚠️ *Load is high ({cpu:.0f}%) — skipping performance metrics*\n"
+                    f"   🏓 DB Ping: `{ping_ms} ms`\n"
+                )
+        except ImportError:
+            perf_lines = (
+                f"\n⚙️ *Performance*\n"
+                f"   🏓 DB Ping: `{ping_ms} ms`\n"
+                f"   ⏱️ Uptime: `{uptime_str}`\n"
+                f"   _(psutil not installed — CPU/memory unavailable)_\n"
+            )
+
+        text = (
+            f"🤖 *Bot Status*\n"
+            f"━━━━━━━━━━━━━━━━━━\n"
+            f"👥 Total Users: `{data['total_users']:,}`\n"
+            f"🃏 Total Cards: `{data['total_cards']:,}`\n"
+            f"\n🎮 Active Matches: `{data['active_total']}`\n"
+            f"{mode_lines}"
+            f"\n📦 Cache\n"
+            f"   🗂️ Players: `{data['cache_size']} / {data['cache_max']}`\n"
+            f"{perf_lines}"
+            f"━━━━━━━━━━━━━━━━━━"
+        )
+
+        await msg.edit_text(text, parse_mode="Markdown")
+
+    except Exception as e:
+        await msg.edit_text(f"❌ Error fetching status: {e}")
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# ACHIEVEMENT COMMANDS — Mod-only
+# ═══════════════════════════════════════════════════════════════════════════
+
+async def handle_add_achievement(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """
+    /add_achievement <user_id> <achievement text>
+    Adds an achievement to a user's profile. Mod-only.
+    """
+    user = update.effective_user
+    from database import is_admin
+    if not await is_admin(user.id):
+        await update.effective_message.reply_text("⛔ Mods only.")
+        return
+
+    args = context.args
+    if not args or len(args) < 2:
+        await update.effective_message.reply_text(
+            "Usage: `/add_achievement <user_id> <achievement text>`\n"
+            "Example: `/add_achievement 123456789 🏆 Season 1 Tournament Winner`",
+            parse_mode="Markdown"
+        )
+        return
+
+    try:
+        target_id = int(args[0])
+    except ValueError:
+        await update.effective_message.reply_text("❌ Invalid user ID.")
+        return
+
+    achievement_text = " ".join(args[1:]).strip()
+    if not achievement_text:
+        await update.effective_message.reply_text("❌ Achievement text cannot be empty.")
+        return
+
+    from database import add_achievement, get_db
+    db = get_db()
+    # Verify user exists
+    doc = await db.users.find_one({"user_id": target_id}, {"user_id": 1})
+    if not doc:
+        await update.effective_message.reply_text(f"❌ User `{target_id}` not found in DB.", parse_mode="Markdown")
+        return
+
+    total = await add_achievement(target_id, achievement_text)
+    await update.effective_message.reply_text(
+        f"✅ Achievement added to user `{target_id}`!\n"
+        f"🏅 *{achievement_text}*\n"
+        f"_Total achievements: {total}_",
+        parse_mode="Markdown"
+    )
+
+
+async def handle_rem_achievement(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """
+    /rem_achievement <user_id> <number>
+    Removes achievement #N from a user. Mod-only.
+    """
+    user = update.effective_user
+    from database import is_admin
+    if not await is_admin(user.id):
+        await update.effective_message.reply_text("⛔ Mods only.")
+        return
+
+    args = context.args
+    if not args or len(args) < 2:
+        await update.effective_message.reply_text(
+            "Usage: `/rem_achievement <user_id> <number>`\n"
+            "Example: `/rem_achievement 123456789 1`",
+            parse_mode="Markdown"
+        )
+        return
+
+    try:
+        target_id = int(args[0])
+        index     = int(args[1])
+    except ValueError:
+        await update.effective_message.reply_text("❌ Invalid user ID or number.")
+        return
+
+    from database import remove_achievement
+    success, msg_text = await remove_achievement(target_id, index)
+    if success:
+        await update.effective_message.reply_text(
+            f"✅ Removed achievement #{index} from user `{target_id}`:\n🗑️ _{msg_text}_",
+            parse_mode="Markdown"
+        )
+    else:
+        await update.effective_message.reply_text(f"❌ {msg_text}")
