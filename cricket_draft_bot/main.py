@@ -177,66 +177,74 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Central router for callbacks."""
+    if not update.callback_query:
+        return
+    query = update.callback_query
     if update.effective_user:
         from database import is_user_banned
         if await is_user_banned(update.effective_user.id):
             try:
-                await update.callback_query.answer("⛔ You are banned from using this bot.", show_alert=True)
+                await query.answer("⛔ You are banned from using this bot.", show_alert=True)
             except Exception:
                 pass
             return
-    data = update.callback_query.data
+    data = query.data or ""
 
-    if data.startswith("join_"):
-        # "join_MODE" or "join_MODE_OWNERID"
-        # challenge.py handled this? 
-        # In challenge.py we defined `join_challenge`? No, wait.
-        # handlers/challenge.py has `challenge_handler` and `handle_join`?
-        # Let's check imports.
-        # We imported `handle_join`.
-        await handle_join(update, context)
-        
-    elif data.startswith("draw_") or data.startswith("assign_") or data.startswith("redraw_") or data.startswith("replace_"):
-        await handle_draft_callback(update, context)
-        
-    elif data.startswith("ready_"):
-        await handle_ready(update, context)
-        
+    try:
+        if data.startswith("join_"):
+            await handle_join(update, context)
+            
+        elif data.startswith("draw_") or data.startswith("assign_") or data.startswith("redraw_") or data.startswith("replace_"):
+            await handle_draft_callback(update, context)
+            
+        elif data.startswith("ready_"):
+            await handle_ready(update, context)
 
-    elif data.startswith("map_"):
-        from handlers.admin import handle_map_stats_callback
-        await handle_map_stats_callback(update, context)
+        elif data.startswith("map_"):
+            from handlers.admin import handle_map_stats_callback
+            await handle_map_stats_callback(update, context)
 
-    elif data.startswith("view_ipl_"):
-        from handlers.admin import handle_view_ipl_callback
-        await handle_view_ipl_callback(update, context)
+        elif data.startswith("view_ipl_"):
+            from handlers.admin import handle_view_ipl_callback
+            await handle_view_ipl_callback(update, context)
 
-    elif data.startswith("view_odi_"):
-        from handlers.admin import handle_view_odi_callback
-        await handle_view_odi_callback(update, context)
+        elif data.startswith("view_odi_"):
+            from handlers.admin import handle_view_odi_callback
+            await handle_view_odi_callback(update, context)
 
-    elif data.startswith("view_test_"):
-        from handlers.admin import handle_view_test_callback
-        await handle_view_test_callback(update, context)
+        elif data.startswith("view_test_"):
+            from handlers.admin import handle_view_test_callback
+            await handle_view_test_callback(update, context)
 
-    elif data.startswith("gen_odi_"):
-        from handlers.admin import handle_gen_odi_callback
-        await handle_gen_odi_callback(update, context)
+        elif data.startswith("gen_odi_"):
+            from handlers.admin import handle_gen_odi_callback
+            await handle_gen_odi_callback(update, context)
 
-    elif data.startswith("challenge_pick_"):
-        await handle_mode_pick_callback(update, context)
+        elif data.startswith("challenge_pick_"):
+            await handle_mode_pick_callback(update, context)
 
-    elif data.startswith("wwe_pick_"):
-        from handlers.challenge import handle_wwe_pick_callback
-        await handle_wwe_pick_callback(update, context)
+        elif data.startswith("wwe_pick_"):
+            from handlers.challenge import handle_wwe_pick_callback
+            await handle_wwe_pick_callback(update, context)
 
-    elif data.startswith("gen_ipl_"):
-        from handlers.admin import handle_gen_ipl_callback
-        await handle_gen_ipl_callback(update, context)
+        elif data.startswith("gen_ipl_"):
+            from handlers.admin import handle_gen_ipl_callback
+            await handle_gen_ipl_callback(update, context)
 
-    elif data.startswith("chk_"):
-        from handlers.admin import handle_check_callback
-        await handle_check_callback(update, context)
+        elif data.startswith("chk_"):
+            from handlers.admin import handle_check_callback
+            await handle_check_callback(update, context)
+        else:
+            try:
+                await query.answer()
+            except Exception:
+                pass
+    except Exception as e:
+        logging.getLogger(__name__).error(f"Error in handle_callback for '{data}': {e}", exc_info=True)
+        try:
+            await query.answer("⚠️ Action failed or expired.", show_alert=False)
+        except Exception:
+            pass
 
 async def post_init(application):
     try:
@@ -700,7 +708,7 @@ if __name__ == '__main__':
             max_retries=3,
             overall_max_rate=30,     # Global Telegram limit
             overall_time_period=1,
-            group_max_rate=35,       # Increased to prevent 20s+ freezing on active group buttons/cards
+            group_max_rate=60,       # Generous limit so buttons and cards never queue into 20s freeze
             group_time_period=60,
         ))
 
