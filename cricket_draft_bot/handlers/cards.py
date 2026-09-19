@@ -382,22 +382,32 @@ async def _show_mycards(message_or_query, owner_id: int, viewer_id: int,
     page_cards   = cards[start:start + page_size]
     total_pages  = max(1, (total_unique + page_size - 1) // page_size)
 
+    sf = (sport_filter or "all").lower()
+    sport_name = SPORT_LABEL.get(sf, sf.title()) if sf != "all" else ""
+
     if not cards:
-        text = "🃏 *Your Collection*\n━━━━━━━━━━━━━━━━━━\nNo cards yet! Use /pack to buy packs."
+        if sf != "all":
+            text = (
+                f"🃏 *Your Collection ({sport_name})*\n"
+                f"━━━━━━━━━━━━━━━━━━\n"
+                f"No {sport_name} cards yet!\n"
+                f"Use /pack to buy {sport_name} packs."
+            )
+        else:
+            text = "🃏 *Your Collection*\n━━━━━━━━━━━━━━━━━━\nNo cards yet! Use /pack to buy packs."
     else:
-        filter_tag = f" ({SPORT_LABEL.get(sport_filter, sport_filter.title())})" if sport_filter else ""
+        filter_tag = f" ({sport_name})" if sport_name else ""
         sort_label = get_sort_label(crit, order)
         lines = [f"🃏 *Your Collection*{filter_tag}  _{sort_label}_\n━━━━━━━━━━━━━━━━━━"]
         for idx, c in enumerate(page_cards, start=start + 1):
-            r_emoji = RARITY_EMOJI.get(c["rarity"], "⚪")
-            f_label = FORMAT_LABEL.get(c["format"], c["format"].upper())
+            r_emoji = RARITY_EMOJI.get(c.get("rarity"), "⚪")
+            f_label = FORMAT_LABEL.get(c.get("format"), str(c.get("format", "")).upper())
             qty_str = f" ×{c['quantity']}" if c.get("quantity", 1) > 1 else ""
             ovr_str = f" OVR {c['ovr']}" if crit == "ovr" and c.get("ovr") else ""
-            lines.append(f"`{idx}.` {r_emoji} {esc(c['name'])} ({f_label}){qty_str}{ovr_str}")
+            lines.append(f"`{idx}.` {r_emoji} {esc(c.get('name', 'Unknown'))} ({f_label}){qty_str}{ovr_str}")
         lines.append(f"━━━━━━━━━━━━━━━━━━\nPage {page+1}/{total_pages}")
         text = "\n".join(lines)
 
-    sf  = sport_filter or "all"
     # Navigation buttons
     nav = []
     if total_pages > 10 and page > 0:
@@ -413,22 +423,42 @@ async def _show_mycards(message_or_query, owner_id: int, viewer_id: int,
     if total_pages > 10 and page < total_pages - 1:
         nav.append(InlineKeyboardButton("+10 ⏭", callback_data=f"mc_page|{owner_id}|{sf}|{min(total_pages-1, page+10)}"))
 
-    # Sport filter buttons
+    # Sport filter buttons with active indicator
     filters = [
-        InlineKeyboardButton("All",  callback_data=f"mc_page|{owner_id}|all|0"),
-        InlineKeyboardButton("🏏",   callback_data=f"mc_page|{owner_id}|cricket|0"),
-        InlineKeyboardButton("⚽",   callback_data=f"mc_page|{owner_id}|football|0"),
-        InlineKeyboardButton("🤼",   callback_data=f"mc_page|{owner_id}|wwe|0"),
-        InlineKeyboardButton("🤸",   callback_data=f"mc_page|{owner_id}|kabaddi|0"),
+        InlineKeyboardButton("• All •" if sf == "all" else "All", callback_data=f"mc_page|{owner_id}|all|0"),
+        InlineKeyboardButton("• 🏏 •" if sf == "cricket" else "🏏", callback_data=f"mc_page|{owner_id}|cricket|0"),
+        InlineKeyboardButton("• ⚽ •" if sf in ("football", "fifa") else "⚽", callback_data=f"mc_page|{owner_id}|football|0"),
+        InlineKeyboardButton("• 🤼 •" if sf == "wwe" else "🤼", callback_data=f"mc_page|{owner_id}|wwe|0"),
+        InlineKeyboardButton("• 🤸 •" if sf in ("kabaddi", "pkl") else "🤸", callback_data=f"mc_page|{owner_id}|kabaddi|0"),
     ]
     collections_row = [InlineKeyboardButton("📊 Collections", callback_data=f"mc_collections|{owner_id}")]
     rows = [filters] + ([nav] if nav else []) + [collections_row]
     kb = InlineKeyboardMarkup(rows)
 
     if edit:
-        await message_or_query.edit_message_text(text, reply_markup=kb, parse_mode="Markdown")
+        try:
+            await message_or_query.edit_message_text(text, reply_markup=kb, parse_mode="Markdown")
+        except Exception as e:
+            err_str = str(e).lower()
+            if "message is not modified" in err_str:
+                pass
+            elif "can't parse entities" in err_str or "parse" in err_str:
+                logger.warning(f"_show_mycards Markdown parse error: {e}, falling back to plain text")
+                try:
+                    await message_or_query.edit_message_text(text, reply_markup=kb)
+                except Exception:
+                    pass
+            else:
+                logger.error(f"_show_mycards edit error: {e}")
     else:
-        await message_or_query.reply_text(text, reply_markup=kb, parse_mode="Markdown")
+        try:
+            await message_or_query.reply_text(text, reply_markup=kb, parse_mode="Markdown")
+        except Exception as e:
+            if "can't parse entities" in str(e).lower() or "parse" in str(e).lower():
+                logger.warning(f"_show_mycards reply Markdown error: {e}, falling back to plain text")
+                await message_or_query.reply_text(text, reply_markup=kb)
+            else:
+                raise
 
 
 async def cb_mc_page(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -437,7 +467,7 @@ async def cb_mc_page(update: Update, context: ContextTypes.DEFAULT_TYPE):
     _, owner_id, sport_str, page_str = parts
     if str(query.from_user.id) != owner_id:
         await query.answer("⛔ Not your menu.", show_alert=True); return
-    if not _check_card_cooldown(query.from_user.id, "mc_page", 0.7):
+    if not _check_card_cooldown(query.from_user.id, "mc_page", 0.4):
         await query.answer("Slow down!", show_alert=False)
         return
     await query.answer()
@@ -496,20 +526,20 @@ async def handle_sort(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not args:
         cur_label = get_sort_label(cur_crit, cur_order)
         await update.effective_message.reply_text(
-            f"📊 *Card Sorting Options*\n\n"
-            f"Current: *{cur_label}*\n\n"
-            f"**Criteria:**\n"
-            f"• `/sort rarity` — Legend ➔ Common (default)\n"
-            f"• `/sort rarity asc` — Common ➔ Legend\n"
-            f"• `/sort ovr` — Highest OVR first\n"
-            f"• `/sort ovr asc` — Lowest OVR first\n"
-            f"• `/sort dupe` — Most duplicates first\n"
-            f"• `/sort name` — A ➔ Z\n\n"
-            f"**Direction Only:**\n"
-            f"• `/sort asc` — Ascending order\n"
-            f"• `/sort des` — Descending order\n\n"
-            f"_Sort applies across /mycards, /multi_sell, and trade._",
-            parse_mode="Markdown"
+            f"📊 <b>Card Sorting Options</b>\n\n"
+            f"Current: <b>{cur_label}</b>\n\n"
+            f"<b>Criteria:</b>\n"
+            f"• <code>/sort rarity</code> — Legend ➔ Common (default)\n"
+            f"• <code>/sort rarity asc</code> — Common ➔ Legend\n"
+            f"• <code>/sort ovr</code> — Highest OVR first\n"
+            f"• <code>/sort ovr asc</code> — Lowest OVR first\n"
+            f"• <code>/sort dupe</code> — Most duplicates first\n"
+            f"• <code>/sort name</code> — A ➔ Z\n\n"
+            f"<b>Direction Only:</b>\n"
+            f"• <code>/sort asc</code> — Ascending order\n"
+            f"• <code>/sort des</code> — Descending order\n\n"
+            f"<i>Sort applies across /mycards, /multi_sell, and trade.</i>",
+            parse_mode="HTML"
         )
         return
 
@@ -524,8 +554,8 @@ async def handle_sort(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if not new_crit and not new_dir:
         await update.effective_message.reply_text(
-            "❌ Unknown sort option.\nUse `/sort rarity`, `/sort ovr`, `/sort dupe`, `/sort name`, `/sort asc`, or `/sort des`.",
-            parse_mode="Markdown"
+            "❌ Unknown sort option.\nUse <code>/sort rarity</code>, <code>/sort ovr</code>, <code>/sort dupe</code>, <code>/sort name</code>, <code>/sort asc</code>, or <code>/sort des</code>.",
+            parse_mode="HTML"
         )
         return
 
@@ -543,8 +573,8 @@ async def handle_sort(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     label = get_sort_label(new_crit, new_dir)
     await update.effective_message.reply_text(
-        f"✅ Sort set to: *{label}*\n\n_Your /mycards, /multi_sell, and trades will now display in this order._",
-        parse_mode="Markdown"
+        f"✅ Sort set to: <b>{label}</b>\n\n<i>Your /mycards, /multi_sell, and trades will now display in this order.</i>",
+        parse_mode="HTML"
     )
 
 
