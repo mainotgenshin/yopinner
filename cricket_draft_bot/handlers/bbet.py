@@ -23,8 +23,6 @@ BBET_DAILY = 10
 
 # Per-user asyncio locks — prevents race-condition double-bets when requests arrive simultaneously
 _BBET_LOCKS: dict[int, asyncio.Lock] = {}
-_BBET_COOLDOWNS: dict[int, float] = {}
-_BBET_COOLDOWN_SECS = 3.0
 
 def _get_bbet_lock(user_id: int) -> asyncio.Lock:
     if user_id not in _BBET_LOCKS:
@@ -64,23 +62,9 @@ async def _record_bbet(user_id: int, delta: int, new_count: int, today: str) -> 
 
 
 async def handle_bbet(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user = update.effective_user
-    if not user:
-        return
+    user    = update.effective_user
     user_id = user.id
-
-    import time as _t
-    _now = _t.time()
-    if _now - _BBET_COOLDOWNS.get(user_id, 0) < _BBET_COOLDOWN_SECS:
-        return  # Drop rapid spam to prevent group flood
-    _BBET_COOLDOWNS[user_id] = _now
-    if len(_BBET_COOLDOWNS) > 200:
-        _cutoff = _now - 60
-        for _k in list(_BBET_COOLDOWNS.keys()):
-            if _BBET_COOLDOWNS[_k] < _cutoff:
-                _BBET_COOLDOWNS.pop(_k, None)
-
-    args = context.args
+    args    = context.args
 
     if not args or len(args) < 2:
         await update.effective_message.reply_text(
