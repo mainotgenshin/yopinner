@@ -239,6 +239,11 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await handle_check_callback(update, context)
 
 async def post_init(application):
+    try:
+        await application.bot.delete_webhook(drop_pending_updates=True)
+    except Exception as _wh_e:
+        logging.getLogger(__name__).warning(f"delete_webhook on startup: {_wh_e}")
+
     from database import init_db, get_db, warmup_card_pools
     await init_db()
     # Pre-warm card pools into memory on startup (0ms cold cache for users)
@@ -962,6 +967,15 @@ if __name__ == '__main__':
     async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
         err = context.error
         err_str = str(err)
+        # Auto-recover if webhook was set externally or during container overlap
+        if "can't use getUpdates method while webhook is active" in err_str or "Conflict: terminated by setWebhook" in err_str:
+            try:
+                await context.bot.delete_webhook(drop_pending_updates=True)
+                logging.getLogger(__name__).warning("Resolved Telegram Conflict: deleted active webhook and cleared pending updates.")
+            except Exception as e:
+                logging.getLogger(__name__).error(f"Failed to auto-delete webhook: {e}")
+            return
+
         # Silently ignore known benign post-restart / network noise
         _IGNORE_ERRORS = (
             "Query is too old",
