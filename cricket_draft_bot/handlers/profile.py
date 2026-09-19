@@ -1,4 +1,4 @@
-from telegram import Update
+from telegram import Update, InlineKeyboardMarkup, InlineKeyboardButton
 from telegram.ext import ContextTypes
 from database import get_db
 from telegram.helpers import escape_markdown
@@ -140,7 +140,8 @@ async def handle_profile(update: Update, context: ContextTypes.DEFAULT_TYPE):
                         await update.effective_message.reply_text(
                             href_text,
                             parse_mode="HTML",
-                            disable_web_page_preview=False
+                            disable_web_page_preview=False,
+                            reply_markup=_profile_kb(user_id)
                         )
                         return
                     except Exception:
@@ -152,7 +153,8 @@ async def handle_profile(update: Update, context: ContextTypes.DEFAULT_TYPE):
                         await update.effective_message.reply_photo(
                             photo=image_fid,
                             caption=full_caption,
-                            parse_mode="HTML"
+                            parse_mode="HTML",
+                            reply_markup=_profile_kb(user_id)
                         )
                         return
                     except Exception:
@@ -161,18 +163,72 @@ async def handle_profile(update: Update, context: ContextTypes.DEFAULT_TYPE):
         pass  # Never break profile due to card system errors
 
     try:
-        await update.effective_message.reply_text(body_html, parse_mode="HTML")
+        await update.effective_message.reply_text(body_html, parse_mode="HTML",
+                                                   reply_markup=_profile_kb(user_id))
     except Exception:
         # Original message deleted (e.g. bot restarted) — send without reply
         try:
             await context.bot.send_message(
                 chat_id=update.effective_chat.id,
                 text=body_html,
-                parse_mode="HTML"
+                parse_mode="HTML",
+                reply_markup=_profile_kb(user_id)
             )
         except Exception:
             pass
 
 
+def _profile_kb(user_id: int) -> InlineKeyboardMarkup:
+    """Inline keyboard for profile — Achievements button."""
+    return InlineKeyboardMarkup([[
+        InlineKeyboardButton("🏅 Achievements", callback_data=f"profile_ach|{user_id}")
+    ]])
 
 
+async def cb_profile_achievements(update, context):
+    """Callback: show achievements for the user who owns the profile."""
+    query = update.callback_query
+    _, owner_id_str = query.data.split("|")
+    viewer_id = query.from_user.id
+    owner_id  = int(owner_id_str)
+
+    # Only the owner can view their own achievements (as per requirement)
+    if viewer_id != owner_id:
+        await query.answer("⛔ You can only view your own achievements.", show_alert=True)
+        return
+
+    await query.answer()
+    from database import get_achievements
+    achievements = await get_achievements(owner_id)
+
+    if not achievements:
+        text = "🏅 *Your Achievements*\n━━━━━━━━━━━━━━━━━━\n_No achievements yet. Keep playing!_\n━━━━━━━━━━━━━━━━━━"
+    else:
+        lines = ["🏅 *Your Achievements*", "━━━━━━━━━━━━━━━━━━"]
+        for i, ach in enumerate(achievements, 1):
+            lines.append(f"`{i}.` {ach}")
+        lines.append("━━━━━━━━━━━━━━━━━━")
+        text = "\n".join(lines)
+
+    try:
+        await query.edit_message_text(text, parse_mode="Markdown",
+                                      reply_markup=InlineKeyboardMarkup([[
+                                          InlineKeyboardButton("◀️ Back", callback_data=f"profile_back|{owner_id}")
+                                      ]]))
+    except Exception:
+        pass
+
+
+async def cb_profile_back(update, context):
+    """Callback: go back to main profile view."""
+    query = update.callback_query
+    _, owner_id_str = query.data.split("|")
+    if str(query.from_user.id) != owner_id_str:
+        await query.answer("⛔ Not your profile.", show_alert=True)
+        return
+    await query.answer()
+    # Just close the callback — user can re-run /myprofile
+    try:
+        await query.delete_message()
+    except Exception:
+        pass
