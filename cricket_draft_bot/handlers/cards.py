@@ -344,9 +344,11 @@ async def _show_mycards(message_or_query, owner_id: int, viewer_id: int, sport_f
 
 async def cb_mc_page(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
+    logging.getLogger("DEBUG_CARDS").info(f"🃏 [CB_MC_PAGE] Clicked data='{query.data}' | clicker={query.from_user.id} ({query.from_user.first_name})")
     parts = query.data.split("|")
     _, owner_id, sport_str, page_str = parts
     if str(query.from_user.id) != owner_id:
+        logging.getLogger("DEBUG_CARDS").warning(f"⚠️ [CB_MC_PAGE] Owner mismatch! clicker={query.from_user.id} != owner={owner_id}")
         await query.answer("⛔ Not your menu.", show_alert=True); return
     await query.answer()
     sport_filter = None if sport_str == "all" else sport_str
@@ -355,8 +357,11 @@ async def cb_mc_page(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def cb_mc_collections(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Show full collection breakdown: rarity counts per format with total available n."""
     query = update.callback_query
-    _, owner_id = query.data.split("|")
+    logging.getLogger("DEBUG_CARDS").info(f"📊 [CB_MC_COLLECTIONS] Clicked data='{query.data}' | clicker={query.from_user.id} ({query.from_user.first_name})")
+    parts = query.data.split("|")
+    _, owner_id = parts
     if str(query.from_user.id) != owner_id:
+        logging.getLogger("DEBUG_CARDS").warning(f"⚠️ [CB_MC_COLLECTIONS] Owner mismatch! clicker={query.from_user.id} != owner={owner_id}")
         await query.answer("⛔ Not your menu.", show_alert=True); return
     await query.answer()
     from database import get_user_cards, get_catalog_totals
