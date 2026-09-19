@@ -15,11 +15,25 @@ logger = logging.getLogger(__name__)
 
 # ── Per-user anti-spam lock ───────────────────────────────────────────────────
 _CARD_LOCKS: dict[int, asyncio.Lock] = {}
+_CARD_CMD_COOLDOWNS: dict = {}
 
 def _get_lock(user_id: int) -> asyncio.Lock:
     if user_id not in _CARD_LOCKS:
         _CARD_LOCKS[user_id] = asyncio.Lock()
     return _CARD_LOCKS[user_id]
+
+def _check_card_cooldown(user_id: int, action: str, cooldown_secs: float = 2.0) -> bool:
+    now = time.time()
+    key = f"{user_id}_{action}"
+    if now - _CARD_CMD_COOLDOWNS.get(key, 0) < cooldown_secs:
+        return False
+    _CARD_CMD_COOLDOWNS[key] = now
+    if len(_CARD_CMD_COOLDOWNS) > 500:
+        cutoff = now - 60
+        for k in list(_CARD_CMD_COOLDOWNS.keys()):
+            if _CARD_CMD_COOLDOWNS[k] < cutoff:
+                _CARD_CMD_COOLDOWNS.pop(k, None)
+    return True
 
 # ── Display helpers ───────────────────────────────────────────────────────────
 RARITY_EMOJI = {"common": "⚪", "rare": "🔵", "epic": "🟣", "legend": "🟡"}
@@ -36,12 +50,34 @@ PACK_ODDS_TEXT = {
 CARDS_PER_PAGE    = 10
 CARDS_PER_PAGE_DM = 20  # Larger page in private chats
 
-SORT_LABELS = {
-    "rarity": "Rarity ⬇️",
-    "ovr":    "OVR ⬇️",
-    "dupe":   "Dupes First",
-    "name":   "A–Z",
-}
+def get_user_sort(context, user_id: int) -> tuple:
+    """Return (criteria, order) for user. Defaults to ('rarity', 'desc')."""
+    crit = "rarity"
+    order = "desc"
+    if context is not None and hasattr(context, "user_data") and context.user_data is not None:
+        crit = context.user_data.get(f"sort_crit_{user_id}", "rarity")
+        order = context.user_data.get(f"sort_dir_{user_id}", "desc")
+    return crit, order
+
+def get_sort_label(criteria: str, order: str) -> str:
+    order = (order or "desc").lower()
+    if order in ("des", "descending"): order = "desc"
+    if order in ("ascending",): order = "asc"
+    criteria = (criteria or "rarity").lower()
+
+    if criteria == "rarity":
+        desc = "Legend ➔ Common" if order == "desc" else "Common ➔ Legend"
+        return f"⭐ Rarity ({desc})"
+    elif criteria == "ovr":
+        desc = "Highest ➔ Lowest" if order == "desc" else "Lowest ➔ Highest"
+        return f"📊 OVR ({desc})"
+    elif criteria == "dupe":
+        desc = "Most ➔ Fewest" if order == "desc" else "Fewest ➔ Most"
+        return f"🔁 Dupes ({desc})"
+    elif criteria == "name":
+        desc = "A ➔ Z" if order == "asc" else "Z ➔ A"
+        return f"🔤 Name ({desc})"
+    return f"{criteria.title()} ({order.upper()})"
 
 def esc(t): return escape_markdown(str(t), version=1)
 
@@ -57,19 +93,29 @@ async def _get_raw_inv(user_id: int) -> dict:
     doc = await db.users.find_one({"user_id": user_id}, {"pack_inventory": 1})
     return doc.get("pack_inventory", {}) if doc else {}
 
-def _sort_cards(cards: list, sort_key: str) -> list:
-    """Sort a card list by the given sort_key."""
-    rarity_order = {"legend": 0, "epic": 1, "rare": 2, "common": 3}
-    if sort_key == "rarity":
-        return sorted(cards, key=lambda c: (rarity_order.get(c["rarity"], 9), c["name"]))
-    elif sort_key == "ovr":
-        return sorted(cards, key=lambda c: -c.get("ovr", 0))
-    elif sort_key == "dupe":
-        return sorted(cards, key=lambda c: (-c.get("quantity", 1), rarity_order.get(c["rarity"], 9), c["name"]))
-    elif sort_key == "name":
-        return sorted(cards, key=lambda c: c["name"].lower())
-    # Default fallback
-    return sorted(cards, key=lambda c: (rarity_order.get(c["rarity"], 9), c["name"]))
+def _sort_cards(cards: list, criteria: str = "rarity", order: str = "desc") -> list:
+    """Sort a card list by criteria and order ('asc' or 'desc')."""
+    rarity_desc = {"legend": 0, "epic": 1, "rare": 2, "common": 3}
+    rarity_asc  = {"common": 0, "rare": 1, "epic": 2, "legend": 3}
+
+    criteria = (criteria or "rarity").lower()
+    order = (order or "desc").lower()
+    if order in ("des", "descending"): order = "desc"
+    if order in ("ascending",): order = "asc"
+
+    if criteria == "rarity":
+        r_map = rarity_asc if order == "asc" else rarity_desc
+        return sorted(cards, key=lambda c: (r_map.get(str(c.get("rarity", "common")).lower(), 9), c.get("name", "").lower()))
+    elif criteria == "ovr":
+        mult = 1 if order == "asc" else -1
+        return sorted(cards, key=lambda c: (mult * int(c.get("ovr", 0) or 0), c.get("name", "").lower()))
+    elif criteria == "dupe":
+        mult = 1 if order == "asc" else -1
+        return sorted(cards, key=lambda c: (mult * int(c.get("quantity", 1) or 1), rarity_desc.get(str(c.get("rarity", "common")).lower(), 9), c.get("name", "").lower()))
+    elif criteria == "name":
+        rev = (order == "desc")
+        return sorted(cards, key=lambda c: c.get("name", "").lower(), reverse=rev)
+    return sorted(cards, key=lambda c: (rarity_desc.get(str(c.get("rarity", "common")).lower(), 9), c.get("name", "").lower()))
 
 # ─────────────────────────────────────────────────────────────────────────────
 # /pack
@@ -326,12 +372,9 @@ async def _show_mycards(message_or_query, owner_id: int, viewer_id: int,
     from database import get_user_cards
     cards = await get_user_cards(owner_id, sport_filter=sport_filter)
 
-    # Determine sort from user_data session (if context available)
-    sort_key = "rarity"
-    if context is not None:
-        sort_key = context.user_data.get(f"sort_{owner_id}", "rarity")
-
-    cards = _sort_cards(cards, sort_key)
+    # Determine sort from user_data session
+    crit, order = get_user_sort(context, owner_id)
+    cards = _sort_cards(cards, crit, order)
 
     page_size  = CARDS_PER_PAGE_DM if is_dm else CARDS_PER_PAGE
     total_unique = len(cards)
@@ -343,13 +386,13 @@ async def _show_mycards(message_or_query, owner_id: int, viewer_id: int,
         text = "🃏 *Your Collection*\n━━━━━━━━━━━━━━━━━━\nNo cards yet! Use /pack to buy packs."
     else:
         filter_tag = f" ({SPORT_LABEL.get(sport_filter, sport_filter.title())})" if sport_filter else ""
-        sort_label = SORT_LABELS.get(sort_key, sort_key)
+        sort_label = get_sort_label(crit, order)
         lines = [f"🃏 *Your Collection*{filter_tag}  _{sort_label}_\n━━━━━━━━━━━━━━━━━━"]
         for idx, c in enumerate(page_cards, start=start + 1):
             r_emoji = RARITY_EMOJI.get(c["rarity"], "⚪")
             f_label = FORMAT_LABEL.get(c["format"], c["format"].upper())
             qty_str = f" ×{c['quantity']}" if c.get("quantity", 1) > 1 else ""
-            ovr_str = f" OVR {c['ovr']}" if sort_key == "ovr" and c.get("ovr") else ""
+            ovr_str = f" OVR {c['ovr']}" if crit == "ovr" and c.get("ovr") else ""
             lines.append(f"`{idx}.` {r_emoji} {esc(c['name'])} ({f_label}){qty_str}{ovr_str}")
         lines.append(f"━━━━━━━━━━━━━━━━━━\nPage {page+1}/{total_pages}")
         text = "\n".join(lines)
@@ -378,15 +421,8 @@ async def _show_mycards(message_or_query, owner_id: int, viewer_id: int,
         InlineKeyboardButton("🤼",   callback_data=f"mc_page|{owner_id}|wwe|0"),
         InlineKeyboardButton("🤸",   callback_data=f"mc_page|{owner_id}|kabaddi|0"),
     ]
-    # Sort buttons (one row)
-    sort_row = [
-        InlineKeyboardButton(f"{'✅' if sort_key=='rarity' else ''}⭐Rarity", callback_data=f"mc_sort|{owner_id}|rarity|{sf}"),
-        InlineKeyboardButton(f"{'✅' if sort_key=='ovr'    else ''}📊OVR",    callback_data=f"mc_sort|{owner_id}|ovr|{sf}"),
-        InlineKeyboardButton(f"{'✅' if sort_key=='dupe'   else ''}🔁Dupes",  callback_data=f"mc_sort|{owner_id}|dupe|{sf}"),
-        InlineKeyboardButton(f"{'✅' if sort_key=='name'   else ''}🔤A-Z",    callback_data=f"mc_sort|{owner_id}|name|{sf}"),
-    ]
     collections_row = [InlineKeyboardButton("📊 Collections", callback_data=f"mc_collections|{owner_id}")]
-    rows = [filters, sort_row] + ([nav] if nav else []) + [collections_row]
+    rows = [filters] + ([nav] if nav else []) + [collections_row]
     kb = InlineKeyboardMarkup(rows)
 
     if edit:
@@ -401,6 +437,9 @@ async def cb_mc_page(update: Update, context: ContextTypes.DEFAULT_TYPE):
     _, owner_id, sport_str, page_str = parts
     if str(query.from_user.id) != owner_id:
         await query.answer("⛔ Not your menu.", show_alert=True); return
+    if not _check_card_cooldown(query.from_user.id, "mc_page", 0.7):
+        await query.answer("Slow down!", show_alert=False)
+        return
     await query.answer()
     sport_filter = None if sport_str == "all" else sport_str
     is_dm = (update.effective_chat.type == "private")
@@ -410,14 +449,14 @@ async def cb_mc_page(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def cb_mc_sort(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Sort button callback: set user's sort preference and refresh mycards."""
+    """Sort button callback (backward-compat if old message button clicked)."""
     query = update.callback_query
     _, owner_id, new_sort, sport_str = query.data.split("|")
     if str(query.from_user.id) != owner_id:
         await query.answer("⛔ Not your menu.", show_alert=True); return
-    await query.answer(f"Sorted by: {SORT_LABELS.get(new_sort, new_sort)}")
-    # Store in session
-    context.user_data[f"sort_{owner_id}"] = new_sort
+    context.user_data[f"sort_crit_{owner_id}"] = new_sort
+    order = context.user_data.get(f"sort_dir_{owner_id}", "desc")
+    await query.answer(f"Sorted by: {get_sort_label(new_sort, order)}")
     sport_filter = None if sport_str == "all" else sport_str
     is_dm = (update.effective_chat.type == "private")
     await _show_mycards(query, int(owner_id), query.from_user.id,
@@ -426,30 +465,85 @@ async def cb_mc_sort(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def handle_sort(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """/sort [rarity|ovr|dupe|name] — Set sort preference for /mycards."""
+    """
+    /sort [criteria] [asc|des]
+    Examples:
+      /sort rarity
+      /sort rarity asc
+      /sort asc
+      /sort des
+      /sort ovr
+      /sort ovr des
+      /sort name
+      /sort name des
+      /sort dupe
+    """
     user = update.effective_user
-    args = context.args
-    valid = {"rarity", "ovr", "dupe", "name", "duplicate"}
-    alias = {"duplicate": "dupe"}
+    if not user:
+        return
+    if not _check_card_cooldown(user.id, "sort", 2.0):
+        return
+    args = [a.lower() for a in (context.args or [])]
 
-    if not args or args[0].lower() not in valid:
-        current = context.user_data.get(f"sort_{user.id}", "rarity")
+    crit_keys = {"rarity", "ovr", "dupe", "duplicate", "dupes", "name", "alphabetical"}
+    dir_keys  = {"asc", "ascending", "des", "desc", "descending"}
+
+    crit_alias = {"duplicate": "dupe", "dupes": "dupe", "alphabetical": "name"}
+    dir_alias  = {"ascending": "asc", "des": "desc", "descending": "desc"}
+
+    cur_crit, cur_order = get_user_sort(context, user.id)
+
+    if not args:
+        cur_label = get_sort_label(cur_crit, cur_order)
         await update.effective_message.reply_text(
-            f"📊 *Sort Preference*\n\n"
-            f"Current: *{SORT_LABELS.get(current, current)}*\n\n"
-            f"Options:\n"
-            f"• `/sort rarity` — Legend → Common (default)\n"
+            f"📊 *Card Sorting Options*\n\n"
+            f"Current: *{cur_label}*\n\n"
+            f"**Criteria:**\n"
+            f"• `/sort rarity` — Legend ➔ Common (default)\n"
+            f"• `/sort rarity asc` — Common ➔ Legend\n"
             f"• `/sort ovr` — Highest OVR first\n"
-            f"• `/sort dupe` — Duplicates first\n"
-            f"• `/sort name` — A to Z",
+            f"• `/sort ovr asc` — Lowest OVR first\n"
+            f"• `/sort dupe` — Most duplicates first\n"
+            f"• `/sort name` — A ➔ Z\n\n"
+            f"**Direction Only:**\n"
+            f"• `/sort asc` — Ascending order\n"
+            f"• `/sort des` — Descending order\n\n"
+            f"_Sort applies across /mycards, /multi_sell, and trade._",
             parse_mode="Markdown"
         )
         return
 
-    key = alias.get(args[0].lower(), args[0].lower())
-    context.user_data[f"sort_{user.id}"] = key
+    new_crit = None
+    new_dir  = None
+
+    for arg in args:
+        if arg in crit_keys:
+            new_crit = crit_alias.get(arg, arg)
+        elif arg in dir_keys:
+            new_dir = dir_alias.get(arg, arg)
+
+    if not new_crit and not new_dir:
+        await update.effective_message.reply_text(
+            "❌ Unknown sort option.\nUse `/sort rarity`, `/sort ovr`, `/sort dupe`, `/sort name`, `/sort asc`, or `/sort des`.",
+            parse_mode="Markdown"
+        )
+        return
+
+    # If only direction given, keep current criteria
+    if new_dir and not new_crit:
+        new_crit = cur_crit
+
+    # If only criteria given, default direction:
+    # name defaults to 'asc', others default to 'desc'
+    if new_crit and not new_dir:
+        new_dir = "asc" if new_crit == "name" else "desc"
+
+    context.user_data[f"sort_crit_{user.id}"] = new_crit
+    context.user_data[f"sort_dir_{user.id}"]  = new_dir
+
+    label = get_sort_label(new_crit, new_dir)
     await update.effective_message.reply_text(
-        f"✅ Sort set to: *{SORT_LABELS.get(key, key)}*\n_Your /mycards will now use this order._",
+        f"✅ Sort set to: *{label}*\n\n_Your /mycards, /multi_sell, and trades will now display in this order._",
         parse_mode="Markdown"
     )
 
@@ -949,6 +1043,10 @@ async def cb_vc_sell_ok(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def handle_trade_card(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Initiate a trade by replying to the target user's message."""
     user = update.effective_user
+    if not user:
+        return
+    if not _check_card_cooldown(user.id, "trade_cmd", 3.0):
+        return
     msg = update.effective_message
     if not msg.reply_to_message:
         await msg.reply_text("♻️ Reply to the target user's message to trade.\nExample: reply to their message then send /trade_card")
@@ -982,12 +1080,12 @@ async def handle_trade_card(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not my_cards:
         await msg.reply_text("❌ You have no cards to offer in a trade.")
         return
+    crit, order = get_user_sort(context, user.id)
+    my_cards = _sort_cards(my_cards, crit, order)
     # Show card picker for initiator (paginated, page 0)
     await _show_trade_picker(msg, user.id, target.id, target.first_name, my_cards, page=0, edit=False)
 
 async def _show_trade_picker(msg_or_q, initiator_id: int, target_id: int, target_name: str, cards: list, page: int, edit: bool):
-    rarity_order = {"legend": 0, "epic": 1, "rare": 2, "common": 3}
-    cards = sorted(cards, key=lambda c: (rarity_order.get(c["rarity"], 9), c["name"]))
     start = page * 8
     page_cards = cards[start:start + 8]
     total_pages = max(1, (len(cards) + 7) // 8)
@@ -1030,9 +1128,10 @@ async def cb_tr_page(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await query.answer()
     from database import get_user_cards, get_db
     db = get_db()
-    target_doc = None  # get target name from trade or just use id
     target_id_int = int(target_id)
     cards = await get_user_cards(int(initiator_id))
+    crit, order = get_user_sort(context, int(initiator_id))
+    cards = _sort_cards(cards, crit, order)
     await _show_trade_picker(query, int(initiator_id), target_id_int, f"User {target_id}", cards, int(page_str), edit=True)
 
 async def cb_tr_offer(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -1095,8 +1194,8 @@ async def cb_tr_offer(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f_label = FORMAT_LABEL.get(fmt, fmt.upper())
         r_emoji = RARITY_EMOJI.get(offered["rarity"], "⚪")
         # ── Show target's paginated picker (page 0) ──────────────────────────
-        rarity_order = {"legend": 0, "epic": 1, "rare": 2, "common": 3}
-        matching_rarity.sort(key=lambda c: (rarity_order.get(c["rarity"], 9), c["name"]))
+        crit, order = get_user_sort(context, int(target_id))
+        matching_rarity = _sort_cards(matching_rarity, crit, order)
         header = (
             f"♻️ *Trade Request*\n"
             f"━━━━━━━━━━━━━━━━━━\n"
@@ -1160,8 +1259,8 @@ async def cb_tr_tpage(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.answer("❌ Trade expired (5 min timeout).", show_alert=True); return
     target_cards = await get_user_cards(int(target_id))
     matching_rarity = [c for c in target_cards if c["rarity"] == trade["offered_rarity"]]
-    rarity_order = {"legend": 0, "epic": 1, "rare": 2, "common": 3}
-    matching_rarity.sort(key=lambda c: (rarity_order.get(c["rarity"], 9), c["name"]))
+    crit, order = get_user_sort(context, int(target_id))
+    matching_rarity = _sort_cards(matching_rarity, crit, order)
     r_emoji = RARITY_EMOJI.get(trade["offered_rarity"], "⚪")
     f_label = FORMAT_LABEL.get(trade.get("offered_format", ""), trade.get("offered_format", ""))
     header = (
@@ -1519,6 +1618,7 @@ async def handle_h2h(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # /multi_sell
 # ─────────────────────────────────────────────────────────────────────────────
 _PENDING_MULTI_SELLS: dict[str, dict] = {}
+_COMPLETED_MULTI_SELLS: set[str] = set()
 
 async def handle_multi_sell(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """
@@ -1529,6 +1629,10 @@ async def handle_multi_sell(update: Update, context: ContextTypes.DEFAULT_TYPE):
       /multi_sell 1 3 5  → preview selling cards at positions 1, 3, 5
     """
     user = update.effective_user
+    if not user:
+        return
+    if not _check_card_cooldown(user.id, "multi_sell", 3.0):
+        return
     args = context.args
 
     if not args:
@@ -1568,11 +1672,11 @@ async def handle_multi_sell(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.effective_message.reply_text("❌ No valid card numbers provided.")
         return
 
-    # Fetch current cards (same order as /mycards all mode)
+    # Fetch current cards (using active user sort order)
     from database import get_user_cards, get_fav_card
-    rarity_order = {"legend": 0, "epic": 1, "rare": 2, "common": 3}
+    crit, order = get_user_sort(context, user.id)
     all_cards = await get_user_cards(user.id, sport_filter=None)
-    all_cards.sort(key=lambda c: (rarity_order.get(c["rarity"], 9), c["name"]))
+    all_cards = _sort_cards(all_cards, crit, order)
 
     SELL_VALUES = {"common": 25, "rare": 75, "epic": 200, "legend": 600}
 
@@ -1680,6 +1784,10 @@ async def cb_msell_ok(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.answer("⛔ Not your menu.", show_alert=True)
         return
 
+    if sell_id in _COMPLETED_MULTI_SELLS:
+        await query.answer("Already processed.", show_alert=False)
+        return
+
     session = _PENDING_MULTI_SELLS.pop(sell_id, None)
     if not session or (time.time() - session.get("created_at", 0) > 300):
         await query.answer("⌛ This sell request has expired. Please run /multi_sell again.", show_alert=True)
@@ -1688,6 +1796,10 @@ async def cb_msell_ok(update: Update, context: ContextTypes.DEFAULT_TYPE):
         except Exception:
             pass
         return
+
+    _COMPLETED_MULTI_SELLS.add(sell_id)
+    if len(_COMPLETED_MULTI_SELLS) > 200:
+        _COMPLETED_MULTI_SELLS.pop()
 
     await query.answer("Selling cards...")
 
@@ -1699,8 +1811,9 @@ async def cb_msell_ok(update: Update, context: ContextTypes.DEFAULT_TYPE):
     lock = _get_lock(user_id)
     async with lock:
         # Re-fetch cards to ensure snapshot is fully accurate
+        crit, order = get_user_sort(context, user_id)
         all_cards = await get_user_cards(user_id, sport_filter=None)
-        all_cards.sort(key=lambda c: (rarity_order.get(c["rarity"], 9), c["name"]))
+        all_cards = _sort_cards(all_cards, crit, order)
 
         fav = await get_fav_card(user_id)
         fav_key = (fav.get("player_id"), fav.get("format")) if fav else (None, None)
