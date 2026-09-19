@@ -32,6 +32,25 @@ from handlers.bbet import handle_bbet
 
 async def global_ban_filter(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Intercepts all updates from banned users before any command or callback can run."""
+    try:
+        if update.callback_query:
+            cq = update.callback_query
+            u = cq.from_user
+            chat_id = update.effective_chat.id if update.effective_chat else "DM"
+            logging.getLogger("DEBUG_BUTTON").info(
+                f"🔘 [BUTTON CLICK DETECTED] data='{cq.data}' | user_id={u.id} ({u.first_name}) | chat_id={chat_id}"
+            )
+        elif update.effective_message and update.effective_message.text:
+            u = update.effective_user
+            uid = u.id if u else "None"
+            uname = u.first_name if u else "None"
+            chat_id = update.effective_chat.id if update.effective_chat else "DM"
+            logging.getLogger("DEBUG_MESSAGE").info(
+                f"📨 [MESSAGE DETECTED] text='{update.effective_message.text}' | user_id={uid} ({uname}) | chat_id={chat_id}"
+            )
+    except Exception as log_err:
+        pass
+
     user = update.effective_user
     if not user:
         return
@@ -177,66 +196,79 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Central router for callbacks."""
+    if not update.callback_query:
+        return
+    query = update.callback_query
+    data = query.data or ""
+    u = query.from_user
+    logger = logging.getLogger("DEBUG_CALLBACK")
+    logger.info(f"🎯 [HANDLE_CALLBACK] Router processing: data='{data}' | user_id={u.id} ({u.first_name})")
+
     if update.effective_user:
         from database import is_user_banned
         if await is_user_banned(update.effective_user.id):
             try:
-                await update.callback_query.answer("⛔ You are banned from using this bot.", show_alert=True)
+                await query.answer("⛔ You are banned from using this bot.", show_alert=True)
             except Exception:
                 pass
             return
-    data = update.callback_query.data
 
-    if data.startswith("join_"):
-        # "join_MODE" or "join_MODE_OWNERID"
-        # challenge.py handled this? 
-        # In challenge.py we defined `join_challenge`? No, wait.
-        # handlers/challenge.py has `challenge_handler` and `handle_join`?
-        # Let's check imports.
-        # We imported `handle_join`.
-        await handle_join(update, context)
-        
-    elif data.startswith("draw_") or data.startswith("assign_") or data.startswith("redraw_") or data.startswith("replace_"):
-        await handle_draft_callback(update, context)
-        
-    elif data.startswith("ready_"):
-        await handle_ready(update, context)
-        
+    try:
+        if data.startswith("join_"):
+            await handle_join(update, context)
+            
+        elif data.startswith("draw_") or data.startswith("assign_") or data.startswith("redraw_") or data.startswith("replace_"):
+            await handle_draft_callback(update, context)
+            
+        elif data.startswith("ready_"):
+            await handle_ready(update, context)
+            
+        elif data.startswith("map_"):
+            from handlers.admin import handle_map_stats_callback
+            await handle_map_stats_callback(update, context)
 
-    elif data.startswith("map_"):
-        from handlers.admin import handle_map_stats_callback
-        await handle_map_stats_callback(update, context)
+        elif data.startswith("view_ipl_"):
+            from handlers.admin import handle_view_ipl_callback
+            await handle_view_ipl_callback(update, context)
 
-    elif data.startswith("view_ipl_"):
-        from handlers.admin import handle_view_ipl_callback
-        await handle_view_ipl_callback(update, context)
+        elif data.startswith("view_odi_"):
+            from handlers.admin import handle_view_odi_callback
+            await handle_view_odi_callback(update, context)
 
-    elif data.startswith("view_odi_"):
-        from handlers.admin import handle_view_odi_callback
-        await handle_view_odi_callback(update, context)
+        elif data.startswith("view_test_"):
+            from handlers.admin import handle_view_test_callback
+            await handle_view_test_callback(update, context)
 
-    elif data.startswith("view_test_"):
-        from handlers.admin import handle_view_test_callback
-        await handle_view_test_callback(update, context)
+        elif data.startswith("gen_odi_"):
+            from handlers.admin import handle_gen_odi_callback
+            await handle_gen_odi_callback(update, context)
 
-    elif data.startswith("gen_odi_"):
-        from handlers.admin import handle_gen_odi_callback
-        await handle_gen_odi_callback(update, context)
+        elif data.startswith("challenge_pick_"):
+            await handle_mode_pick_callback(update, context)
 
-    elif data.startswith("challenge_pick_"):
-        await handle_mode_pick_callback(update, context)
+        elif data.startswith("wwe_pick_"):
+            from handlers.challenge import handle_wwe_pick_callback
+            await handle_wwe_pick_callback(update, context)
 
-    elif data.startswith("wwe_pick_"):
-        from handlers.challenge import handle_wwe_pick_callback
-        await handle_wwe_pick_callback(update, context)
+        elif data.startswith("gen_ipl_"):
+            from handlers.admin import handle_gen_ipl_callback
+            await handle_gen_ipl_callback(update, context)
 
-    elif data.startswith("gen_ipl_"):
-        from handlers.admin import handle_gen_ipl_callback
-        await handle_gen_ipl_callback(update, context)
-
-    elif data.startswith("chk_"):
-        from handlers.admin import handle_check_callback
-        await handle_check_callback(update, context)
+        elif data.startswith("chk_"):
+            from handlers.admin import handle_check_callback
+            await handle_check_callback(update, context)
+        else:
+            logger.warning(f"⚠️ [HANDLE_CALLBACK UNHANDLED] No router rule matched data='{data}'")
+            try:
+                await query.answer()
+            except Exception:
+                pass
+    except Exception as cb_err:
+        logger.error(f"💥 [HANDLE_CALLBACK ERROR] Exception handling '{data}': {cb_err}", exc_info=True)
+        try:
+            await query.answer("⚠️ An error occurred while processing this action.", show_alert=False)
+        except Exception:
+            pass
 
 async def post_init(application):
     from database import init_db, get_db, warmup_card_pools
@@ -962,4 +994,4 @@ if __name__ == '__main__':
     #   2. Rate limit bursts (processing 30+ stale commands at startup)
     #   3. Stale button callbacks causing match state corruption
     # Active match data in MongoDB is safe — _startup_recovery restores the UI.
-    application.run_polling(drop_pending_updates=True)
+    application.run_polling(drop_pending_updates=True, allowed_updates=Update.ALL_TYPES)
