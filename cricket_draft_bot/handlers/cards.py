@@ -421,7 +421,7 @@ async def _show_mycards(message_or_query, owner_id: int, viewer_id: int,
         lines.append(f"━━━━━━━━━━━━━━━━━━\nPage {page+1}/{total_pages}")
         text = "\n".join(lines)
 
-    # Clean navigation buttons ONLY — no sluggish sport or collections buttons
+    # Navigation buttons
     nav = []
     if total_pages > 10 and page > 0:
         nav.append(InlineKeyboardButton("⏮ -10", callback_data=f"mc_page|{owner_id}|{sf}|{max(0, page-10)}"))
@@ -436,7 +436,19 @@ async def _show_mycards(message_or_query, owner_id: int, viewer_id: int,
     if total_pages > 10 and page < total_pages - 1:
         nav.append(InlineKeyboardButton("+10 ⏭", callback_data=f"mc_page|{owner_id}|{sf}|{min(total_pages-1, page+10)}"))
 
-    kb = InlineKeyboardMarkup([nav]) if nav else None
+    filters = [
+        InlineKeyboardButton("All", callback_data=f"mc_page|{owner_id}|all|0"),
+        InlineKeyboardButton("🏏",  callback_data=f"mc_page|{owner_id}|cricket|0"),
+        InlineKeyboardButton("⚽",  callback_data=f"mc_page|{owner_id}|football|0"),
+        InlineKeyboardButton("🤼",  callback_data=f"mc_page|{owner_id}|wwe|0"),
+        InlineKeyboardButton("🤸",  callback_data=f"mc_page|{owner_id}|kabaddi|0"),
+    ]
+    collections_row = [InlineKeyboardButton("📊 Collections", callback_data=f"mc_collections|{owner_id}")]
+    rows = [filters]
+    if nav:
+        rows.append(nav)
+    rows.append(collections_row)
+    kb = InlineKeyboardMarkup(rows)
 
     if edit:
         try:
