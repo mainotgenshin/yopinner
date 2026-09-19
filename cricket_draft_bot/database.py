@@ -147,6 +147,10 @@ async def get_player_by_name_and_sport(name_query: str, sport: str) -> Optional[
     if sport == "cricket":
         # Old cricket players may not have a sport field — include both
         query = {"$and": [name_filter, {"$or": [{"sport": "cricket"}, {"sport": {"$exists": False}}]}]}
+    elif sport in ("kabaddi", "pkl"):
+        query = {"$and": [name_filter, {"$or": [{"sport": "kabaddi"}, {"sport": "pkl"}]}]}
+    elif sport in ("football", "fifa"):
+        query = {"$and": [name_filter, {"$or": [{"sport": "football"}, {"sport": "fifa"}]}]}
     else:
         query = {"$and": [name_filter, {"sport": sport}]}
 
