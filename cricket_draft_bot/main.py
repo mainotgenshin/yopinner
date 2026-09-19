@@ -32,25 +32,6 @@ from handlers.bbet import handle_bbet
 
 async def global_ban_filter(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Intercepts all updates from banned users before any command or callback can run."""
-    try:
-        if update.callback_query:
-            cq = update.callback_query
-            u = cq.from_user
-            chat_id = update.effective_chat.id if update.effective_chat else "DM"
-            logging.getLogger("DEBUG_BUTTON").info(
-                f"🔘 [BUTTON CLICK DETECTED] data='{cq.data}' | user_id={u.id} ({u.first_name}) | chat_id={chat_id}"
-            )
-        elif update.effective_message and update.effective_message.text:
-            u = update.effective_user
-            uid = u.id if u else "None"
-            uname = u.first_name if u else "None"
-            chat_id = update.effective_chat.id if update.effective_chat else "DM"
-            logging.getLogger("DEBUG_MESSAGE").info(
-                f"📨 [MESSAGE DETECTED] text='{update.effective_message.text}' | user_id={uid} ({uname}) | chat_id={chat_id}"
-            )
-    except Exception as log_err:
-        pass
-
     user = update.effective_user
     if not user:
         return
@@ -208,8 +189,6 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 pass
             return
     data = query.data or ""
-    u = query.from_user
-    logging.getLogger("DEBUG_CALLBACK").info(f"🎯 [HANDLE_CALLBACK] Router processing: data='{data}' | user_id={u.id} ({u.first_name})")
 
     try:
         if data.startswith("join_"):
