@@ -1,7 +1,7 @@
 # game/simulation.py
 import asyncio
 from game.models import Match, Team, Player
-from config import ROLE_WEIGHTS, WWE_POSITION_STATS
+from config import ROLE_WEIGHTS, WWE_POSITION_STATS, PKL_POSITION_STATS
 from utils.randomizer import calculate_variance
 from telegram.helpers import escape_markdown
 import logging
@@ -38,6 +38,18 @@ def get_clutch_bonus(player: Player, mode: str) -> float:
 
 def calculate_slot_score(player: Player, role: str, mode: str) -> float:
     from config import ROLE_STATS_MAP, PENALTY_MULTIPLIERS, ZERO_SKILL_THRESHOLD
+
+    # PKL: pure stat comparison, no role penalties (same approach as WWE)
+    if mode in ("PKL", "Kabaddi"):
+        stat_key = PKL_POSITION_STATS.get(role, "raider")
+        pkl_stats = (player.stats or {}).get("pkl", {})
+        if not isinstance(pkl_stats, dict):
+            pkl_stats = {}
+        val = pkl_stats.get(stat_key, 50)
+        try:
+            return float(val)
+        except (TypeError, ValueError):
+            return 50.0
 
     # WWE: pure stat comparison, no role penalties
     if mode in ("WWE", "WWE Women"):
@@ -124,7 +136,7 @@ async def run_simulation(match: Match) -> str:
     score_b = 0
     details = []
 
-    from config import POSITIONS_T20, POSITIONS_TEST, POSITIONS_FIFA, POSITIONS_WWE
+    from config import POSITIONS_T20, POSITIONS_TEST, POSITIONS_FIFA, POSITIONS_WWE, POSITIONS_PKL
     
     if match.mode and "FIFA" in match.mode:
         active_positions = POSITIONS_FIFA
@@ -132,27 +144,33 @@ async def run_simulation(match: Match) -> str:
         active_positions = POSITIONS_WWE
     elif match.mode and "Test" in match.mode:
         active_positions = POSITIONS_TEST
+    elif match.mode and ("PKL" in match.mode or "Kabaddi" in match.mode):
+        active_positions = POSITIONS_PKL
     else:
         active_positions = POSITIONS_T20
     
     details.append("🏟 *MATCH SIMULATION – POSITION COMPARISON*\n")
     
     ICONS = {
-        "Captain": "⚔️",
-        "WK": "🧤",
-        "Top": "🔸",
-        "Middle": "🔸",
-        "All Rounder": "🧠",
-        "All-Rounder": "🧠",
-        "Defence": "🛡",
-        "Finisher": "💥",
-        "Hitting": "🔥",
-        "Pacer": "⚡",
-        "Pace": "⚡",
-        "Spinner": "🌀",
-        "Spin": "🌀",
-        "Fielder": "🤾",
-        "Fielding": "🤾"
+        "Captain":        "⚔️",
+        "WK":             "🧤",
+        "Top":            "🔸",
+        "Middle":         "🔸",
+        "All Rounder":    "🧠",
+        "All-Rounder":    "🧠",
+        "Defence":        "🛡",
+        "Finisher":       "💥",
+        "Hitting":        "🔥",
+        "Pacer":          "⚡",
+        "Pace":           "⚡",
+        "Spinner":        "🌀",
+        "Spin":           "🌀",
+        "Fielder":        "🤾",
+        "Fielding":       "🤾",
+        # PKL positions
+        "Raider":         "🏃",
+        "Left Defender":  "🛡️",
+        "Right Defender": "🛡️",
     }
 
     # Head-to-Head Slot Battles
