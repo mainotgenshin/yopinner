@@ -242,6 +242,8 @@ async def get_eligible_players_for_mode(mode: str) -> List[str]:
     elif mode == "WWE Women":
         # WWE Women: Women superstars only
         query = {"sport": "wwe", "gender": "female"}
+    elif mode in ("PKL", "Kabaddi"):
+        query = {"sport": "kabaddi", "pkl_active": {"$ne": False}}
     else:
         # Cricket — map mode string to DB stats key
         _m = mode.lower()
@@ -688,11 +690,13 @@ async def get_user_cards(user_id: int, sport_filter: str = None) -> list:
         if not card_data:
             continue
         p_sport = p.get("sport", "cricket")
-        if sport_filter == "cricket" and p_sport in ("wwe", "football"):
+        if sport_filter == "cricket" and p_sport != "cricket":
             continue
         if sport_filter == "football" and p_sport != "football":
             continue
         if sport_filter == "wwe" and p_sport != "wwe":
+            continue
+        if sport_filter == "kabaddi" and p_sport != "kabaddi":
             continue
         image = _get_card_image(p, fmt)
         result.append({
@@ -737,6 +741,11 @@ def _get_card_image(player_doc: dict, fmt: str) -> Optional[str]:
         return (player_doc.get("image_file_id") or
                 player_doc.get("fifa_image_url") or
                 player_doc.get("image_url"))
+    elif fmt == "pkl":
+        return (player_doc.get("cards", {}).get("pkl", {}).get("image") or
+                player_doc.get("pkl_image_url") or
+                player_doc.get("image_url") or
+                player_doc.get("image_file_id"))
     return player_doc.get("image_url") or player_doc.get("image_file_id")
 
 def _get_card_image_url(player_doc: dict, fmt: str) -> Optional[str]:
@@ -757,6 +766,10 @@ def _get_card_image_url(player_doc: dict, fmt: str) -> Optional[str]:
         if url and "ratings-images-prod.pulse.ea.com" in url and player_doc.get("image_file_id"):
             return None
         return url if url and str(url).startswith("http") else None
+    elif fmt == "pkl":
+        url = (player_doc.get("cards", {}).get("pkl", {}).get("image") or
+               player_doc.get("pkl_image_url") or
+               player_doc.get("image_url"))
     else:
         url = player_doc.get("image_url")
     return url if url and url.startswith("http") else None
