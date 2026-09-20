@@ -871,6 +871,8 @@ async def handle_replace_start(update: Update, context: ContextTypes.DEFAULT_TYP
         active_positions = POSITIONS_WWE
     elif "Test" in match.mode:
         active_positions = POSITIONS_TEST
+    elif match.mode in ("PKL", "Kabaddi"):
+        active_positions = POSITIONS_PKL
     else:
         active_positions = POSITIONS_T20
         
