@@ -918,29 +918,36 @@ async def challenge_unified(update: Update, context: ContextTypes.DEFAULT_TYPE):
     owner_id = update.effective_user.id
     chat_id  = update.effective_chat.id
     sent_msg = None
+    challenger_html = html.escape(update.effective_user.first_name or "Player")
+    if target_user:
+        target_html = html.escape(target_user.first_name or "Player")
+        ch_caption = f"{m_icon} <b>{real_mode} Challenge!</b>\nFrom: {challenger_html}\nTo: {target_html}\n\nWaiting for {target_html} to accept..."
+    else:
+        ch_caption = f"{m_icon} <b>{real_mode} Challenge!</b>\nUser: {challenger_html}\nWaiting for opponent..."
+
     try:
         if banner and str(banner).startswith("http"):
-            challenger_html = html.escape(update.effective_user.first_name)
-            if target_user:
-                target_html = html.escape(target_user.first_name)
-                ch_caption = f"{m_icon} <b>{real_mode} Challenge!</b>\nFrom: {challenger_html}\nTo: {target_html}\n\nWaiting for {target_html} to accept..."
-            else:
-                ch_caption = f"{m_icon} <b>{real_mode} Challenge!</b>\nUser: {challenger_html}\nWaiting for opponent..."
             sent_msg = await update.effective_message.reply_text(
                 f'<a href="{banner}">&#8205;</a>' + ch_caption,
                 reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="HTML",
                 disable_web_page_preview=False
             )
-        else:
+        elif banner:
             sent_msg = await update.effective_message.reply_photo(
-                photo=banner, caption=msg_text,
-                reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="Markdown"
+                photo=banner, caption=ch_caption,
+                reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="HTML"
+            )
+        else:
+            sent_msg = await update.effective_message.reply_text(
+                ch_caption,
+                reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="HTML"
             )
     except Exception:
         try:
+            plain_text = f"{m_icon} {real_mode} Challenge!\nWaiting for opponent..."
             sent_msg = await update.effective_message.reply_text(
-                msg_text,
-                reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="Markdown"
+                plain_text,
+                reply_markup=InlineKeyboardMarkup(keyboard), parse_mode=None
             )
         except Exception:
             return
