@@ -11,3 +11,5 @@ motor
 httpx
 pytz
 APScheduler
+psutil
+
