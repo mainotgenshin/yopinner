@@ -500,12 +500,16 @@ async def remove_player(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """
     /removeplayer player_id=IND_KOHLI
     """
-    text = update.message.text.replace('/removeplayer', '').strip()
-    if not text:
-        await update.message.reply_text("**Usage:**\n`/removeplayer player_id=ID`", parse_mode="Markdown")
-        return
-        
+    if not update.effective_message: return
     if not await check_admin(update): return
+
+    message = update.effective_message
+    raw_text = message.text or message.caption or ""
+    import re
+    text = re.sub(r'^/removeplayer(@\w+)?\s*', '', raw_text, flags=re.IGNORECASE).strip()
+    if not text:
+        await message.reply_text("**Usage:**\n`/removeplayer player_id=ID`", parse_mode="Markdown")
+        return
         
     try:
         player_id = text.split('=')[1].strip() if '=' in text else text.strip()
@@ -518,78 +522,32 @@ async def remove_player(update: Update, context: ContextTypes.DEFAULT_TYPE):
             p = await get_player_by_name(player_id) # player_id variable holds the search text here
             
             if not p:
-                await update.message.reply_text(f"❌ Player not found by ID or Name: '{player_id}'")
+                await message.reply_text(f"❌ Player not found by ID or Name: '{player_id}'")
                 return
             
             # Found by name, update player_id to the actual ID found
             player_id = p['player_id']
 
         if await delete_player(player_id):
-            await update.message.reply_text(f"✅ Player *{esc(p['name'])}* (`{player_id}`) has been removed.", parse_mode="Markdown")
+            await message.reply_text(f"✅ Player *{esc(p['name'])}* (`{player_id}`) has been removed.", parse_mode="Markdown")
         else:
-            await update.message.reply_text("❌ Failed to remove player (DB Error).")
+            await message.reply_text("❌ Failed to remove player (DB Error).")
             
     except Exception as e:
-        await update.message.reply_text(f"Error: {e}")
+        await message.reply_text(f"Error: {e}")
 
 
 
-async def get_player_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """/stats Player Name [sport=wwe|cricket|football]"""
-    if not update.effective_message: return
-    if not await check_admin(update): return
+async def _render_player_stats(p: dict, message, query=None):
+    """Renders player stats card with HTML formatting and proper banner/photo delivery."""
+    from telegram import InlineKeyboardButton, InlineKeyboardMarkup
+    import html as _html
 
-    message = update.effective_message
-    raw_text = message.text or message.caption or ""
-    import re
-    text = raw_text.replace('/stats', '').strip()
-    if not text:
-        await message.reply_text(
-            "**Usage:** `/stats Player Name` or `/stats Player Name sport=wwe`",
-            parse_mode="Markdown"
-        )
-        return
-
-    # Parse optional sport= flag
-    sport_match = re.search(r'\bsport=(\w+)', text, re.IGNORECASE)
-    sport_filter = sport_match.group(1).lower() if sport_match else None
-    if sport_filter == 'fifa': sport_filter = 'football'
-    if sport_match:
-        text = re.sub(r'\s*\bsport=\S+', '', text, flags=re.IGNORECASE).strip()
-
-    from database import search_players_by_name
-    results = await search_players_by_name(text, sport_filter)
-    
-    if not results:
-        hint = f" (sport={sport_filter})" if sport_filter else ""
-        await message.reply_text(
-            f"❌ Player matching `{esc(text)}`{hint} not found.", parse_mode="Markdown"
-        )
-        return
-        
-    if len(results) > 1:
-        # Check if one is an exact match
-        exact_matches = [r for r in results if r['name'].lower() == text.lower()]
-        if len(exact_matches) == 1:
-            p = exact_matches[0]
-        else:
-            names = [f"`{esc(r['name'])}`" for r in results[:5]]
-            if len(results) > 5: names.append("...")
-            
-            await message.reply_text(
-                f"⚠️ Multiple players found matching `{esc(text)}`:\n"
-                f"{', '.join(names)}\n\n"
-                f"Please type the full name to be more specific.",
-                parse_mode="Markdown"
-            )
-            return
-    else:
-        p = results[0]
-
-    stats  = p.get('stats', {})
-    sport  = p.get('sport', 'cricket')
-    cards  = p.get('cards', {})
+    stats = p.get('stats', {})
+    sport = p.get('sport', 'cricket')
+    cards = p.get('cards', {})
     RARITY_EMOJI = {'common': '⚪', 'rare': '🔵', 'epic': '🟣', 'legend': '🟡'}
+    p_name_esc = _html.escape(p.get('name', 'Player'))
 
     # ── WWE ──────────────────────────────────────────────────────────────────
     if sport == 'wwe':
@@ -598,11 +556,11 @@ async def get_player_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
         card_wwe = cards.get('wwe')
         if card_wwe and 'ovr' in card_wwe:
             r = card_wwe.get('rarity', 'common').lower()
-            cat_wwe = f"\n\n🃏 *Card Catalog:*\n  WWE: OVR {card_wwe.get('ovr')} | {RARITY_EMOJI.get(r, '⚪')} {r.title()}"
+            cat_wwe = f"\n\n🃏 <b>Card Catalog:</b>\n  WWE: OVR {card_wwe.get('ovr')} | {RARITY_EMOJI.get(r, '⚪')} {r.title()}"
         else:
-            cat_wwe = "\n\n🃏 *Card Catalog:*\n  WWE: Not added yet"
-        msg = (
-            f"🤼 *{esc(p['name'])}* (WWE)\n"
+            cat_wwe = "\n\n🃏 <b>Card Catalog:</b>\n  WWE: Not added yet"
+        msg_html = (
+            f"🤼 <b>{p_name_esc}</b> (WWE)\n"
             f"━━━━━━━━━━━━━━━\n"
             f"💪 Power:        {w('power')}\n"
             f"⚡ Speed:        {w('speed')}\n"
@@ -617,37 +575,24 @@ async def get_player_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"{cat_wwe}"
         )
         img_url = p.get('wwe_image_url') or p.get('image_url')
-        if img_url and str(img_url).startswith('http'):
-            try:
-                href_text = f'<a href="{img_url}">\u200b</a>' + msg
-                await message.reply_text(href_text, parse_mode="HTML", disable_web_page_preview=False)
-                return
-            except Exception:
-                pass
-        img = p.get('image_file_id') or p.get('wwe_image_url')
-        if img:
-            try:
-                await message.reply_photo(photo=img, caption=msg, parse_mode="Markdown")
-                return
-            except Exception:
-                pass
-        await message.reply_text(msg, parse_mode="Markdown")
-        return
+        img_file = p.get('image_file_id') or p.get('wwe_image_url')
+        kb = None
 
     # ── FIFA ─────────────────────────────────────────────────────────────────
-    if sport == 'football':
+    elif sport in ('football', 'fifa'):
         fs = stats.get('fifa', {})
         def f(k): return fs.get(k, 0)
         card_fifa = cards.get('fifa')
         if card_fifa and 'ovr' in card_fifa:
             r = card_fifa.get('rarity', 'common').lower()
-            cat_fifa = f"\n\n🃏 *Card Catalog:*\n  FIFA: OVR {card_fifa.get('ovr')} | {RARITY_EMOJI.get(r, '⚪')} {r.title()}"
+            cat_fifa = f"\n\n🃏 <b>Card Catalog:</b>\n  FIFA: OVR {card_fifa.get('ovr')} | {RARITY_EMOJI.get(r, '⚪')} {r.title()}"
         else:
-            cat_fifa = "\n\n🃏 *Card Catalog:*\n  FIFA: Not added yet"
-        msg = (
-            f"⚽ *{esc(p['name'])}* (FIFA)\n"
+            cat_fifa = "\n\n🃏 <b>Card Catalog:</b>\n  FIFA: Not added yet"
+        pos_esc = _html.escape(', '.join(p.get('positions', [])))
+        msg_html = (
+            f"⚽ <b>{p_name_esc}</b> (FIFA)\n"
             f"🏅 Overall: {p.get('overall', 'N/A')}  "
-            f"📍 {', '.join(p.get('positions', []))}\n"
+            f"📍 {pos_esc}\n"
             f"━━━━━━━━━━━━━━━\n"
             f"🏃 ST: {f('ST')}  CF: {f('CF')}  GK: {f('GK')}\n"
             f"🎯 LW: {f('LW')}  RW: {f('RW')}  CAM: {f('CAM')}\n"
@@ -656,39 +601,21 @@ async def get_player_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"{cat_fifa}"
         )
         img_url = p.get('fifa_image_url') or p.get('image_url')
-        if img_url and str(img_url).startswith('http'):
-            try:
-                href_text = f'<a href="{img_url}">\u200b</a>' + msg
-                await message.reply_text(href_text, parse_mode="HTML", disable_web_page_preview=False)
-                return
-            except Exception:
-                pass
-        sent = False
-        for img_key in ('image_file_id', 'fifa_image_url'):
-            if p.get(img_key) and not sent:
-                try:
-                    await message.reply_photo(
-                        photo=p[img_key], caption=msg, parse_mode="Markdown"
-                    )
-                    sent = True
-                except Exception:
-                    pass
-        if not sent:
-            await message.reply_text(msg, parse_mode="Markdown")
-        return
+        img_file = p.get('image_file_id') or p.get('fifa_image_url')
+        kb = None
 
     # ── PKL / Kabaddi ────────────────────────────────────────────────────────
-    if sport == 'kabaddi':
+    elif sport in ('kabaddi', 'pkl'):
         ps = stats.get('pkl', {})
         def k(key): return ps.get(key, 'N/A')
         card_pkl = cards.get('pkl')
         if card_pkl and 'ovr' in card_pkl:
             r = card_pkl.get('rarity', 'common').lower()
-            cat_pkl = f"\n\n🃏 *Card Catalog:*\n  PKL: OVR {card_pkl.get('ovr')} | {RARITY_EMOJI.get(r, '⚪')} {r.title()}"
+            cat_pkl = f"\n\n🃏 <b>Card Catalog:</b>\n  PKL: OVR {card_pkl.get('ovr')} | {RARITY_EMOJI.get(r, '⚪')} {r.title()}"
         else:
-            cat_pkl = "\n\n🃏 *Card Catalog:*\n  PKL: Not added yet"
-        msg = (
-            f"🤸 *{esc(p['name'])}* (PKL)\n"
+            cat_pkl = "\n\n🃏 <b>Card Catalog:</b>\n  PKL: Not added yet"
+        msg_html = (
+            f"🤸 <b>{p_name_esc}</b> (PKL)\n"
             f"━━━━━━━━━━━━━━━\n"
             f"⚔️ Captain:        {k('captain')}\n"
             f"🏃 Raider:         {k('raider')}\n"
@@ -697,106 +624,212 @@ async def get_player_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"🧠 All Rounder:    {k('all_rounder')}"
             f"{cat_pkl}"
         )
-        img_url = p.get('cards', {}).get('pkl', {}).get('image') or p.get('image_url')
-        if img_url and str(img_url).startswith('http'):
+        img_url = p.get('cards', {}).get('pkl', {}).get('image') or p.get('pkl_image_url') or p.get('image_url')
+        img_file = p.get('image_file_id') or img_url
+        kb = None
+
+    # ── Cricket ───────────────────────────────────────────────────────────────
+    else:
+        roles = p.get('roles', [])
+        roles_up = [r.upper() for r in roles]
+        has_wk = "WK" in roles_up
+        has_def = "DEFENCE" in roles_up
+
+        def format_stats(data):
+            if not data: return "N/A"
+            if isinstance(data, int): return str(data)
+            def g(key): return data.get(key, 'N/A')
+            parts = [
+                f"🧠 Captain: {g('leadership')}",
+                f"🏏 Top:     {g('batting_power')}",
+                f"🛡 Middle:  {g('batting_control')}",
+            ]
+            if has_def: parts.append(f"🧱 Defence:  {g('batting_defence')}")
+            if has_wk:  parts.append(f"🧤 WK:       {g('wicket_keeping')}")
+            parts += [
+                f"✨ All Round: {g('all_round')}",
+                f"💥 Finisher:  {g('finishing')}",
+                f"⚡ Pacer:     {g('bowling_pace')}",
+                f"🌀 Spinner:   {g('bowling_spin')}",
+                f"🤾 Fielding:  {g('fielding')}",
+            ]
+            return "\n".join(parts)
+
+        intl_display = format_stats(stats.get('odi', {}))
+        cat_lines = ["\n\n🃏 <b>Card Catalog:</b>"]
+        for label, fmt_key in [('IPL', 'ipl'), ('ODI', 'odi'), ('Test', 'test')]:
+            c_info = cards.get(fmt_key)
+            if c_info and 'ovr' in c_info:
+                r = c_info.get('rarity', 'common').lower()
+                emoji = RARITY_EMOJI.get(r, '⚪')
+                cat_lines.append(f"  {label}: OVR {c_info.get('ovr')} | {emoji} {r.title()}")
+            else:
+                cat_lines.append(f"  {label}: Not added yet")
+        card_cat_html = "\n".join(cat_lines)
+
+        roles_clean = _html.escape(', '.join(roles))
+        msg_html = (
+            f"📊 <b>{p_name_esc}</b>\n"
+            f"<i>ODI Stats</i>\n"
+            f"{intl_display}\n\n"
+            f"Roles: {roles_clean}"
+            f"{card_cat_html}"
+        )
+
+        btn_row = [InlineKeyboardButton("🏏 IPL Stats", callback_data=f"view_ipl_{p['player_id']}")]
+        if p.get('stats', {}).get('test'):
+            btn_row.append(InlineKeyboardButton("🧪 Test Stats", callback_data=f"view_test_{p['player_id']}"))
+        kb = InlineKeyboardMarkup([btn_row])
+
+        img_url = p.get('odi_image_url') or p.get('image_url') or p.get('ipl_image_url')
+        img_file = p.get('image_file_id') or p.get('odi_image_url')
+
+    # ── Delivery ─────────────────────────────────────────────────────────────
+    if query:
+        # User clicked a button from the selection menu
+        if img_url and str(img_url).startswith("http"):
             try:
-                href_text = f'<a href="{img_url}">&#8205;</a>' + msg
-                await message.reply_text(href_text, parse_mode="HTML", disable_web_page_preview=False)
+                href_text = f'<a href="{img_url}">&#8205;</a>' + msg_html
+                await query.edit_message_text(href_text, reply_markup=kb, parse_mode="HTML", disable_web_page_preview=False)
                 return
             except Exception:
                 pass
-        await message.reply_text(msg, parse_mode="Markdown")
+        if img_file and not str(img_file).startswith("http"):
+            try:
+                await query.message.reply_photo(photo=img_file, caption=msg_html, reply_markup=kb, parse_mode="HTML")
+                try:
+                    await query.message.delete()
+                except Exception:
+                    pass
+                return
+            except Exception:
+                pass
+        try:
+            await query.edit_message_text(msg_html, reply_markup=kb, parse_mode="HTML")
+        except Exception:
+            if query.message:
+                await query.message.reply_text(msg_html, reply_markup=kb, parse_mode="HTML")
+    else:
+        # Regular command invocation
+        if img_url and str(img_url).startswith("http"):
+            try:
+                href_text = f'<a href="{img_url}">&#8205;</a>' + msg_html
+                await message.reply_text(href_text, reply_markup=kb, parse_mode="HTML", disable_web_page_preview=False)
+                return
+            except Exception:
+                pass
+        if img_file:
+            try:
+                await message.reply_photo(photo=img_file, caption=msg_html, reply_markup=kb, parse_mode="HTML")
+                return
+            except Exception:
+                pass
+        await message.reply_text(msg_html, reply_markup=kb, parse_mode="HTML")
+
+
+async def handle_view_player_stats_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handles admin clicking a specific player from the /stats disambiguation buttons."""
+    query = update.callback_query
+    if not query:
+        return
+    from utils.permissions import can_manage_bot
+    if not await can_manage_bot(update.effective_user.id):
+        await query.answer("⛔ This action is restricted to Bot Admins.", show_alert=True)
         return
 
-    # ── Cricket ───────────────────────────────────────────────────────────────
-    roles      = p.get('roles', [])
-    roles_up   = [r.upper() for r in roles]
-    has_wk     = "WK" in roles_up
-    has_def    = "DEFENCE" in roles_up
+    data = query.data or ""
+    player_id = data.split("vstats_", 1)[1] if "vstats_" in data else None
+    if not player_id:
+        await query.answer("Invalid player ID.", show_alert=True)
+        return
 
-    def format_stats(data):
-        if not data:              return "N/A"
-        if isinstance(data, int): return str(data)
-        def g(k): return data.get(k, 'N/A')
-        parts = [
-            f"🧠 Captain: {g('leadership')}",
-            f"🏏 Top:     {g('batting_power')}",
-            f"🛡 Middle: {g('batting_control')}",
-        ]
-        if has_def: parts.append(f"🧱 Defence:  {g('batting_defence')}")
-        if has_wk:  parts.append(f"🧤 WK:       {g('wicket_keeping')}")
-        parts += [
-            f"✨ All Round: {g('all_round')}",
-            f"💥 Finisher:  {g('finishing')}",
-            f"⚡ Pacer:     {g('bowling_pace')}",
-            f"🌀 Spinner:   {g('bowling_spin')}",
-            f"🤾 Fielding:  {g('fielding')}",
-        ]
-        return "\n".join(parts)
+    from database import get_player
+    p = await get_player(player_id)
+    if not p:
+        await query.answer("❌ Player not found.", show_alert=True)
+        return
 
-    intl_display = format_stats(stats.get('odi', {}))
+    try:
+        await query.answer()
+    except Exception:
+        pass
 
-    # Card Catalog info for cricket
-    cat_lines_md = ["\n\n🃏 *Card Catalog:*"]
-    cat_lines_html = ["\n\n🃏 <b>Card Catalog:</b>"]
-    for label, fmt_key in [('IPL', 'ipl'), ('ODI', 'odi'), ('Test', 'test')]:
-        c_info = cards.get(fmt_key)
-        if c_info and 'ovr' in c_info:
-            r = c_info.get('rarity', 'common').lower()
-            emoji = RARITY_EMOJI.get(r, '⚪')
-            cat_lines_md.append(f"  {label}: OVR {c_info.get('ovr')} | {emoji} {r.title()}")
-            cat_lines_html.append(f"  {label}: OVR {c_info.get('ovr')} | {emoji} {r.title()}")
-        else:
-            cat_lines_md.append(f"  {label}: Not added yet")
-            cat_lines_html.append(f"  {label}: Not added yet")
-    card_cat_md = "\n".join(cat_lines_md)
-    card_cat_html = "\n".join(cat_lines_html)
+    await _render_player_stats(p, message=query.message, query=query)
 
+
+async def get_player_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """/stats Player Name [sport=wwe|cricket|football|pkl]"""
+    if not update.effective_message: return
+    if not await check_admin(update): return
+
+    message = update.effective_message
+    raw_text = message.text or message.caption or ""
+    import re
     import html as _html
-    name_clean = _html.escape(p.get('name', 'Player'))
-    roles_clean = _html.escape(', '.join(roles))
-    msg = (
-        f"📊 <b>{name_clean}</b>\n"
-        f"<i>ODI Stats</i>\n"
-        f"{intl_display}\n\n"
-        f"Roles: {roles_clean}"
-        f"{card_cat_html}"
-    )
-
-    # Also build a Markdown version for photo caption (player names in captions are safe)
-    md_msg = (
-        f"📊 *{esc(p['name'])}*\n"
-        f"*ODI Stats*\n{intl_display}\n\n"
-        f"Roles: {esc(', '.join(roles))}"
-        f"{card_cat_md}"
-    )
-
     from telegram import InlineKeyboardButton, InlineKeyboardMarkup
-    btn_row = [InlineKeyboardButton("🏏 IPL Stats", callback_data=f"view_ipl_{p['player_id']}")]
-    if p.get('stats', {}).get('test'):
-        btn_row.append(InlineKeyboardButton("🧪 Test Stats", callback_data=f"view_test_{p['player_id']}"))
-    kb = InlineKeyboardMarkup([btn_row])
 
-    img_url = p.get('odi_image_url') or p.get('image_url') or p.get('ipl_image_url')
-    if img_url and str(img_url).startswith('http'):
-        try:
-            href_text = f'<a href="{img_url}">\u200b</a>' + msg
-            await message.reply_text(href_text, reply_markup=kb, parse_mode="HTML", disable_web_page_preview=False)
-            return
-        except Exception:
-            pass
+    text = re.sub(r'^/stats(@\w+)?\s*', '', raw_text, flags=re.IGNORECASE).strip()
+    if not text:
+        await message.reply_text(
+            "**Usage:** `/stats Player Name` or `/stats Player Name sport=pkl`",
+            parse_mode="Markdown"
+        )
+        return
 
-    if p.get('image_file_id'):
-        try:
-            await message.reply_photo(
-                photo=p['image_file_id'], caption=md_msg,
-                reply_markup=kb, parse_mode="Markdown"
+    # Parse optional sport= flag
+    sport_match = re.search(r'\bsport=(\w+)', text, re.IGNORECASE)
+    sport_filter = sport_match.group(1).lower() if sport_match else None
+    if sport_filter == 'fifa': sport_filter = 'football'
+    if sport_filter in ('pkl', 'kabadi'): sport_filter = 'kabaddi'
+    if sport_match:
+        text = re.sub(r'\s*\bsport=\S+', '', text, flags=re.IGNORECASE).strip()
+
+    from database import search_players_by_name
+    results = await search_players_by_name(text, sport_filter)
+    
+    if not results:
+        hint = f" (sport={sport_filter})" if sport_filter else ""
+        await message.reply_text(
+            f"❌ Player matching `{esc(text)}`{hint} not found.", parse_mode="Markdown"
+        )
+        return
+        
+    if len(results) > 1:
+        exact_matches = [r for r in results if r['name'].lower() == text.lower()]
+        if len(exact_matches) == 1:
+            p = exact_matches[0]
+        else:
+            SPORT_LABELS = {
+                'cricket': ('🏏', 'Cricket'),
+                'kabaddi': ('🤸', 'PKL'),
+                'football': ('⚽', 'FIFA'),
+                'wwe': ('🤼', 'WWE'),
+            }
+            buttons = []
+            target_list = exact_matches if len(exact_matches) > 1 else results
+            for r in target_list[:8]:
+                sp = r.get('sport', 'cricket')
+                s_icon, s_name = SPORT_LABELS.get(sp, ('🏏', 'Cricket'))
+                btn_label = f"{s_icon} {r['name']} ({s_name})"
+                buttons.append([InlineKeyboardButton(btn_label, callback_data=f"vstats_{r['player_id']}")])
+
+            header = (
+                f"🔍 <b>Multiple players found matching</b> <code>{_html.escape(text)}</code>:\n\n"
+                f"Tap a player below to view their stats:"
+            )
+            if len(target_list) > 8:
+                header += f"\n<i>(Showing first 8 of {len(target_list)} matches)</i>"
+
+            await message.reply_text(
+                header,
+                reply_markup=InlineKeyboardMarkup(buttons),
+                parse_mode="HTML"
             )
             return
-        except Exception as e:
-            logger.error(f"Photo send failed for {p['name']}: {e}")
-    # Fallback: plain HTML — never crashes on special chars
-    await message.reply_text(msg, reply_markup=kb, parse_mode="HTML")
+    else:
+        p = results[0]
+
+    await _render_player_stats(p, message=message)
 
 
 
@@ -1191,19 +1224,27 @@ async def remove_mod_handler(update: Update, context: ContextTypes.DEFAULT_TYPE)
         await update.message.reply_text("Usage: `/unmod <user_id>`", parse_mode="Markdown")
 
 async def set_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """/setstats Name [sport=wwe|cricket] [format=all|ipl|odi|test] stat=value ..."""
+    """/setstats Name [sport=wwe|cricket|fifa|pkl] [format=all|ipl|odi|test] stat=value ..."""
+    if not update.effective_message: return
     if not await check_admin(update): return
 
-    text = update.message.text.replace('/setstats', '').strip()
+    message = update.effective_message
+    raw_text = message.text or message.caption or ""
+    import re
+    text = re.sub(r'^/setstats(@\w+)?\s*', '', raw_text, flags=re.IGNORECASE).strip()
     if not text:
-        await update.message.reply_text(
+        await message.reply_text(
             "**Usage:**\n"
             "`/setstats Name format=ipl cap=90 top=85`\n"
             "`/setstats Name format=odi cap=90 top=85`\n"
             "`/setstats Name format=test cap=90 top=85`\n"
             "`/setstats Name sport=wwe power=95 speed=80`\n"
+            "`/setstats Name sport=pkl raider=90 cap=85`\n"
+            "`/setstats Name sport=fifa overall=90 st=92`\n"
             "Cricket keys: cap, wk, top, mid, def, all, pacer, spin, fin, field\n"
-            "WWE keys: power, speed, tech, stamina, dur, char, agg, intel, aerial, sub",
+            "WWE keys: power, speed, tech, stamina, dur, char, agg, intel, aerial, sub\n"
+            "PKL keys: cap, raider, ldef, rdef, ar\n"
+            "FIFA keys: overall, st, cf, gk, lw, rw, cam, cm, cdm, cb, lb, rb",
             parse_mode="Markdown"
         )
         return
@@ -1220,20 +1261,21 @@ async def set_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     player_name = " ".join(name_parts)
     if not player_name:
-        await update.message.reply_text("❌ Player name missing.", parse_mode="Markdown")
+        await message.reply_text("❌ Player name missing.", parse_mode="Markdown")
         return
 
     sport_filter = kwargs.pop('sport', None)
     if sport_filter:
         sport_filter = sport_filter.lower()
         if sport_filter == 'fifa': sport_filter = 'football'
+        if sport_filter in ('pkl', 'kabadi'): sport_filter = 'kabaddi'
 
     from database import search_players_by_name, save_player
     results = await search_players_by_name(player_name, sport_filter)
 
     if not results:
         hint = f" (sport={sport_filter})" if sport_filter else ""
-        await update.message.reply_text(f"❌ Player '{player_name}'{hint} not found.")
+        await message.reply_text(f"❌ Player '{player_name}'{hint} not found.")
         return
 
     if len(results) > 1:
@@ -1245,10 +1287,10 @@ async def set_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
             names = [f"`{r['name']}` (sport={r.get('sport','?')})" for r in results[:5]]
             if len(results) > 5:
                 names.append("...")
-            await update.message.reply_text(
+            await message.reply_text(
                 f"⚠️ Multiple players found matching `{player_name}`:\n"
                 + "\n".join(names)
-                + "\n\nPlease be more specific or add `sport=cricket/football/wwe` to target the right player.",
+                + "\n\nPlease be more specific or add `sport=cricket/football/wwe/pkl` to target the right player.",
                 parse_mode="Markdown"
             )
             return
@@ -1286,10 +1328,10 @@ async def set_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 changes.append(f"WWE {sk}: {old} → {val}")
                 has_updates = True
             except ValueError:
-                await update.message.reply_text(f"❌ Invalid value for {k}: `{v}` (must be 1-100)", parse_mode="Markdown")
+                await message.reply_text(f"❌ Invalid value for {k}: `{v}` (must be 1-100)", parse_mode="Markdown")
                 return
         if not has_updates:
-            await update.message.reply_text(
+            await message.reply_text(
                 "⚠️ No valid WWE stats found.\n"
                 "Keys: power, speed, tech, stamina, dur, char, agg, intel, aerial, sub",
                 parse_mode="Markdown"
@@ -1297,8 +1339,51 @@ async def set_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return
         stats['wwe'] = wwe_stats
 
+    # ── FIFA / Football path ─────────────────────────────────────────────────
+    elif sport in ('football', 'fifa'):
+        fifa_key_map = {
+            'st': 'ST', 'cf': 'CF', 'gk': 'GK',
+            'lw': 'LW', 'rw': 'RW', 'cam': 'CAM',
+            'cm': 'CM', 'cdm': 'CDM', 'cb': 'CB',
+            'lb': 'LB', 'rb': 'RB',
+        }
+        fifa_stats = stats.get('fifa', {})
+        has_updates = False
+        for k, v in kwargs.items():
+            if k in ('format', 'sport'): continue
+            if k in ('overall', 'ovr'):
+                try:
+                    val = max(1, min(100, int(v)))
+                    old = p.get('overall', 'N/A')
+                    p['overall'] = val
+                    changes.append(f"FIFA Overall: {old} → {val}")
+                    has_updates = True
+                except ValueError:
+                    await message.reply_text(f"❌ Invalid value for {k}: `{v}` (must be 1-100)", parse_mode="Markdown")
+                    return
+                continue
+            sk = fifa_key_map.get(k)
+            if not sk: continue
+            try:
+                val = max(1, min(100, int(v)))
+                old = fifa_stats.get(sk, 'N/A')
+                fifa_stats[sk] = val
+                changes.append(f"FIFA {sk}: {old} → {val}")
+                has_updates = True
+            except ValueError:
+                await message.reply_text(f"❌ Invalid value for {k}: `{v}` (must be 1-100)", parse_mode="Markdown")
+                return
+        if not has_updates:
+            await message.reply_text(
+                "⚠️ No valid FIFA stats found.\n"
+                "Keys: overall, st, cf, gk, lw, rw, cam, cm, cdm, cb, lb, rb",
+                parse_mode="Markdown"
+            )
+            return
+        stats['fifa'] = fifa_stats
+
     # ── PKL / Kabaddi path ───────────────────────────────────────────────────
-    elif sport == 'kabaddi':
+    elif sport in ('kabaddi', 'pkl'):
         pkl_key_map = {
             'cap': 'captain', 'captain': 'captain',
             'raider': 'raider', 'raid': 'raider',
@@ -1319,10 +1404,10 @@ async def set_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 changes.append(f"PKL {sk}: {old} → {val}")
                 has_updates = True
             except ValueError:
-                await update.message.reply_text(f"❌ Invalid value for {k}: `{v}` (must be 1-100)", parse_mode="Markdown")
+                await message.reply_text(f"❌ Invalid value for {k}: `{v}` (must be 1-100)", parse_mode="Markdown")
                 return
         if not has_updates:
-            await update.message.reply_text(
+            await message.reply_text(
                 "⚠️ No valid PKL stats found.\n"
                 "Keys: cap, raider, ldef, rdef, ar",
                 parse_mode="Markdown"
@@ -1342,7 +1427,7 @@ async def set_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
         }
         target_format = kwargs.get('format', 'all').lower()
         if target_format not in ['ipl', 'odi', 'test', 'all']:
-            await update.message.reply_text("❌ format must be `ipl`, `odi`, `test`, or `all`.", parse_mode="Markdown")
+            await message.reply_text("❌ format must be `ipl`, `odi`, `test`, or `all`.", parse_mode="Markdown")
             return
         if target_format == 'all':
             modes = ['ipl', 'odi', 'test']
@@ -1366,10 +1451,10 @@ async def set_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     changes.append(f"{mode.upper()} {k}: {old} → {val}")
                     has_updates = True
             except ValueError:
-                await update.message.reply_text(f"❌ Invalid value for {k}: `{v}` (must be 1-100)", parse_mode="Markdown")
+                await message.reply_text(f"❌ Invalid value for {k}: `{v}` (must be 1-100)", parse_mode="Markdown")
                 return
         if not has_updates:
-            await update.message.reply_text(
+            await message.reply_text(
                 "⚠️ No valid stats found.\nKeys: cap, wk, top, mid, def, all, pacer, spin, fin, field",
                 parse_mode="Markdown"
             )
@@ -1379,7 +1464,7 @@ async def set_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await save_player(p)
 
     summary = "\n".join(changes)
-    await update.message.reply_text(
+    await message.reply_text(
         f"✅ *Updated {esc(p['name'])}*\n\n{summary}",
         parse_mode="Markdown"
     )
@@ -3000,21 +3085,16 @@ async def handle_botstatus(update: Update, context: ContextTypes.DEFAULT_TYPE):
         perf_lines = ""
         try:
             import psutil
-            cpu = psutil.cpu_percent(interval=0.2)
+            cpu = await asyncio.to_thread(psutil.cpu_percent, 0.2)
             mem_mb = psutil.Process().memory_info().rss // (1024 * 1024)
-            if cpu <= 60:
-                perf_lines = (
-                    f"\n⚙️ *Performance*\n"
-                    f"   🧠 CPU: `{cpu:.0f}%`\n"
-                    f"   💾 Memory: `{mem_mb} MB`\n"
-                    f"   🏓 DB Ping: `{ping_ms} ms`\n"
-                    f"   ⏱️ Uptime: `{uptime_str}`\n"
-                )
-            else:
-                perf_lines = (
-                    f"\n⚠️ *Load is high ({cpu:.0f}%) — skipping performance metrics*\n"
-                    f"   🏓 DB Ping: `{ping_ms} ms`\n"
-                )
+            load_warn = " ⚠️" if cpu > 85 else ""
+            perf_lines = (
+                f"\n⚙️ *Performance*\n"
+                f"   🧠 CPU: `{cpu:.0f}%`{load_warn}\n"
+                f"   💾 Memory: `{mem_mb} MB`\n"
+                f"   🏓 DB Ping: `{ping_ms} ms`\n"
+                f"   ⏱️ Uptime: `{uptime_str}`\n"
+            )
         except ImportError:
             perf_lines = (
                 f"\n⚙️ *Performance*\n"
