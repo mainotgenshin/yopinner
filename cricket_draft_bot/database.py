@@ -429,10 +429,13 @@ async def update_user_stats(user_id: int, name: str, result: str,
     mode_upper = mode.upper() if mode else ""
     is_fifa    = "FIFA" in mode_upper
     is_wwe     = "WWE"  in mode_upper
+    is_pkl     = "PKL"  in mode_upper or "KABADDI" in mode_upper
     if is_wwe:
         sport_win_field = "wwe_wins"
     elif is_fifa:
         sport_win_field = "fifa_wins"
+    elif is_pkl:
+        sport_win_field = "pkl_wins"
     else:
         sport_win_field = "cricket_wins"
 
@@ -589,8 +592,25 @@ async def get_card_coins(user_id: int) -> int:
     return int(doc.get("card_coins", 0)) if doc else 0
 
 async def add_card_coins(user_id: int, amount: int) -> int:
-    """Add card coins to user. Returns new balance."""
+    """Add card coins to user (or deduct if amount < 0, clamped at 0 minimum). Returns new balance."""
     db = get_db()
+    if amount < 0:
+        # Atomic deduction clamped to min 0
+        result = await db.users.find_one_and_update(
+            {"user_id": user_id, "card_coins": {"$gte": abs(amount)}},
+            {"$inc": {"card_coins": amount}},
+            return_document=True
+        )
+        if result is None:
+            # If user has fewer coins than the deduction, floor at 0
+            result = await db.users.find_one_and_update(
+                {"user_id": user_id},
+                {"$set": {"card_coins": 0}},
+                upsert=True,
+                return_document=True
+            )
+        return int(result.get("card_coins", 0)) if result else 0
+
     result = await db.users.find_one_and_update(
         {"user_id": user_id},
         {"$inc": {"card_coins": amount}},
