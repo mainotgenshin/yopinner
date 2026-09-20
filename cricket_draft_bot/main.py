@@ -234,6 +234,10 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         elif data.startswith("chk_"):
             from handlers.admin import handle_check_callback
             await handle_check_callback(update, context)
+
+        elif data.startswith("vstats_"):
+            from handlers.admin import handle_view_player_stats_callback
+            await handle_view_player_stats_callback(update, context)
         else:
             try:
                 await query.answer()
