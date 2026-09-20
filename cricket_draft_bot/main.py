@@ -605,7 +605,7 @@ async def _refresh_draft_ui(bot, match_id: str, delay: float = 0.0):
         from game.state import load_match_state, save_match_state as _save
         from telegram import InlineKeyboardButton, InlineKeyboardMarkup
         from telegram.helpers import escape_markdown
-        from config import POSITIONS_T20, POSITIONS_TEST, POSITIONS_FIFA, POSITIONS_WWE
+        from config import POSITIONS_T20, POSITIONS_TEST, POSITIONS_FIFA, POSITIONS_WWE, POSITIONS_PKL
 
         def _esc(t):
             return escape_markdown(str(t), version=1)
@@ -627,8 +627,10 @@ async def _refresh_draft_ui(bot, match_id: str, delay: float = 0.0):
                 active_positions = POSITIONS_TEST
             elif match.mode == "FIFA":
                 active_positions = POSITIONS_FIFA
-            elif match.mode == "WWE":
+            elif "WWE" in match.mode:
                 active_positions = POSITIONS_WWE
+            elif match.mode in ("PKL", "Kabaddi"):
+                active_positions = POSITIONS_PKL
             else:
                 active_positions = POSITIONS_T20
 
@@ -706,9 +708,9 @@ if __name__ == '__main__':
         .token(BOT_TOKEN)
         .rate_limiter(AIORateLimiter(
             max_retries=3,
-            overall_max_rate=30,     # Global Telegram limit
+            overall_max_rate=25,     # Global: 25/sec safely under Telegram's 30/sec hard limit
             overall_time_period=1,
-            group_max_rate=60,       # Generous limit so buttons and cards never queue into 20s freeze
+            group_max_rate=18,       # Per-chat: 18/min (debouncer sliding gate handles the real 16/min enforcement)
             group_time_period=60,
         ))
 
