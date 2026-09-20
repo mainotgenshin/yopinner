@@ -232,6 +232,7 @@ async def cb_pack_back(update: Update, context: ContextTypes.DEFAULT_TYPE):
         InlineKeyboardButton("🏏 Cricket", callback_data=f"pack_sport|{owner_id}|cricket"),
         InlineKeyboardButton("⚽ FIFA",    callback_data=f"pack_sport|{owner_id}|football"),
         InlineKeyboardButton("🤼 WWE Men", callback_data=f"pack_sport|{owner_id}|wwe"),
+        InlineKeyboardButton("🤸 PKL",     callback_data=f"pack_sport|{owner_id}|kabaddi"),
     ]])
     await query.edit_message_text("🃏 *Pack Store*\nChoose a sport:", reply_markup=keyboard, parse_mode="Markdown")
 
@@ -278,7 +279,7 @@ async def cb_inv_packs(update: Update, context: ContextTypes.DEFAULT_TYPE):
     buttons = []
     has_any = False
     for tier in ["basic", "premium", "elite"]:
-        for sport in ["cricket", "football", "wwe"]:
+        for sport in ["cricket", "football", "wwe", "kabaddi"]:
             key = f"{tier}_{sport}"
             qty = raw_inv.get(key, 0)
             if qty > 0:
@@ -662,17 +663,18 @@ async def _get_collections_text(owner_id: int) -> str:
     lines = ["📊 <b>Your Collections</b>", "━━━━━━━━━━━━━━━━━━"]
 
     for fmt in FORMAT_ORDER:
-        if fmt not in counts:
+        tot_fmt = cat_fmt_total.get(fmt, 0)
+        if fmt not in counts and tot_fmt == 0:
             continue
         sport = FORMAT_TO_SPORT.get(fmt, fmt)
         emoji = SPORT_EMOJI_MAP.get(sport, "🃏")
         f_label = FORMAT_LABEL.get(fmt, fmt.upper())
-        fmt_owned = sum(counts[fmt].get(r, 0) for r in RARITY_ORDER)
-        tot_fmt = cat_fmt_total.get(fmt, 0)
+        fmt_counts = counts.get(fmt, {})
+        fmt_owned = sum(fmt_counts.get(r, 0) for r in RARITY_ORDER)
 
         lines.append(f"\n{emoji} <b>{f_label}</b>")
         for r in RARITY_ORDER:
-            owned_r = counts[fmt].get(r, 0)
+            owned_r = fmt_counts.get(r, 0)
             tot_r = cat_fmt_rarity.get((fmt, r), 0)
             if owned_r > 0:
                 lines.append(f"  {RARITY_EMOJI.get(r, '⚪')} {r.title()}: <b>{owned_r}/{tot_r}</b>")
