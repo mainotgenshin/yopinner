@@ -39,6 +39,10 @@ def _check_challenge_cooldown(user_id: int) -> bool:
 
 def _get_challenge_target(update: Update, owner_id: int):
     """Checks if message is a reply to another user and returns (target_user, error_msg)."""
+    # Callback queries are responses to inline buttons (e.g. format picker),
+    # where effective_message is the bot's selector message. Never check reply_to_message on callbacks.
+    if getattr(update, 'callback_query', None):
+        return None, None
     if update.effective_message and update.effective_message.reply_to_message:
         target = update.effective_message.reply_to_message.from_user
         if target:
@@ -48,6 +52,30 @@ def _get_challenge_target(update: Update, owner_id: int):
                 return None, "You can't challenge a bot!"
             return target, None
     return None, None
+
+async def _get_target_user_safe(update: Update, context: ContextTypes.DEFAULT_TYPE, owner_id: int, chat_id: int):
+    target_user, err = _get_challenge_target(update, owner_id)
+    if not target_user and context and getattr(context, 'user_data', None) and context.user_data.get('challenge_target_id'):
+        tid = context.user_data.pop('challenge_target_id')
+        if tid > 0:
+            try:
+                member = await context.bot.get_chat_member(chat_id=chat_id, user_id=tid)
+                target_user = member.user
+            except Exception:
+                pass
+    return target_user, err
+
+async def _safe_send_error(update: Update, context: ContextTypes.DEFAULT_TYPE, chat_id: int, err_msg: str):
+    try:
+        if update.effective_message:
+            await update.effective_message.reply_text(f"❌ {err_msg}")
+            return
+    except Exception:
+        pass
+    try:
+        await context.bot.send_message(chat_id=chat_id, text=f"❌ {err_msg}")
+    except Exception:
+        pass
 
 _EMBED_LINK_TIP = (
     "\n\n⚠️ <i>Image preview unavailable.</i> "
@@ -304,9 +332,9 @@ async def challenge_ipl(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not _check_challenge_cooldown(owner_id):
         return
 
-    target_user, err = _get_challenge_target(update, owner_id)
+    target_user, err = await _get_target_user_safe(update, context, owner_id, chat_id)
     if err:
-        await update.effective_message.reply_text(f"❌ {err}")
+        await _safe_send_error(update, context, chat_id, err)
         return
 
     key = f"join_IPL_{owner_id}"
@@ -378,9 +406,9 @@ async def challenge_odi(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not _check_challenge_cooldown(owner_id):
         return
 
-    target_user, err = _get_challenge_target(update, owner_id)
+    target_user, err = await _get_target_user_safe(update, context, owner_id, chat_id)
     if err:
-        await update.effective_message.reply_text(f"❌ {err}")
+        await _safe_send_error(update, context, chat_id, err)
         return
 
     key = f"join_ODI_{owner_id}"
@@ -455,9 +483,9 @@ async def challenge_fifa(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not _check_challenge_cooldown(owner_id):
         return
 
-    target_user, err = _get_challenge_target(update, owner_id)
+    target_user, err = await _get_target_user_safe(update, context, owner_id, chat_id)
     if err:
-        await update.effective_message.reply_text(f"❌ {err}")
+        await _safe_send_error(update, context, chat_id, err)
         return
 
     key = f"join_FIFA_{owner_id}"
@@ -520,7 +548,9 @@ async def send_wwe_gender_selector(update: Update, context: ContextTypes.DEFAULT
     Replies to the user with 2 buttons (Men / Women) to choose WWE challenge mode.
     """
     target_id = 0
-    if not update.callback_query and update.effective_message and update.effective_message.reply_to_message:
+    if context and getattr(context, 'user_data', None) and context.user_data.get('challenge_target_id'):
+        target_id = context.user_data.get('challenge_target_id')
+    elif not update.callback_query and update.effective_message and update.effective_message.reply_to_message:
         replied_user = update.effective_message.reply_to_message.from_user
         if replied_user and replied_user.id != owner_id:
             target_id = replied_user.id
@@ -710,9 +740,9 @@ async def challenge_test(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not _check_challenge_cooldown(owner_id):
         return
 
-    target_user, err = _get_challenge_target(update, owner_id)
+    target_user, err = await _get_target_user_safe(update, context, owner_id, chat_id)
     if err:
-        await update.effective_message.reply_text(f"❌ {err}")
+        await _safe_send_error(update, context, chat_id, err)
         return
 
     key = f"join_Test_{owner_id}"
@@ -784,16 +814,28 @@ async def challenge_unified(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     if not context.args:
+        target_id = 0
+        if update.effective_message and update.effective_message.reply_to_message:
+            replied_u = update.effective_message.reply_to_message.from_user
+            if replied_u:
+                if replied_u.id == owner_id:
+                    await update.effective_message.reply_text("❌ You can't challenge yourself!")
+                    return
+                if replied_u.is_bot:
+                    await update.effective_message.reply_text("❌ You can't challenge a bot!")
+                    return
+                target_id = replied_u.id
+
         keyboard = [
             [
-                InlineKeyboardButton("🏏 IPL",  callback_data=f"challenge_pick_IPL_{owner_id}"),
-                InlineKeyboardButton("🌍 ODI",  callback_data=f"challenge_pick_ODI_{owner_id}"),
-                InlineKeyboardButton("🏟 Test", callback_data=f"challenge_pick_Test_{owner_id}"),
+                InlineKeyboardButton("🏏 IPL",  callback_data=f"challenge_pick_IPL_{owner_id}_{target_id}"),
+                InlineKeyboardButton("🌍 ODI",  callback_data=f"challenge_pick_ODI_{owner_id}_{target_id}"),
+                InlineKeyboardButton("🏟 Test", callback_data=f"challenge_pick_Test_{owner_id}_{target_id}"),
             ],
             [
-                InlineKeyboardButton("⚽ FIFA", callback_data=f"challenge_pick_FIFA_{owner_id}"),
-                InlineKeyboardButton("🤼 WWE",  callback_data=f"challenge_pick_WWE_{owner_id}"),
-                InlineKeyboardButton("🤸 PKL",  callback_data=f"challenge_pick_PKL_{owner_id}"),
+                InlineKeyboardButton("⚽ FIFA", callback_data=f"challenge_pick_FIFA_{owner_id}_{target_id}"),
+                InlineKeyboardButton("🤼 WWE",  callback_data=f"challenge_pick_WWE_{owner_id}_{target_id}"),
+                InlineKeyboardButton("🤸 PKL",  callback_data=f"challenge_pick_PKL_{owner_id}_{target_id}"),
             ]
         ]
         try:
@@ -923,9 +965,17 @@ async def handle_mode_pick_callback(update: Update, context: ContextTypes.DEFAUL
     Only the user who sent /challenge can interact with the mode buttons.
     """
     query = update.callback_query
-    # Format: challenge_pick_{MODE}_{owner_id}
-    parts = query.data.split('_')  # ["challenge", "pick", MODE, owner_id]
-    if len(parts) >= 4:
+    # Format: challenge_pick_{MODE}_{owner_id}_{target_id}
+    parts = query.data.split('_')  # ["challenge", "pick", MODE, owner_id, [target_id]]
+    target_id = 0
+    if len(parts) >= 5:
+        mode = parts[2]
+        try:
+            owner_id = int(parts[3])
+            target_id = int(parts[4])
+        except (ValueError, IndexError):
+            owner_id = None
+    elif len(parts) >= 4:
         mode = parts[2]
         try:
             owner_id = int(parts[3])
@@ -935,6 +985,9 @@ async def handle_mode_pick_callback(update: Update, context: ContextTypes.DEFAUL
         # Backward-compat: old format without owner_id
         mode = query.data.split('_', 2)[2]
         owner_id = None
+
+    if target_id > 0:
+        context.user_data['challenge_target_id'] = target_id
 
     # Owner check — only the challenger can pick a mode
     if owner_id and query.from_user.id != owner_id:
@@ -1162,9 +1215,9 @@ async def challenge_pkl(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not _check_challenge_cooldown(owner_id):
         return
 
-    target_user, err = _get_challenge_target(update, owner_id)
+    target_user, err = await _get_target_user_safe(update, context, owner_id, chat_id)
     if err:
-        await update.effective_message.reply_text(f"❌ {err}")
+        await _safe_send_error(update, context, chat_id, err)
         return
 
     key = f"join_PKL_{owner_id}"
