@@ -212,16 +212,23 @@ async def run_simulation(match: Match) -> str:
         res_a = "L"
         res_b = "W"
 
-    _CARD_COIN_REWARDS = {"W": 100, "D": 35, "L": 30}
-    reward_a = _CARD_COIN_REWARDS.get(res_a, 30)
-    reward_b = _CARD_COIN_REWARDS.get(res_b, 30)
+    if match.mode in ("PKL", "Kabaddi"):
+        _CARD_COIN_REWARDS = {"W": 40, "D": 20, "L": -10}
+        default_coin = -10
+    else:
+        _CARD_COIN_REWARDS = {"W": 100, "D": 35, "L": 30}
+        default_coin = 30
+    reward_a = _CARD_COIN_REWARDS.get(res_a, default_coin)
+    reward_b = _CARD_COIN_REWARDS.get(res_b, default_coin)
 
     # Final Result — coins shown inline with score
     details.append("➖➖➖➖➖➖➖➖➖➖")
     name_a = match.team_a.owner_name or "Player 1"
     name_b = match.team_b.owner_name or "Player 2"
-    details.append(f"🔵 {esc(name_a)} — {score_a} (+{reward_a}🪙)")
-    details.append(f"🔴 {esc(name_b)} — {score_b} (+{reward_b}🪙)")
+    rew_str_a = f"+{reward_a}🪙" if reward_a >= 0 else f"{reward_a}🪙"
+    rew_str_b = f"+{reward_b}🪙" if reward_b >= 0 else f"{reward_b}🪙"
+    details.append(f"🔵 {esc(name_a)} — {score_a} ({rew_str_a})")
+    details.append(f"🔴 {esc(name_b)} — {score_b} ({rew_str_b})")
     details.append("")
 
     if score_a > score_b:
@@ -241,7 +248,7 @@ async def run_simulation(match: Match) -> str:
             async def _award_card_coins(user_id: int, result: str) -> None:
                 """Silently award card coins after a match. Never raises."""
                 try:
-                    coins = _CARD_COIN_REWARDS.get(result, 30)
+                    coins = _CARD_COIN_REWARDS.get(result, default_coin)
                     await add_card_coins(user_id, coins)
                 except Exception as _ce:
                     logger.warning(f"Card coin award failed for {user_id}: {_ce}")
