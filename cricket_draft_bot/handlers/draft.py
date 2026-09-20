@@ -374,7 +374,7 @@ async def update_draft_message(update: Update, context: ContextTypes.DEFAULT_TYP
         elif media:
             msg = await context.bot.send_photo(
                 chat_id=match.chat_id, photo=media, caption=caption,
-                reply_markup=reply_markup, parse_mode="Markdown"
+                reply_markup=reply_markup, parse_mode="HTML"
             )
         else:
             msg = await context.bot.send_message(
@@ -965,7 +965,6 @@ async def handle_replace_exec(update: Update, context: ContextTypes.DEFAULT_TYPE
     if match.pending_player_id in match.draft_pool:
         match.draft_pool.remove(match.pending_player_id)
         match.draft_pool_removed.append(match.pending_player_id)  # Delta tracking
-        logger.info(f"DEBUG: Removed {match.pending_player_id} from pool on Replace.")
     
     match.pending_player_id = None
     
@@ -980,8 +979,12 @@ async def handle_replace_exec(update: Update, context: ContextTypes.DEFAULT_TYPE
     board_text = format_draft_board(match)
     keyboard = _make_draw_keyboard(match)
     
+    import html as _h
+    c_name = _h.escape(current_team.owner_name or "Player")
+    old_p_name = _h.escape(old_player.name or "Player")
+    new_p_name = _h.escape(new_player.name or "Player")
     banner = await get_banner_for_match(match)
-    await update_draft_message(update, context, match, f"{board_text}\n\n♻️ {esc(current_team.owner_name)} replaced {esc(old_player.name)} with {esc(new_player.name)}!", keyboard, media=banner)
+    await update_draft_message(update, context, match, f"{board_text}\n\n♻️ {c_name} replaced {old_p_name} with {new_p_name}!", keyboard, media=banner)
 
 async def handle_replace_cancel(update: Update, context: ContextTypes.DEFAULT_TYPE, match: Match):
     """Cancel replace: go back to the assign screen for the already-drawn player."""
