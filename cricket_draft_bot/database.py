@@ -188,7 +188,19 @@ async def search_players_by_name(name_query: str, sport: Optional[str] = None) -
         ]
     }
     if sport:
-        query["sport"] = sport
+        sport_lower = sport.lower()
+        if sport_lower in ("kabaddi", "pkl"):
+            query["sport"] = {"$in": ["kabaddi", "pkl"]}
+        elif sport_lower in ("football", "fifa"):
+            query["sport"] = {"$in": ["football", "fifa"]}
+        elif sport_lower == "cricket":
+            query["$and"] = [
+                {"$or": [{"name": regex}, {"full_name": regex}, {"aliases": regex}]},
+                {"$or": [{"sport": "cricket"}, {"sport": {"$exists": False}}]}
+            ]
+            del query["$or"]
+        else:
+            query["sport"] = sport
         
     cursor = db.players.find(query).limit(10)
     results = []
