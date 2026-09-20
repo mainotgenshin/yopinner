@@ -172,13 +172,14 @@ async def _fetch_leaderboard(view: str, chat_id: int | None = None) -> list:
         "cricket": "cricket_wins",
         "fifa": "fifa_wins",
         "wwe": "wwe_wins",
+        "pkl": "pkl_wins",
         "chat": f"chat_wins.{chat_id}",
     }.get(view, "wins")
 
     projection = {
         "user_id": 1, "name": 1,
         "wins": 1, "daily_wins": 1, "weekly_wins": 1,
-        "cricket_wins": 1, "fifa_wins": 1, "wwe_wins": 1, "chat_wins": 1,
+        "cricket_wins": 1, "fifa_wins": 1, "wwe_wins": 1, "pkl_wins": 1, "chat_wins": 1,
         "first_win_at": 1,
         f"prev_rank_{view}": 1,
         "_id": 0
@@ -213,13 +214,14 @@ async def _get_user_rank(user_id: int, view: str, chat_id: int | None = None) ->
         "cricket": "cricket_wins",
         "fifa": "fifa_wins",
         "wwe": "wwe_wins",
+        "pkl": "pkl_wins",
         "chat": f"chat_wins.{chat_id}",
     }.get(view, "wins")
 
     user_doc = await db.users.find_one(
         {"user_id": user_id},
         {"wins": 1, "daily_wins": 1, "weekly_wins": 1,
-         "cricket_wins": 1, "fifa_wins": 1, "wwe_wins": 1, "chat_wins": 1, "_id": 0}
+         "cricket_wins": 1, "fifa_wins": 1, "wwe_wins": 1, "pkl_wins": 1, "chat_wins": 1, "_id": 0}
     )
     if not user_doc:
         return (None, 0)
@@ -261,8 +263,9 @@ def _wins_for_view(doc: dict, view: str, chat_id: int | None) -> int:
         "daily": "daily_wins",
         "weekly": "weekly_wins",
         "cricket": "cricket_wins",
-        "fifa": "fifa_wins",
-        "wwe": "wwe_wins",
+        "fifa":    "fifa_wins",
+        "wwe":     "wwe_wins",
+        "pkl":     "pkl_wins",
     }.get(view, "wins"), 0)
 
 
@@ -278,6 +281,7 @@ def _build_text(
         "cricket": "🏏 CRICKET STANDINGS",
         "fifa":    "⚽ FIFA STANDINGS",
         "wwe":     "🤼 WWE STANDINGS",
+        "pkl":     "🤸 PKL STANDINGS",
         "chat":    "🏠 THIS CHAT STANDINGS",
     }
     separator = "━━━━━━━━━━━━━━━"
@@ -359,6 +363,7 @@ def _build_keyboard(active: str, is_group: bool = True) -> InlineKeyboardMarkup:
         btn("🏏 Cricket", "lb_cricket", active == "cricket"),
         btn("⚽ FIFA",    "lb_fifa",    active == "fifa"),
         btn("🤼 WWE",     "lb_wwe",     active == "wwe"),
+        btn("🤸 PKL",     "lb_pkl",     active == "pkl"),
     ]
     rows = [row1, row2]
     # Only show "This Chat" button in groups (not DMs)
@@ -393,35 +398,41 @@ async def _render_standings(
         last_ts = time.time()
         _set_cache(ck, (rows, last_ts))
 
-    user_rank, user_wins = await _get_user_rank(
-        user_id, view, chat_id if view == "chat" else None
-    )
+    rank_data = await _get_user_rank(user_id, view, chat_id if view == "chat" else None)
+    user_rank, user_wins = rank_data
 
-    text = _build_text(view, rows, user_id, user_rank, user_wins, chat_id, last_ts)
+    # Track rank change
+    if user_rank:
+        delta = await _get_and_update_rank_change(user_id, view, user_rank)
+        # Inject into user's row if present in top 10
+        for r in rows:
+            if r.get("user_id") == user_id:
+                r["_rank_change"] = delta
+
     is_group = update.effective_chat.type != "private"
-    keyboard = _build_keyboard(view, is_group=is_group)
+    text = _build_text(view, rows, user_id, user_rank, user_wins, chat_id, last_ts)
+    kb   = _build_keyboard(active=view, is_group=is_group)
 
-    if edit:
+    if edit and update.callback_query:
         try:
             await update.callback_query.edit_message_text(
-                text, reply_markup=keyboard, parse_mode="Markdown"
+                text, reply_markup=kb, parse_mode="Markdown"
             )
-        except BadRequest as e:
-            if "not modified" not in str(e).lower():
-                logger.warning(f"Standings edit error: {e}")
+        except Exception:
+            pass  # Message unchanged or expired
     else:
         await update.effective_message.reply_text(
-            text, reply_markup=keyboard, parse_mode="Markdown"
+            text, reply_markup=kb, parse_mode="Markdown"
         )
 
 
 async def handle_standings(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """/standings command — shows Overall leaderboard."""
+    """Entry point for /standings command."""
     await _render_standings(update, context, view="overall", edit=False)
 
 
 async def handle_standings_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Handles [Overall] [Daily] [Weekly] [This Chat] [Cricket] [FIFA] button clicks."""
+    """Handles [Overall] [Daily] [Weekly] [This Chat] [Cricket] [FIFA] [WWE] [PKL] button clicks."""
     query = update.callback_query
     user_id = query.from_user.id
     now = time.time()
@@ -448,6 +459,7 @@ async def handle_standings_callback(update: Update, context: ContextTypes.DEFAUL
         "lb_cricket": "cricket",
         "lb_fifa":    "fifa",
         "lb_wwe":     "wwe",
+        "lb_pkl":     "pkl",
     }
     view = view_map.get(query.data)
     if not view:
@@ -462,6 +474,7 @@ async def handle_standings_callback(update: Update, context: ContextTypes.DEFAUL
         "cricket": "CRICKET STANDINGS",
         "fifa":    "FIFA STANDINGS",
         "wwe":     "WWE STANDINGS",
+        "pkl":     "PKL STANDINGS",
         "chat":    "THIS CHAT STANDINGS",
     }
     if tab_headers.get(view, "") in current_text:
