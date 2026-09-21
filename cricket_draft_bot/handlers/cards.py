@@ -494,8 +494,13 @@ async def cb_mc_page(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
     _, owner_id, sport_str, page_str = parts
 
-    if not _check_card_cooldown(query.from_user.id, "mc_page", 0.3):
-        await query.answer("Slow down!", show_alert=False)
+    chat = update.effective_chat
+    is_dm = (chat.type == "private") if chat else False
+    page_cd = 0.3 if is_dm else 1.2
+
+    if not _check_card_cooldown(query.from_user.id, "mc_page", page_cd):
+        msg = "Slow down!" if is_dm else "⏳ Please wait a moment between page turns."
+        await query.answer(msg, show_alert=False)
         return
 
     if str(owner_id) not in ("1087968824", "777000") and str(query.from_user.id) != str(owner_id):
@@ -504,8 +509,6 @@ async def cb_mc_page(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     await query.answer()
     sport_filter = None if sport_str == "all" else sport_str
-    chat = update.effective_chat
-    is_dm = (chat.type == "private") if chat else False
     try:
         oid_int = int(owner_id)
         if oid_int in (1087968824, 777000):
@@ -529,6 +532,13 @@ async def cb_mc_sort(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
     _, owner_id, new_sort, sport_str = parts
 
+    chat = update.effective_chat
+    is_dm = (chat.type == "private") if chat else False
+    sort_cd = 0.3 if is_dm else 1.2
+    if not _check_card_cooldown(query.from_user.id, "mc_sort", sort_cd):
+        await query.answer("Slow down!", show_alert=False)
+        return
+
     if str(owner_id) not in ("1087968824", "777000") and str(query.from_user.id) != str(owner_id):
         await query.answer("⛔ Not your menu.", show_alert=True)
         return
@@ -545,8 +555,6 @@ async def cb_mc_sort(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await save_user_card_sort(oid_int, new_sort, cur_order)
     await query.answer(f"Sorted by: {get_sort_label(new_sort, cur_order)}")
     sport_filter = None if sport_str == "all" else sport_str
-    chat = update.effective_chat
-    is_dm = (chat.type == "private") if chat else False
     await _show_mycards(query, oid_int, query.from_user.id,
                         sport_filter, 0, edit=True,
                         is_dm=is_dm, context=context)
@@ -707,9 +715,11 @@ async def cb_mc_collections(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if len(parts) < 2:
         await query.answer()
         return
-    _, owner_id = parts
-
-    if not _check_card_cooldown(query.from_user.id, "mc_collections", 0.3):
+    _, owner_id = parts[:2]
+    chat = update.effective_chat
+    is_dm = (chat.type == "private") if chat else False
+    coll_cd = 0.3 if is_dm else 1.2
+    if not _check_card_cooldown(query.from_user.id, "mc_collections", coll_cd):
         await query.answer("Slow down!", show_alert=False)
         return
 
@@ -837,10 +847,11 @@ async def handle_viewcard(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # One player name — check formats
     player_name = distinct_names[0]
     player_cards = [c for c in matching if c["name"] == player_name]
+    bot_username = context.bot.username if context and context.bot else ""
     if len(player_cards) == 1:
         # Single format — show directly
         try:
-            await _show_card_detail(update.effective_message, user.id, player_cards[0], edit=False)
+            await _show_card_detail(update.effective_message, user.id, player_cards[0], edit=False, bot_username=bot_username)
         except Exception:
             pass
     else:
@@ -867,6 +878,12 @@ async def cb_vc_name(update: Update, context: ContextTypes.DEFAULT_TYPE):
     _, owner_id, player_id = query.data.split("|")
     if str(query.from_user.id) != owner_id:
         await query.answer("⛔ Not your menu.", show_alert=True); return
+    chat = update.effective_chat
+    is_dm = (chat.type == "private") if chat else False
+    cd = 0.3 if is_dm else 1.2
+    if not _check_card_cooldown(query.from_user.id, "vc_name", cd):
+        await query.answer("⏳ Please wait a moment.", show_alert=False)
+        return
     await query.answer()
     from database import get_user_cards
     cards = await get_user_cards(int(owner_id))
@@ -874,8 +891,9 @@ async def cb_vc_name(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not player_cards:
         await query.edit_message_text("❌ Card not found in your collection.")
         return
+    bot_username = context.bot.username if context and context.bot else ""
     if len(player_cards) == 1:
-        await _show_card_detail(query, int(owner_id), player_cards[0], edit=True)
+        await _show_card_detail(query, int(owner_id), player_cards[0], edit=True, bot_username=bot_username)
     else:
         buttons = [
             [InlineKeyboardButton(
@@ -897,6 +915,12 @@ async def cb_vc_fmt(update: Update, context: ContextTypes.DEFAULT_TYPE):
     _, owner_id, player_id, fmt = query.data.split("|")
     if str(query.from_user.id) != owner_id:
         await query.answer("⛔ Not your menu.", show_alert=True); return
+    chat = update.effective_chat
+    is_dm = (chat.type == "private") if chat else False
+    cd = 0.3 if is_dm else 1.2
+    if not _check_card_cooldown(query.from_user.id, "vc_fmt", cd):
+        await query.answer("⏳ Please wait a moment.", show_alert=False)
+        return
     await query.answer()
     from database import get_user_cards, get_player
     cards = await get_user_cards(int(owner_id))
@@ -911,9 +935,10 @@ async def cb_vc_fmt(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 pass
         return
 
-    await _show_card_detail(query, int(owner_id), card, edit=True)
+    bot_username = context.bot.username if context and context.bot else ""
+    await _show_card_detail(query, int(owner_id), card, edit=True, bot_username=bot_username)
 
-async def _show_card_detail(msg_or_query, owner_id: int, card: dict, edit: bool):
+async def _show_card_detail(msg_or_query, owner_id: int, card: dict, edit: bool, bot_username: str = ""):
     from database import validate_fav_card
     # validate_fav_card auto-clears stale fav if card was traded/sold
     fav = await validate_fav_card(owner_id)
@@ -940,10 +965,28 @@ async def _show_card_detail(msg_or_query, owner_id: int, card: dict, edit: bool)
         f"{fav_warning}\n"
         f"━━━━━━━━━━━━━━━━━━"
     )
-    kb = InlineKeyboardMarkup([
-        [InlineKeyboardButton(fav_label, callback_data=fav_cb)],
-        [InlineKeyboardButton(f"💰 Sell for {sell_val}🪙", callback_data=f"vc_sell|{owner_id}|{card['player_id']}|{card['format']}|{sell_val}")],
-    ])
+
+    chat = getattr(msg_or_query, 'chat', None) or getattr(getattr(msg_or_query, 'message', None), 'chat', None)
+    is_dm = (chat.type == "private") if chat else False
+
+    if is_dm:
+        kb = InlineKeyboardMarkup([
+            [InlineKeyboardButton(fav_label, callback_data=fav_cb)],
+            [InlineKeyboardButton(f"💰 Sell for {sell_val}🪙", callback_data=f"vc_sell|{owner_id}|{card['player_id']}|{card['format']}|{sell_val}")],
+        ])
+    else:
+        if not bot_username:
+            try:
+                bot = getattr(msg_or_query, 'get_bot', lambda: None)()
+                bot_username = getattr(bot, 'username', '') or ""
+            except Exception:
+                pass
+        if bot_username:
+            kb = InlineKeyboardMarkup([[
+                InlineKeyboardButton("📬 Manage in DM", url=f"https://t.me/{bot_username}?start=vc_{card['player_id']}_{card['format']}")
+            ]])
+        else:
+            kb = None
     image = card.get("image")  # may be a URL or a file_id
 
     # Determine if image is a web URL (usable for href preview) or a file_id
@@ -1014,8 +1057,36 @@ async def _show_card_detail(msg_or_query, owner_id: int, card: dict, edit: bool)
             await msg_or_query.reply_text(text, reply_markup=kb, parse_mode="Markdown")
 
 
+async def handle_viewcard_deeplink(update: Update, context: ContextTypes.DEFAULT_TYPE, payload: str):
+    """Deep link: /start vc_<player_id>_<format> from group chat to manage card in DM."""
+    user = update.effective_user
+    if not user or not payload:
+        return
+    parts = payload.rsplit("_", 1)
+    if len(parts) != 2:
+        await update.effective_message.reply_text("❌ Invalid card link.")
+        return
+    player_id, fmt = parts[0], parts[1].lower()
+    from database import get_user_cards, get_player
+    cards = await get_user_cards(user.id)
+    card = next((c for c in cards if c["player_id"] == player_id and c["format"] == fmt), None)
+    if not card or card.get("quantity", 0) < 1:
+        p = await get_player(player_id)
+        p_name = html.escape(p.get("name", "this card")) if p else "this card"
+        await update.effective_message.reply_text(
+            f"❌ You don't own <b>{p_name}</b> ({FORMAT_LABEL.get(fmt, fmt.upper())}) in your collection!",
+            parse_mode="HTML"
+        )
+        return
+    bot_username = context.bot.username if context and context.bot else ""
+    await _show_card_detail(update.effective_message, user.id, card, edit=False, bot_username=bot_username)
+
+
 async def cb_vc_fav(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
+    if update.effective_chat and update.effective_chat.type != "private":
+        await query.answer("📬 Please manage cards in DM!", show_alert=True)
+        return
     _, owner_id, player_id, fmt = query.data.split("|")
     if str(query.from_user.id) != owner_id:
         await query.answer("⛔ Not your menu.", show_alert=True); return
@@ -1031,10 +1102,14 @@ async def cb_vc_fav(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await query.answer("❌ You no longer own this card.", show_alert=True); return
         await set_fav_card(int(owner_id), player_id, fmt)
         await query.answer(f"❤️ {card['name']} ({FORMAT_LABEL.get(fmt, fmt)}) set as favorite!", show_alert=True)
-        await _show_card_detail(query, int(owner_id), card, edit=True)
+        bot_username = context.bot.username if context and context.bot else ""
+        await _show_card_detail(query, int(owner_id), card, edit=True, bot_username=bot_username)
 
 async def cb_vc_unfav(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
+    if update.effective_chat and update.effective_chat.type != "private":
+        await query.answer("📬 Please manage cards in DM!", show_alert=True)
+        return
     _, owner_id, player_id, fmt = query.data.split("|")
     if str(query.from_user.id) != owner_id:
         await query.answer("⛔ Not your menu.", show_alert=True); return
@@ -1048,11 +1123,15 @@ async def cb_vc_unfav(update: Update, context: ContextTypes.DEFAULT_TYPE):
         card = next((c for c in cards if c["player_id"] == player_id and c["format"] == fmt), None)
         await query.answer("💔 Removed from favorites.", show_alert=True)
         if card:
-            await _show_card_detail(query, int(owner_id), card, edit=True)
+            bot_username = context.bot.username if context and context.bot else ""
+            await _show_card_detail(query, int(owner_id), card, edit=True, bot_username=bot_username)
 
 async def cb_vc_sell(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Show sell confirmation."""
     query = update.callback_query
+    if update.effective_chat and update.effective_chat.type != "private":
+        await query.answer("📬 Please manage and sell cards in DM!", show_alert=True)
+        return
     parts = query.data.split("|")
     _, owner_id, player_id, fmt, sell_val_str = parts
     if str(query.from_user.id) != owner_id:
@@ -1099,6 +1178,9 @@ _PROCESSED_SELL_MESSAGES: set[str] = set()
 async def cb_vc_sell_ok(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Execute sell with anti-spam lock and per-message duplicate suppression."""
     query = update.callback_query
+    if update.effective_chat and update.effective_chat.type != "private":
+        await query.answer("📬 Please manage and sell cards in DM!", show_alert=True)
+        return
     parts = query.data.split("|")
     _, owner_id, player_id, fmt, sell_val_str = parts
     user_id = query.from_user.id
@@ -1258,6 +1340,12 @@ async def cb_tr_page(update: Update, context: ContextTypes.DEFAULT_TYPE):
     _, initiator_id, target_id, page_str = query.data.split("|")
     if str(query.from_user.id) != initiator_id:
         await query.answer("⛔ Not your trade.", show_alert=True); return
+    chat = update.effective_chat
+    is_dm = (chat.type == "private") if chat else False
+    page_cd = 0.3 if is_dm else 1.2
+    if not _check_card_cooldown(query.from_user.id, "tr_page", page_cd):
+        await query.answer("⏳ Please wait a moment between page turns.", show_alert=False)
+        return
     await query.answer()
     from database import get_user_cards, get_db
     db = get_db()
@@ -1381,6 +1469,12 @@ async def cb_tr_tpage(update: Update, context: ContextTypes.DEFAULT_TYPE):
     _, target_id, trade_id, page_str = query.data.split("|")
     if str(query.from_user.id) != target_id:
         await query.answer("⛔ Not your trade.", show_alert=True); return
+    chat = update.effective_chat
+    is_dm = (chat.type == "private") if chat else False
+    page_cd = 0.3 if is_dm else 1.2
+    if not _check_card_cooldown(query.from_user.id, "tr_tpage", page_cd):
+        await query.answer("⏳ Please wait a moment between page turns.", show_alert=False)
+        return
     await query.answer()
     from database import get_trade, get_user_cards
     trade = await get_trade(trade_id)
@@ -1764,6 +1858,17 @@ async def handle_multi_sell(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
     if not user:
         return
+    if update.effective_chat and update.effective_chat.type != "private":
+        bot_username = context.bot.username if context and context.bot else ""
+        kb = InlineKeyboardMarkup([[InlineKeyboardButton("📬 Open in DM", url=f"https://t.me/{bot_username}?start=multi_sell")]]) if bot_username else None
+        try:
+            await update.effective_message.reply_text(
+                "💰 Please use /multi_sell in my DM to manage and sell your cards!",
+                reply_markup=kb
+            )
+        except Exception:
+            pass
+        return
     if not _check_card_cooldown(user.id, "multi_sell", 3.0):
         return
     args = context.args
@@ -1907,6 +2012,9 @@ async def handle_multi_sell(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def cb_msell_ok(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Callback when user clicks Confirm Sell."""
     query = update.callback_query
+    if update.effective_chat and update.effective_chat.type != "private":
+        await query.answer("📬 Please manage and sell cards in DM!", show_alert=True)
+        return
     parts = query.data.split("|")
     if len(parts) != 3:
         await query.answer("Invalid request.", show_alert=True)
@@ -2003,6 +2111,9 @@ async def cb_msell_ok(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def cb_msell_cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Callback when user clicks Cancel."""
     query = update.callback_query
+    if update.effective_chat and update.effective_chat.type != "private":
+        await query.answer("📬 Please manage cards in DM!", show_alert=True)
+        return
     parts = query.data.split("|")
     if len(parts) != 3:
         await query.answer("Invalid request.", show_alert=True)
