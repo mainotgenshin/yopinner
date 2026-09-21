@@ -213,8 +213,8 @@ async def run_simulation(match: Match) -> str:
         res_b = "W"
 
     if match.mode in ("PKL", "Kabaddi"):
-        _CARD_COIN_REWARDS = {"W": 40, "D": 20, "L": -10}
-        default_coin = -10
+        _CARD_COIN_REWARDS = {"W": 40, "D": 20, "L": 10}
+        default_coin = 10
     else:
         _CARD_COIN_REWARDS = {"W": 100, "D": 35, "L": 30}
         default_coin = 30
