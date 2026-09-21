@@ -190,7 +190,10 @@ async def handle_draft_callback(update: Update, context: ContextTypes.DEFAULT_TY
     _now = asyncio.get_event_loop().time()
     _is_exempt = (data.startswith("replace_cancel_") or data.startswith("replace_start_"))
     if not _is_exempt and _now - _USER_CLICK_TIMES.get(_user_id, 0) < _CLICK_COOLDOWN:
-        await query.answer("⏳ Please wait before clicking again.", show_alert=False)
+        try:
+            await query.answer("⏳ Please wait before clicking again.", show_alert=False)
+        except Exception:
+            pass
         return
     _USER_CLICK_TIMES[_user_id] = _now
     # ─────────────────────────────────────────────────────────────────────────
@@ -236,7 +239,10 @@ async def handle_draft_callback(update: Update, context: ContextTypes.DEFAULT_TY
     _is_cancel = data.startswith("replace_cancel_")
     if not _is_cancel and match_id in PROCESSING_LOCKS:
         logger.info(f"Locked request ignored for {match_id}")
-        await query.answer("⏳ Processing previous action...", show_alert=False)
+        try:
+            await query.answer("⏳ Processing previous action...", show_alert=False)
+        except Exception:
+            pass
         return
 
     if not _is_cancel:
