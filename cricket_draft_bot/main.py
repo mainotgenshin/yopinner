@@ -128,7 +128,8 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     # Handle deep-links for card commands — auto-execute in DM
     if chat.type == "private" and context.args:
-        deep_arg = context.args[0].lower()
+        raw_arg = context.args[0]
+        deep_arg = raw_arg.lower()
         if deep_arg == "pack":
             from handlers.cards import handle_pack
             await handle_pack(update, context)
@@ -140,6 +141,16 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         elif deep_arg == "quest":
             from handlers.cards import handle_quest
             await handle_quest(update, context)
+            return
+        elif deep_arg == "multi_sell":
+            await update.effective_message.reply_text(
+                "💰 <b>Multi-Sell Cards</b>\n\nUsage:\n  <code>/multi_sell 1-10</code>\n  <code>/multi_sell 1 3 5</code>\n\n<i>Use <code>/mycards</code> first to view your card numbers!</i>",
+                parse_mode="HTML"
+            )
+            return
+        elif raw_arg.startswith("vc_"):
+            from handlers.cards import handle_viewcard_deeplink
+            await handle_viewcard_deeplink(update, context, raw_arg[3:])
             return
 
     if chat.type == "private":
@@ -244,7 +255,11 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             except Exception:
                 pass
     except Exception as e:
-        logging.getLogger(__name__).error(f"Error in handle_callback for '{data}': {e}", exc_info=True)
+        err_msg = str(e).lower()
+        if "query is too old" in err_msg:
+            logging.getLogger(__name__).debug(f"Ignored expired callback '{data}': {e}")
+        else:
+            logging.getLogger(__name__).error(f"Error in handle_callback for '{data}': {e}", exc_info=True)
         try:
             await query.answer("⚠️ Action failed or expired.", show_alert=False)
         except Exception:
@@ -714,7 +729,7 @@ if __name__ == '__main__':
             max_retries=3,
             overall_max_rate=25,     # Global: 25/sec safely under Telegram's 30/sec hard limit
             overall_time_period=1,
-            group_max_rate=18,       # Per-chat: 18/min (debouncer sliding gate handles the real 16/min enforcement)
+            group_max_rate=18,       # Per-chat: 18/min (debouncer sliding gate handles the real 12/min enforcement)
             group_time_period=60,
         ))
 
