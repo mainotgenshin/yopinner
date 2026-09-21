@@ -8,9 +8,9 @@ logger = logging.getLogger(__name__)
 
 # ── Per-chat sliding-window rate gate ────────────────────────────────────────
 # Telegram limit: ~20 edits per chat per minute.
-# We target 16/min (4 edit safety buffer) — maximum possible speed while
+# We target 12/min (8 edit safety buffer for user commands/interactions) — maximum possible speed while
 # keeping guaranteed protection from Telegram's hard rate limit.
-_CHAT_MAX_CALLS = 16
+_CHAT_MAX_CALLS = 12
 _CHAT_WINDOW    = 60.0   # rolling window in seconds
 
 
