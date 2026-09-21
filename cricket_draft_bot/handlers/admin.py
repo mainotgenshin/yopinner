@@ -2729,17 +2729,18 @@ async def handle_gift_pack(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "Usage: /gift_pack <pack_name> <telegram_id>\n"
             "Pack names: basic_cricket, premium_cricket, elite_cricket,\n"
             "            basic_football, premium_football, elite_football,\n"
-            "            basic_wwe, premium_wwe, elite_wwe\n"
+            "            basic_wwe, premium_wwe, elite_wwe,\n"
+            "            basic_pkl, premium_pkl, elite_pkl\n"
             "Example: /gift_pack premium_cricket 123456789"
         )
         return
     pack_key = args[0].lower()
     valid_tiers  = ('basic', 'premium', 'elite')
-    valid_sports = ('cricket', 'football', 'wwe')
+    valid_sports = ('cricket', 'football', 'wwe', 'kabaddi', 'pkl')
     parts = pack_key.split('_', 1)
     if len(parts) != 2 or parts[0] not in valid_tiers or parts[1] not in valid_sports:
         await update.effective_message.reply_text(
-            f"❌ Invalid pack name '{pack_key}'.\nUse: basic_cricket, premium_football, elite_wwe, etc."
+            f"❌ Invalid pack name '{pack_key}'.\nUse: basic_cricket, premium_football, elite_wwe, elite_pkl, etc."
         )
         return
     try:
@@ -2748,12 +2749,17 @@ async def handle_gift_pack(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.effective_message.reply_text("❌ Telegram ID must be a number.")
         return
 
+    tier = parts[0]
+    sport = 'kabaddi' if parts[1] == 'pkl' else parts[1]
+    db_pack_key = f"{tier}_{sport}"
+
     from database import add_pack_to_user
-    new_count = await add_pack_to_user(target_id, pack_key)
-    tier, sport = parts[0], parts[1]
+    new_count = await add_pack_to_user(target_id, db_pack_key)
     RARITY_EMOJI_MAP = {"basic": "🟦", "premium": "🟣", "elite": "🟡"}
+    SPORT_LABEL = {'cricket': 'Cricket', 'football': 'FIFA', 'wwe': 'WWE Men', 'kabaddi': 'PKL'}
+    sport_name = SPORT_LABEL.get(sport, sport.title())
     await update.effective_message.reply_text(
-        f"✅ Gifted *{RARITY_EMOJI_MAP.get(tier, '📦')} {pack_key.replace('_', ' ').title()} Pack* to user `{target_id}`\n"
+        f"✅ Gifted *{RARITY_EMOJI_MAP.get(tier, '📦')} {tier.title()} {sport_name} Pack* to user `{target_id}`\n"
         f"They now have *{new_count}* pack(s) of this type.",
         parse_mode='Markdown'
     )
@@ -2769,25 +2775,28 @@ async def handle_add_packall(update: Update, context: ContextTypes.DEFAULT_TYPE)
     args = context.args
     if not args:
         await update.effective_message.reply_text(
-            "Usage: /add_packall <basic|premium|elite>_<cricket|football|wwe>\nExample: /add_packall premium_cricket"
+            "Usage: /add_packall <basic|premium|elite>_<cricket|football|wwe|pkl>\nExample: /add_packall premium_cricket"
         )
         return
     pack_key = args[0].lower()
     valid_tiers  = ('basic', 'premium', 'elite')
-    valid_sports = ('cricket', 'football', 'wwe')
+    valid_sports = ('cricket', 'football', 'wwe', 'kabaddi', 'pkl')
     parts = pack_key.split('_', 1)
     if len(parts) != 2 or parts[0] not in valid_tiers or parts[1] not in valid_sports:
         await update.effective_message.reply_text(
-            "❌ Invalid pack type. Format: <basic|premium|elite>_<cricket|football|wwe>\n"
-            "Example: premium_cricket"
+            "❌ Invalid pack type. Format: <basic|premium|elite>_<cricket|football|wwe|pkl>\n"
+            "Example: premium_cricket, elite_pkl"
         )
         return
+    tier = parts[0]
+    sport = 'kabaddi' if parts[1] == 'pkl' else parts[1]
+    db_pack_key = f"{tier}_{sport}"
+
     await update.effective_message.reply_text(f"⏳ Gifting packs to all users...")
     from database import add_pack_to_all_users
-    count = await add_pack_to_all_users(pack_key)
+    count = await add_pack_to_all_users(db_pack_key)
     PACK_EMOJI = {'basic': '🟦', 'premium': '🟣', 'elite': '🟡'}
-    tier, sport = parts
-    SPORT_LABEL = {'cricket': 'Cricket', 'football': 'FIFA', 'wwe': 'WWE Men'}
+    SPORT_LABEL = {'cricket': 'Cricket', 'football': 'FIFA', 'wwe': 'WWE Men', 'kabaddi': 'PKL'}
     await update.effective_message.reply_text(
         f"✅ Gifted *{PACK_EMOJI[tier]} {tier.title()} {SPORT_LABEL[sport]} Pack* to *{count}* users!",
         parse_mode='Markdown'
