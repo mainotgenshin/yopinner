@@ -8,9 +8,9 @@ logger = logging.getLogger(__name__)
 
 # ── Per-chat sliding-window rate gate ────────────────────────────────────────
 # Telegram limit: ~20 edits per chat per minute.
-# We target 12/min (8 edit safety buffer for user commands/interactions) — maximum possible speed while
+# We target 15/min (5 edit safety buffer for user commands/interactions) — maximum speed while
 # keeping guaranteed protection from Telegram's hard rate limit.
-_CHAT_MAX_CALLS = 12
+_CHAT_MAX_CALLS = 15
 _CHAT_WINDOW    = 60.0   # rolling window in seconds
 
 
@@ -89,7 +89,7 @@ class MessageDebouncer:
     - Only cancel_updates() (called on match end) actually cancels a task.
     """
 
-    def __init__(self, delay: float = 0.4):
+    def __init__(self, delay: float = 0.25):
 
         self.delay      = delay
         self.tasks:      dict = {}
@@ -132,10 +132,10 @@ class MessageDebouncer:
         if key in self.tasks and not self.tasks[key].done():
             return  # running task will pick up the latest _pending state
 
-        # Adaptive delay: 0.4s base for snappier single-match turns;
-        # +0.20s per extra concurrent match to protect shared chat quotas under multi-match load.
+        # Adaptive delay: 0.25s base for snappier single-match turns;
+        # +0.05s per extra concurrent match so multi-match play feels instant.
         concurrent      = _count_active_in_chat(self.tasks, match.chat_id)
-        effective_delay = self.delay + max(0, concurrent - 1) * 0.20
+        effective_delay = self.delay + max(0, concurrent - 1) * 0.05
 
 
 
@@ -180,7 +180,7 @@ class MessageDebouncer:
                     return
                 if key in self._pending:
                     concurrent  = _count_active_in_chat(self.tasks, match.chat_id)
-                    inter_delay = 0.3 + max(0, concurrent - 1) * 0.1
+                    inter_delay = 0.15 + max(0, concurrent - 1) * 0.05
                     await asyncio.sleep(inter_delay)
 
         except asyncio.CancelledError:
