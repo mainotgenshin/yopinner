@@ -729,7 +729,7 @@ if __name__ == '__main__':
             max_retries=3,
             overall_max_rate=25,     # Global: 25/sec safely under Telegram's 30/sec hard limit
             overall_time_period=1,
-            group_max_rate=18,       # Per-chat: 18/min (debouncer sliding gate handles the real 12/min enforcement)
+            group_max_rate=18,       # Per-chat: 18/min (debouncer sliding gate handles the real 15/min enforcement)
             group_time_period=60,
         ))
 
