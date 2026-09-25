@@ -850,12 +850,12 @@ async def get_user_card(user_id: int, player_id: str, fmt: str) -> Optional[dict
     db = get_db()
     return await db.user_cards.find_one({"user_id": user_id, "player_id": player_id, "format": fmt})
 
-async def add_card_to_user(user_id: int, player_id: str, fmt: str) -> int:
-    """Add one copy of a card. Returns new quantity."""
+async def add_card_to_user(user_id: int, player_id: str, fmt: str, quantity: int = 1) -> int:
+    """Add one or more copies of a card. Returns new quantity."""
     db = get_db()
     result = await db.user_cards.find_one_and_update(
         {"user_id": user_id, "player_id": player_id, "format": fmt},
-        {"$inc": {"quantity": 1}},
+        {"$inc": {"quantity": quantity}},
         upsert=True,
         return_document=True
     )
@@ -1563,7 +1563,7 @@ async def do_checkin(user_id: int) -> dict:
                     "ovr":       card_data.get("ovr", 0),
                 }
                 # Add card to user inventory
-                await add_card_to_user(user_id, chosen_player["player_id"], fmt, 1)
+                await add_card_to_user(user_id, chosen_player["player_id"], fmt)
                 break
 
     # Persist check-in
