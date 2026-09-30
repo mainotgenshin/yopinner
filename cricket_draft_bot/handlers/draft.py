@@ -42,6 +42,14 @@ _USER_CLICK_TIMES: dict = {}  # user_id -> float (asyncio event loop time)
 _CLICK_COOLDOWN = 1.0         # seconds minimum between draft button clicks (stops rapid double-taps without blocking responsive players)
 _TERMINATE_COOLDOWN = 2.0     # seconds minimum between terminate button clicks
 
+def _record_user_click(user_id: int, now: float) -> None:
+    _USER_CLICK_TIMES[user_id] = now
+    if len(_USER_CLICK_TIMES) > 500:
+        cutoff = now - 60
+        for uid in list(_USER_CLICK_TIMES.keys()):
+            if _USER_CLICK_TIMES[uid] < cutoff:
+                _USER_CLICK_TIMES.pop(uid, None)
+
 # ── Background Unpin Queue (Option 3 Peak Optimization) ───────────────────
 # Finished matches queue their draft boards here instead of calling unpin_chat_message
 # immediately. The background maintenance loop unpins them during idle intervals,
@@ -195,7 +203,7 @@ async def handle_draft_callback(update: Update, context: ContextTypes.DEFAULT_TY
         except Exception:
             pass
         return
-    _USER_CLICK_TIMES[_user_id] = _now
+    _record_user_click(_user_id, _now)
     # ─────────────────────────────────────────────────────────────────────────
 
 
@@ -1042,7 +1050,7 @@ async def handle_terminate(update: Update, context: ContextTypes.DEFAULT_TYPE):
         except Exception:
             pass
         return
-    _USER_CLICK_TIMES[user_id] = _loop_now
+    _record_user_click(user_id, _loop_now)
 
     lock = _get_terminate_lock(match_id)
     async with lock:
