@@ -2108,7 +2108,9 @@ async def rem_role_ipl(update, context):
 
 async def add_role_test(update, context):
     if not await check_admin(update): return
-    text = update.message.text.replace("/add_roletest", "").strip()
+    msg = getattr(update, 'effective_message', None) or getattr(update, 'message', None)
+    if not msg or not msg.text: return
+    text = msg.text.replace("/add_roletest", "").strip()
     KNOWN_ROLES = ["All Rounder", "Captain", "WK", "Top", "Middle", "Defence", "Pacer", "Spinner", "Fielder"]
     role_input, name = None, None
     text_lower = text.lower()
@@ -2472,6 +2474,20 @@ async def handle_broadcast(update, context):
                 await get_db().chats.delete_one({"chat_id": chat_id})
                 failed += 1
             except Exception as e:
+                err_str = str(e).lower()
+                if any(x in err_str for x in ("chat not found", "not enough rights", "chat_restricted")):
+                    try:
+                        await get_db().chats.delete_one({"chat_id": chat_id})
+                    except Exception:
+                        pass
+                elif "migrated to supergroup" in err_str:
+                    m = re.search(r"-100\d+", str(e))
+                    if m:
+                        try:
+                            new_id = int(m.group(0))
+                            await get_db().chats.update_one({"chat_id": chat_id}, {"$set": {"chat_id": new_id}}, upsert=True)
+                        except Exception:
+                            pass
                 logger.warning(f"Broadcast fail {chat_id}: {e}")
                 failed += 1
         try:
