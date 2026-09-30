@@ -34,7 +34,13 @@ def get_db():
     if MONGO_URI:
         try:
             import certifi
-            _mongo_client = AsyncIOMotorClient(MONGO_URI, tlsCAFile=certifi.where())
+            _mongo_client = AsyncIOMotorClient(
+                MONGO_URI,
+                tlsCAFile=certifi.where(),
+                minPoolSize=5,
+                maxPoolSize=50,
+                maxIdleTimeMS=30000
+            )
             
             parsed = urlparse(MONGO_URI)
             db_name = parsed.path[1:] if parsed.path and len(parsed.path) > 1 else 'cricket_bot'
@@ -100,6 +106,19 @@ async def init_db():
     except Exception as e:
         logger.error(f"DB Init Failed: {e}")
 
+def evict_player_cache(player_id: Optional[str] = None):
+    """Evict a single player from cache if player_id is provided, otherwise full clear."""
+    global _player_cache
+    if player_id:
+        _player_cache.pop(player_id, None)
+    else:
+        _player_cache.clear()
+        logger.info("Player cache cleared manually.")
+
+def clear_player_cache():
+    """Manually clear the player cache."""
+    evict_player_cache(None)
+
 async def save_player(player_data: Dict[str, Any]):
     db = get_db()
     await db.players.update_one(
@@ -107,7 +126,7 @@ async def save_player(player_data: Dict[str, Any]):
         {"$set": player_data},
         upsert=True
     )
-    clear_player_cache()
+    evict_player_cache(player_data.get('player_id'))
 
 async def get_player(player_id: str) -> Optional[Dict[str, Any]]:
     # Simple LRU-like cache retrieval
@@ -128,12 +147,6 @@ async def get_player(player_id: str) -> Optional[Dict[str, Any]]:
         _player_cache[player_id] = data
         return data
     return None
-
-def clear_player_cache():
-    """Manually clear the player cache."""
-    global _player_cache
-    _player_cache.clear()
-    logger.info("Player cache cleared manually.")
 
 async def get_player_by_name_and_sport(name_query: str, sport: str) -> Optional[Dict[str, Any]]:
     """
@@ -1046,7 +1059,7 @@ async def add_to_card_catalog(player_id: str, fmt: str, ovr: int, rarity: str) -
         {"player_id": player_id},
         {"$set": {f"cards.{fmt}": {"ovr": ovr, "rarity": rarity.lower()}}}
     )
-    clear_player_cache()
+    evict_player_cache(player_id)
     return True
 
 async def update_card_catalog(player_id: str, fmt: str, ovr: int, rarity: str) -> bool:
@@ -1059,7 +1072,7 @@ async def update_card_catalog(player_id: str, fmt: str, ovr: int, rarity: str) -
         {"player_id": player_id},
         {"$set": {f"cards.{fmt}": {"ovr": ovr, "rarity": rarity.lower()}}}
     )
-    clear_player_cache()
+    evict_player_cache(player_id)
     return True
 
 # ── Card Pack Drawing ─────────────────────────────────────────────────────────
@@ -1072,7 +1085,7 @@ PACK_ODDS = {
 
 _card_pool_cache: dict = {}  # sport -> list of {player_id, name, format, rarity, ovr, image}
 _card_pool_cache_time: dict = {}
-CARD_POOL_CACHE_TTL = 300  # 5 minutes
+CARD_POOL_CACHE_TTL = 3600  # 1 hour (invalidated explicitly when cards are added/updated)
 
 async def _build_card_pool(sport: str) -> list:
     """Build and cache the drawable card pool for a sport."""
