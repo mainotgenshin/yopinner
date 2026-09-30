@@ -49,6 +49,24 @@ async def global_ban_filter(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 pass
         raise ApplicationHandlerStop
 
+async def global_anti_stale_filter(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Drops replayed commands from before bot restart (older than 30s)."""
+    msg = update.effective_message
+    if msg and msg.text and msg.text.startswith('/'):
+        try:
+            msg_age = time.time() - msg.date.timestamp()
+            if msg_age > 30:
+                logging.getLogger(__name__).info(
+                    f"Global anti-stale: dropped '{msg.text.split()[0]}' from "
+                    f"{update.effective_user.id if update.effective_user else 'unknown'} "
+                    f"(age={msg_age:.0f}s > 30s)"
+                )
+                raise ApplicationHandlerStop
+        except ApplicationHandlerStop:
+            raise
+        except Exception:
+            pass
+
 
 
 logging.basicConfig(
@@ -316,11 +334,13 @@ async def post_init(application):
                         except Exception:
                             pass
 
-                # 2. Pre-warm card pools every ~4 minutes (keeps RAM cache hot)
-                _warmup_tick += 1
-                if _warmup_tick >= 4:
-                    _warmup_tick = 0
-                    await warmup_card_pools()
+                # 2. Periodic garbage collection (~every 30 min) to release freed RAM back to OS
+                _gc_tick = getattr(_background_maintenance_loop, '_gc_tick', 0) + 1
+                _background_maintenance_loop._gc_tick = _gc_tick
+                if _gc_tick >= 30:
+                    _background_maintenance_loop._gc_tick = 0
+                    import gc
+                    gc.collect()
 
                 # 3. Auto-simulate stuck READY_CHECK matches (> 5 minutes in ready check)
                 import time as _time
@@ -729,20 +749,21 @@ if __name__ == '__main__':
             max_retries=3,
             overall_max_rate=25,     # Global: 25/sec safely under Telegram's 30/sec hard limit
             overall_time_period=1,
-            group_max_rate=18,       # Per-chat: 18/min (debouncer sliding gate handles the real 15/min enforcement)
+            group_max_rate=20,       # Per-chat: 20/min matches debouncer limit with 0 collision
             group_time_period=60,
         ))
 
         .job_queue(None)
         .connect_timeout(10)         # Fail fast on network issues, don't hang forever
-        .read_timeout(30)
-        .write_timeout(30)
-        .connection_pool_size(256)   # 1024 is excessive for a single-process bot; 256 is plenty
+        .read_timeout(20)            # 20s read timeout
+        .write_timeout(20)
+        .connection_pool_size(16)    # 16 active connections prevents stale idle sockets
         .post_init(post_init)
         .build()
     )
 
     # Handlers
+    application.add_handler(TypeHandler(Update, global_anti_stale_filter), group=-2)
     application.add_handler(TypeHandler(Update, global_ban_filter), group=-1)
     application.add_handler(CommandHandler('start', start))
     application.add_handler(CommandHandler('help', help_command))
@@ -1016,9 +1037,15 @@ if __name__ == '__main__':
             "Message is not modified",
             "Task was destroyed but it is pending",
             "Connection closed",
+            "ReadError",
+            "NetworkError",
+            "ConnectTimeout",
+            "TimedOut",
+            "ReadTimeout",
         )
-        if any(e in err_str for e in _IGNORE_ERRORS):
-            return  # Drop silently — not a real bug
+        if any(e.lower() in err_str.lower() for e in _IGNORE_ERRORS):
+            logging.getLogger(__name__).warning(f"Transient network/update noise suppressed: {err}")
+            return  # Drop cleanly — not a real bug
         logging.getLogger(__name__).error(msg="Exception while handling an update:", exc_info=err)
 
 
