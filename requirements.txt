@@ -1,15 +1,10 @@
-python-telegram-bot[rate-limiter]>=20.0
+python-telegram-bot>=20.0
 requests
 tzlocal<5.0
-google-generativeai
 beautifulsoup4
 python-dotenv
 pymongo
 dnspython
-certifi
-motor
-httpx
 pytz
 APScheduler
 psutil
-
