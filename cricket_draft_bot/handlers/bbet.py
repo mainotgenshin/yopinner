@@ -28,6 +28,13 @@ _BBET_COOLDOWN_SECS = 3.0
 
 def _get_bbet_lock(user_id: int) -> asyncio.Lock:
     if user_id not in _BBET_LOCKS:
+        if len(_BBET_LOCKS) > 300:
+            for uid in list(_BBET_LOCKS.keys()):
+                l = _BBET_LOCKS[uid]
+                if not l.locked():
+                    _BBET_LOCKS.pop(uid, None)
+                    if len(_BBET_LOCKS) <= 150:
+                        break
         _BBET_LOCKS[user_id] = asyncio.Lock()
     return _BBET_LOCKS[user_id]
 
@@ -161,4 +168,11 @@ async def handle_bbet(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"💰 Balance: {new_bal}🪙\n"
         f"🎯 Remaining bets today: {remaining}/{BBET_DAILY}"
     )
-    await update.effective_message.reply_text(msg, parse_mode="Markdown")
+    try:
+        await update.effective_message.reply_text(msg, parse_mode="Markdown")
+    except Exception:
+        try:
+            await asyncio.sleep(0.5)
+            await update.effective_message.reply_text(msg, parse_mode="Markdown")
+        except Exception:
+            pass
