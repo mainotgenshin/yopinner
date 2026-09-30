@@ -20,6 +20,13 @@ _CARD_CMD_COOLDOWNS: dict = {}
 
 def _get_lock(user_id: int) -> asyncio.Lock:
     if user_id not in _CARD_LOCKS:
+        if len(_CARD_LOCKS) > 500:
+            for uid in list(_CARD_LOCKS.keys()):
+                l = _CARD_LOCKS[uid]
+                if not l.locked():
+                    _CARD_LOCKS.pop(uid, None)
+                    if len(_CARD_LOCKS) <= 250:
+                        break
         _CARD_LOCKS[user_id] = asyncio.Lock()
     return _CARD_LOCKS[user_id]
 
@@ -1753,10 +1760,18 @@ async def handle_ggive(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     args = context.args
-    if not args or not args[0].isdigit():
+    if not args:
         await msg.reply_text("💸 Usage: /ggive <amount>\nExample: /ggive 100")
         return
-    amount = int(args[0])
+    raw_amount = args[0].strip()
+    if not raw_amount.isdecimal():
+        await msg.reply_text("❌ Please enter a valid number (e.g. /ggive 100).")
+        return
+    try:
+        amount = int(raw_amount)
+    except (ValueError, TypeError):
+        await msg.reply_text("❌ Please enter a valid number (e.g. /ggive 100).")
+        return
     if amount < 1:
         await msg.reply_text("❌ Amount must be at least 1🪙.")
         return
