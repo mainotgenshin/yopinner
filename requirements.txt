@@ -4,6 +4,7 @@ tzlocal<5.0
 beautifulsoup4
 python-dotenv
 pymongo
+motor
 dnspython
 pytz
 APScheduler
