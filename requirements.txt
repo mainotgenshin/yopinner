@@ -1,4 +1,7 @@
 python-telegram-bot[rate-limiter]>=20.0
+aiolimiter
+httpx
+certifi
 requests
 tzlocal<5.0
 beautifulsoup4
