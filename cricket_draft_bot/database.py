@@ -2,9 +2,12 @@
 import os
 import json
 import logging
+import asyncio
+import random
+from collections import Counter
 from typing import Optional, Dict, Any, List
 from motor.motor_asyncio import AsyncIOMotorClient
-from pymongo import ASCENDING
+from pymongo import ASCENDING, DESCENDING
 from config import MONGO_URI
 from urllib.parse import urlparse
 import datetime
@@ -98,9 +101,10 @@ async def init_db():
         await db.players.create_index([("cards.wwe.rarity", ASCENDING)])
         await db.players.create_index([("cards.fifa.rarity", ASCENDING)])
         await db.players.create_index([("cards.pkl.rarity", ASCENDING)])
-        # H2H result lookups by player pair
-        await db.match_results.create_index([("player_a_id", ASCENDING), ("player_b_id", ASCENDING)])
-        await db.match_results.create_index([("played_at", ASCENDING)])
+        # Ranked system indexes
+        await db.users.create_index([("ranked_rp", DESCENDING)])
+        # Active trades auto-cleanup (24h TTL)
+        await db.active_trades.create_index([("created_at", ASCENDING)], expireAfterSeconds=86400)
 
         logger.info("Async MongoDB Indexes Verified.")
     except Exception as e:
@@ -1359,47 +1363,326 @@ async def validate_fav_card(user_id: int) -> Optional[dict]:
     return fav
 
 # ═══════════════════════════════════════════════════════════════════════════
-# HEAD-TO-HEAD (H2H) RECORDS
+# RANKED & EXP PROGRESSION SYSTEM
 # ═══════════════════════════════════════════════════════════════════════════
 
-async def record_match_result(
-    winner_id: int, winner_name: str,
-    loser_id: int, loser_name: str,
-    is_draw: bool, mode: str, chat_id: int
-) -> None:
-    """Store a completed match result for H2H lookups. Called from simulation.py."""
-    db = get_db()
-    import time as _t
-    await db.match_results.insert_one({
-        "winner_id":   winner_id if not is_draw else None,
-        "loser_id":    loser_id  if not is_draw else None,
-        "player_a_id": winner_id,
-        "player_a_name": winner_name,
-        "player_b_id": loser_id,
-        "player_b_name": loser_name,
-        "is_draw":     is_draw,
-        "mode":        mode,
-        "chat_id":     chat_id,
-        "played_at":   _t.time(),
-    })
+RANK_TIERS = [
+    # (name, badge, min_rp, max_rp, order)
+    ("Unranked",     "🔘", 0,     0,      0),
+    ("Bronze III",   "🥉", 1,     224,    1),
+    ("Bronze II",    "🥉", 225,   449,    2),
+    ("Bronze I",     "🥉", 450,   674,    3),
+    ("Silver III",   "🥈", 675,   899,    4),
+    ("Silver II",    "🥈", 900,   1124,   5),
+    ("Silver I",     "🥈", 1125,  1349,   6),
+    ("Gold III",     "🥇", 1350,  1574,   7),
+    ("Gold II",      "🥇", 1575,  1799,   8),
+    ("Gold I",       "🥇", 1800,  2024,   9),
+    ("Platinum III", "💎", 2025,  2249,   10),
+    ("Platinum II",  "💎", 2250,  2474,   11),
+    ("Platinum I",   "💎", 2475,  2699,   12),
+    ("Diamond III",  "🔥", 2700,  2924,   13),
+    ("Diamond II",   "🔥", 2925,  3149,   14),
+    ("Diamond I",    "🔥", 3150,  3374,   15),
+    ("Master III",   "👑", 3375,  3599,   16),
+    ("Master II",    "👑", 3600,  3824,   17),
+    ("Master I",     "👑", 3825,  4049,   18),
+    ("Champion",     "⚡", 4050,  4499,   19),
+    ("Legend",       "🌟", 4500,  999999, 20),
+]
 
-async def get_h2h_stats(user_a_id: int, user_b_id: int) -> dict:
+def get_rank_tier(rp: int) -> tuple:
+    """Returns (name, badge, min_rp, max_rp, order)."""
+    if rp <= 0:
+        return RANK_TIERS[0]
+    for tier in reversed(RANK_TIERS):
+        if rp >= tier[2]:
+            return tier
+    return RANK_TIERS[0]
+
+def get_next_rank_tier(rp: int) -> Optional[tuple]:
+    """Returns the next tier above current RP, or None if Legend."""
+    if rp <= 0:
+        return RANK_TIERS[1]  # Bronze III
+    for i, tier in enumerate(RANK_TIERS):
+        if tier[2] <= rp <= tier[3]:
+            if i + 1 < len(RANK_TIERS):
+                return RANK_TIERS[i + 1]
+            return None
+    return None
+
+def exp_required_for_next_level(level: int) -> int:
+    """Formula: 500 + (level - 1) * 200."""
+    return 500 + max(0, level - 1) * 200
+
+def calculate_match_exp(is_winner: bool, is_draw: bool, positions_won: int) -> int:
     """
-    Returns combined H2H stats between two users across all modes.
-    {total, a_wins, b_wins, draws}
+    Winner: 50 base + 5 * positions won
+    Loser: 5 * positions won
+    Draw: 40
+    """
+    if is_draw:
+        return 40
+    if is_winner:
+        return 50 + max(0, positions_won) * 5
+    return max(0, positions_won) * 5
+
+def process_exp_gain(current_level: int, current_exp: int, exp_gained: int) -> tuple[int, int, bool]:
+    """
+    Adds EXP and handles level rollover.
+    Returns (new_level, new_exp, did_level_up).
+    """
+    lvl = max(1, current_level)
+    xp = max(0, current_exp) + exp_gained
+    leveled_up = False
+    while True:
+        req = exp_required_for_next_level(lvl)
+        if xp >= req:
+            xp -= req
+            lvl += 1
+            leveled_up = True
+        else:
+            break
+    return lvl, xp, leveled_up
+
+async def update_ranked_and_exp(
+    user_id: int, user_name: str, rp_delta: int, exp_gained: int
+) -> dict:
+    """
+    Atomically updates ranked RP and EXP for a user.
+    Handles RP floor (>= 0), peak RP tracking, level rollover, and detects promotions/demotions.
+    Returns summary dict for notifications.
     """
     db = get_db()
-    docs = await db.match_results.find({
-        "$or": [
-            {"player_a_id": user_a_id, "player_b_id": user_b_id},
-            {"player_a_id": user_b_id, "player_b_id": user_a_id},
-        ]
-    }).to_list(None)
+    user_doc = await db.users.find_one(
+        {"user_id": user_id},
+        {"ranked_rp": 1, "peak_rp": 1, "level": 1, "current_exp": 1, "_id": 0}
+    )
+    if not user_doc:
+        user_doc = {}
 
-    a_wins = sum(1 for d in docs if d.get("winner_id") == user_a_id)
-    b_wins = sum(1 for d in docs if d.get("winner_id") == user_b_id)
-    draws  = sum(1 for d in docs if d.get("is_draw"))
-    return {"total": len(docs), "a_wins": a_wins, "b_wins": b_wins, "draws": draws}
+    old_rp = user_doc.get("ranked_rp", 0)
+    old_peak_rp = user_doc.get("peak_rp", old_rp)
+    old_lvl = user_doc.get("level", 1)
+    old_exp = user_doc.get("current_exp", 0)
+
+    # Calculate new RP
+    new_rp = max(0, old_rp + rp_delta)
+    new_peak_rp = max(old_peak_rp, new_rp)
+
+    # Calculate new Level & EXP
+    new_lvl, new_exp, did_level_up = process_exp_gain(old_lvl, old_exp, exp_gained)
+
+    # Detect promotion/demotion
+    old_tier = get_rank_tier(old_rp)
+    new_tier = get_rank_tier(new_rp)
+    promoted = new_tier[4] > old_tier[4]
+    demoted  = new_tier[4] < old_tier[4]
+
+    # Atomic DB update
+    await db.users.update_one(
+        {"user_id": user_id},
+        {
+            "$set": {
+                "name": user_name,
+                "ranked_rp": new_rp,
+                "peak_rp": new_peak_rp,
+                "level": new_lvl,
+                "current_exp": new_exp,
+            }
+        },
+        upsert=True
+    )
+
+    return {
+        "user_id": user_id,
+        "old_rp": old_rp,
+        "new_rp": new_rp,
+        "rp_delta": rp_delta,
+        "old_tier": old_tier,
+        "new_tier": new_tier,
+        "promoted": promoted,
+        "demoted": demoted,
+        "old_level": old_lvl,
+        "new_level": new_lvl,
+        "leveled_up": did_level_up,
+        "exp_gained": exp_gained,
+        "current_exp": new_exp,
+        "exp_req": exp_required_for_next_level(new_lvl),
+    }
+
+# ── Season Management ─────────────────────────────────────────────────────────
+
+SEASON_DURATION_SECONDS = 60 * 86400  # 60 days (2 months)
+OFF_SEASON_DURATION_SECONDS = 86400   # 24 hours
+
+SOFT_RESET_TIER_RP = {
+    # Tier Order -> Starting RP in next season
+    20: 2700,  # Legend -> Diamond III (2,700)
+    19: 2475,  # Champion -> Platinum I (2,475)
+    18: 1800,  # Master I -> Gold I (1,800)
+    17: 1800,  # Master II -> Gold I
+    16: 1800,  # Master III -> Gold I
+    15: 1350,  # Diamond I -> Gold III (1,350)
+    14: 1350,  # Diamond II -> Gold III
+    13: 1350,  # Diamond III -> Gold III
+    12: 1125,  # Platinum I -> Silver I (1,125)
+    11: 1125,  # Platinum II -> Silver I
+    10: 1125,  # Platinum III -> Silver I
+    9:  675,   # Gold I -> Silver III (675)
+    8:  675,   # Gold II -> Silver III
+    7:  675,   # Gold III -> Silver III
+    6:  450,   # Silver I -> Bronze I (450)
+    5:  450,   # Silver II -> Bronze I
+    4:  450,   # Silver III -> Bronze I
+    3:  0,     # Bronze I -> 0
+    2:  0,     # Bronze II -> 0
+    1:  0,     # Bronze III -> 0
+    0:  0,     # Unranked -> 0
+}
+
+async def get_season_info() -> dict:
+    """Returns current season status document from db.config."""
+    db = get_db()
+    doc = await db.config.find_one({"key": "ranked_season"})
+    now = _time.time()
+    if not doc:
+        # Initialize Season 1 starting now
+        doc = {
+            "key": "ranked_season",
+            "season_number": 1,
+            "season_start": now,
+            "season_end": now + SEASON_DURATION_SECONDS,
+            "is_off_season": False,
+            "off_season_end": 0.0,
+        }
+        await db.config.update_one({"key": "ranked_season"}, {"$set": doc}, upsert=True)
+
+    if doc.get("is_off_season", False):
+        doc["time_remaining"] = max(0.0, float(doc.get("off_season_end", 0.0)) - now)
+    else:
+        doc["time_remaining"] = max(0.0, float(doc.get("season_end", 0.0)) - now)
+
+    return doc
+
+async def check_and_process_season_transition(bot=None) -> None:
+    """
+    Checks if the season has ended and transitions to off-season, distributes rewards,
+    or starts the new season after off-season expires.
+    """
+    try:
+        db = get_db()
+        season = await get_season_info()
+        now = _time.time()
+
+        # Case 1: Active season has expired -> enter off-season & distribute rewards
+        if not season.get("is_off_season", False) and now >= season.get("season_end", 0):
+            logger.info(f"Season {season.get('season_number', 1)} concluded! Starting reward distribution & off-season.")
+            await _distribute_season_rewards_and_soft_reset(season.get("season_number", 1), bot)
+            await db.config.update_one(
+                {"key": "ranked_season"},
+                {
+                    "$set": {
+                        "is_off_season": True,
+                        "off_season_end": now + OFF_SEASON_DURATION_SECONDS
+                    }
+                }
+            )
+
+        # Case 2: Off-season has expired -> launch next season
+        elif season.get("is_off_season", False) and now >= season.get("off_season_end", 0):
+            next_season_num = season.get("season_number", 1) + 1
+            logger.info(f"Off-season ended. Launching Season {next_season_num}!")
+            await db.config.update_one(
+                {"key": "ranked_season"},
+                {
+                    "$set": {
+                        "season_number": next_season_num,
+                        "season_start": now,
+                        "season_end": now + SEASON_DURATION_SECONDS,
+                        "is_off_season": False,
+                        "off_season_end": 0.0
+                    }
+                }
+            )
+    except Exception as e:
+        logger.error(f"check_and_process_season_transition error: {e}")
+
+async def _distribute_season_rewards_and_soft_reset(season_number: int, bot=None) -> None:
+    """Distributes packs/coins to all ranked participants, applies soft reset, and sends private DMs."""
+    db = get_db()
+    ranked_users = await db.users.find({"ranked_rp": {"$gt": 0}}).to_list(None)
+    logger.info(f"Processing season rewards for {len(ranked_users)} ranked participants...")
+
+    sports = ["cricket", "football", "wwe", "kabaddi"]
+
+    for user in ranked_users:
+        uid = user["user_id"]
+        rp = user.get("ranked_rp", 0)
+        tier = get_rank_tier(rp)
+        tier_name = tier[0]
+        tier_order = tier[4]
+
+        packs_to_give = []
+        bonus_coins = 0
+
+        if "Bronze" in tier_name:
+            packs_to_give.append(f"basic_{random.choice(sports)}")
+        elif "Silver" in tier_name:
+            packs_to_give.extend([f"basic_{random.choice(sports)}" for _ in range(2)])
+        elif "Gold" in tier_name:
+            packs_to_give.append(f"premium_{random.choice(sports)}")
+        elif "Platinum" in tier_name:
+            packs_to_give.extend([f"premium_{random.choice(sports)}" for _ in range(2)])
+        elif "Diamond" in tier_name:
+            packs_to_give.append(f"elite_{random.choice(sports)}")
+        elif "Master" in tier_name:
+            packs_to_give.extend([f"elite_{random.choice(sports)}" for _ in range(2)])
+        elif "Champion" in tier_name:
+            packs_to_give.extend([f"elite_{random.choice(sports)}" for _ in range(2)])
+            bonus_coins = 2000
+        elif "Legend" in tier_name:
+            packs_to_give.extend([f"elite_{random.choice(sports)}" for _ in range(3)])
+            bonus_coins = 5000
+
+        counts = Counter(packs_to_give)
+        pack_inc = {f"pack_inventory.{p}": qty for p, qty in counts.items()}
+        update_doc = {}
+        if pack_inc:
+            update_doc.setdefault("$inc", {}).update(pack_inc)
+        if bonus_coins > 0:
+            update_doc.setdefault("$inc", {})["card_coins"] = bonus_coins
+
+        new_start_rp = SOFT_RESET_TIER_RP.get(tier_order, 0)
+        update_doc.setdefault("$set", {})["ranked_rp"] = new_start_rp
+
+        await db.users.update_one({"user_id": uid}, update_doc)
+
+        if bot:
+            try:
+                start_tier = get_rank_tier(new_start_rp)
+                formatted_packs = [
+                    f"{qty}x {p.replace('_', ' ').title()} Pack" if qty > 1 else f"{p.replace('_', ' ').title()} Pack"
+                    for p, qty in counts.items()
+                ]
+                reward_desc = ", ".join(formatted_packs) if formatted_packs else "None"
+                if bonus_coins:
+                    reward_desc += f" + {bonus_coins}🪙"
+                text = (
+                    f"🏆 <b>SEASON {season_number} CONCLUDED!</b>\n"
+                    f"━━━━━━━━━━━━━━━━━━\n"
+                    f"You finished in: {tier[1]} <b>{tier_name}</b> ({rp} RP)\n\n"
+                    f"🎁 <b>Your Season Rewards:</b>\n"
+                    f"• {reward_desc} (added to /inventory)\n\n"
+                    f"🔄 <b>Soft Reset Applied:</b>\n"
+                    f"Starting Rank for Season {season_number + 1}: {start_tier[1]} <b>{start_tier[0]}</b> ({new_start_rp} RP)\n\n"
+                    f"⏳ Next season begins in 24 hours. Get ready! 🚀\n"
+                    f"━━━━━━━━━━━━━━━━━━"
+                )
+                await bot.send_message(chat_id=uid, text=text, parse_mode="HTML")
+                await asyncio.sleep(0.05)
+            except Exception:
+                pass
 
 
 # ── Ban / Unban System ───────────────────────────────────────────────────────
