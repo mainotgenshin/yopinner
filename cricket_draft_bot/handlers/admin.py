@@ -1,4 +1,5 @@
 # handlers/admin.py
+import time
 from telegram import Update
 from telegram.ext import ContextTypes
 import logging
@@ -2446,55 +2447,167 @@ async def get_current_banner(mode: str) -> str:
     return override if override else defaults.get(mode, DRAFT_BANNER_ODI)
 
 
+_BROADCAST_ACTIVE = False
+_PENDING_BROADCASTS: dict = {}  # bc_id -> {text, admin_id, created_at, total_chats}
+
 async def handle_broadcast(update, context):
-    """/broadcast message"""
+    """/broadcast message — shows preview and requires confirmation."""
     if not await check_admin(update): return
+    global _BROADCAST_ACTIVE
+    if _BROADCAST_ACTIVE:
+        await update.message.reply_text("⚠️ A broadcast is currently in progress. Please wait for it to finish.")
+        return
+
     msg = update.message.text.replace("/broadcast", "").strip()
     if not msg:
         await update.message.reply_text("Usage: /broadcast [message]")
         return
-    from database import get_all_chats, get_db
+
+    from database import get_all_chats
     chats = await get_all_chats()
     if not chats:
         await update.message.reply_text("❌ No active chats found.")
         return
-    status = await update.message.reply_text(f"📢 Broadcasting to {len(chats)} chats...")
-    import asyncio, re
-    from telegram.error import Forbidden
-    async def _broadcast():
-        success = failed = 0
-        html = re.sub(r"\*\*(.*?)\*\*", r"<b>\1</b>", msg)
-        text_out = f"📢 <b>Announcement</b>\n\n{html}"
-        for chat_id in chats:
-            try:
-                await context.bot.send_message(chat_id=chat_id, text=text_out, parse_mode="HTML")
-                success += 1
-                await asyncio.sleep(0.5)
-            except Forbidden:
-                await get_db().chats.delete_one({"chat_id": chat_id})
-                failed += 1
-            except Exception as e:
-                err_str = str(e).lower()
-                if any(x in err_str for x in ("chat not found", "not enough rights", "chat_restricted")):
-                    try:
-                        await get_db().chats.delete_one({"chat_id": chat_id})
-                    except Exception:
-                        pass
-                elif "migrated to supergroup" in err_str:
-                    m = re.search(r"-100\d+", str(e))
-                    if m:
-                        try:
-                            new_id = int(m.group(0))
-                            await get_db().chats.update_one({"chat_id": chat_id}, {"$set": {"chat_id": new_id}}, upsert=True)
-                        except Exception:
-                            pass
-                logger.warning(f"Broadcast fail {chat_id}: {e}")
-                failed += 1
+
+    import uuid, re
+    from telegram import InlineKeyboardButton, InlineKeyboardMarkup
+    bc_id = f"bc_{uuid.uuid4().hex[:8]}"
+    _PENDING_BROADCASTS[bc_id] = {
+        "text": msg,
+        "admin_id": update.effective_user.id,
+        "created_at": time.time(),
+        "total_chats": len(chats)
+    }
+
+    # Clean up old pending broadcasts (> 15 min old)
+    cutoff = time.time() - 900
+    for k in list(_PENDING_BROADCASTS.keys()):
+        if _PENDING_BROADCASTS[k]["created_at"] < cutoff:
+            _PENDING_BROADCASTS.pop(k, None)
+
+    html_preview = re.sub(r"\*\*(.*?)\*\*", r"<b>\1</b>", msg)
+    preview_box = (
+        f"📢 <b>Broadcast Preview</b>\n"
+        f"━━━━━━━━━━━━━━━━━━\n"
+        f"{html_preview}\n"
+        f"━━━━━━━━━━━━━━━━━━\n\n"
+        f"🎯 <b>Target:</b> {len(chats)} active chats\n\n"
+        f"Are you sure you want to broadcast this message?"
+    )
+
+    kb = InlineKeyboardMarkup([[
+        InlineKeyboardButton("✅ Confirm Send", callback_data=f"bc_ok|{bc_id}"),
+        InlineKeyboardButton("❌ Cancel",       callback_data=f"bc_no|{bc_id}")
+    ]])
+
+    await update.message.reply_text(preview_box, reply_markup=kb, parse_mode="HTML")
+
+
+async def handle_broadcast_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handles ✅ Confirm and ❌ Cancel for broadcasts with concurrency & permission lock."""
+    query = update.callback_query
+    data = query.data or ""
+    parts = data.split("|")
+    action = parts[0]
+    bc_id = parts[1] if len(parts) > 1 else ""
+
+    global _BROADCAST_ACTIVE
+    bc_data = _PENDING_BROADCASTS.get(bc_id)
+
+    if not bc_data:
         try:
-            await status.edit_text(f"✅ Broadcast done. Sent: {success} ✅  Failed: {failed} ❌")
+            await query.answer("❌ Broadcast request expired or not found.", show_alert=True)
+            await query.edit_message_text("❌ Broadcast request expired.")
         except Exception:
             pass
-    asyncio.ensure_future(_broadcast())
+        return
+
+    if query.from_user.id != bc_data["admin_id"]:
+        try:
+            await query.answer("⛔ Only the admin who initiated this broadcast can confirm it.", show_alert=True)
+        except Exception:
+            pass
+        return
+
+    if action == "bc_no":
+        _PENDING_BROADCASTS.pop(bc_id, None)
+        try:
+            await query.answer("Broadcast cancelled.")
+            await query.edit_message_text("❌ <b>Broadcast cancelled.</b>", parse_mode="HTML")
+        except Exception:
+            pass
+        return
+
+    if action == "bc_ok":
+        if _BROADCAST_ACTIVE:
+            try:
+                await query.answer("⚠️ Another broadcast is currently running!", show_alert=True)
+            except Exception:
+                pass
+            return
+
+        _BROADCAST_ACTIVE = True
+        _PENDING_BROADCASTS.pop(bc_id, None)
+
+        try:
+            await query.answer("Starting broadcast...")
+        except Exception:
+            pass
+
+        from database import get_all_chats, get_db
+        chats = await get_all_chats()
+        msg_text = bc_data["text"]
+
+        try:
+            await query.edit_message_text(f"📢 <b>Broadcasting to {len(chats)} chats...</b>", parse_mode="HTML")
+        except Exception:
+            pass
+
+        import asyncio, re
+        from telegram.error import Forbidden
+
+        async def _run_broadcast():
+            global _BROADCAST_ACTIVE
+            success = failed = 0
+            html = re.sub(r"\*\*(.*?)\*\*", r"<b>\1</b>", msg_text)
+            text_out = f"📢 <b>Announcement</b>\n\n{html}"
+            try:
+                for chat_id in chats:
+                    try:
+                        await context.bot.send_message(chat_id=chat_id, text=text_out, parse_mode="HTML")
+                        success += 1
+                        await asyncio.sleep(0.5)
+                    except Forbidden:
+                        await get_db().chats.delete_one({"chat_id": chat_id})
+                        failed += 1
+                    except Exception as e:
+                        err_str = str(e).lower()
+                        if any(x in err_str for x in ("chat not found", "not enough rights", "chat_restricted")):
+                            try:
+                                await get_db().chats.delete_one({"chat_id": chat_id})
+                            except Exception:
+                                pass
+                        elif "migrated to supergroup" in err_str:
+                            m = re.search(r"-100\d+", str(e))
+                            if m:
+                                try:
+                                    new_id = int(m.group(0))
+                                    await get_db().chats.update_one({"chat_id": chat_id}, {"$set": {"chat_id": new_id}}, upsert=True)
+                                except Exception:
+                                    pass
+                        logger.warning(f"Broadcast fail {chat_id}: {e}")
+                        failed += 1
+                try:
+                    await query.edit_message_text(
+                        f"✅ <b>Broadcast Complete!</b>\nSent: {success} ✅  Failed: {failed} ❌",
+                        parse_mode="HTML"
+                    )
+                except Exception:
+                    pass
+            finally:
+                _BROADCAST_ACTIVE = False
+
+        asyncio.create_task(_run_broadcast())
 
 
 # ═══════════════════════════════════════════════════════════════════
@@ -2566,7 +2679,7 @@ async def handle_update_card(update: Update, context: ContextTypes.DEFAULT_TYPE)
     args = context.args
     if not args:
         await update.effective_message.reply_text(
-            "Usage: /update_card <name> format=<ipl|odi|test|wwe|fifa> ovr=<number> rarity=<common|rare|epic|legend>"
+            "Usage: /update_card <name> format=<ipl|odi|test|wwe|fifa|pkl> ovr=<number> rarity=<common|rare|epic|legend>"
         )
         return
     # Parse kwargs from args
@@ -2585,8 +2698,8 @@ async def handle_update_card(update: Update, context: ContextTypes.DEFAULT_TYPE)
     if not all([name_query, fmt, ovr_s, rarity]):
         await update.effective_message.reply_text("❌ Missing required parameters. Provide name, format, ovr, and rarity.")
         return
-    if fmt not in ('ipl', 'odi', 'test', 'wwe', 'fifa'):
-        await update.effective_message.reply_text("❌ Invalid format. Use: ipl, odi, test, wwe, fifa")
+    if fmt not in ('ipl', 'odi', 'test', 'wwe', 'fifa', 'pkl'):
+        await update.effective_message.reply_text("❌ Invalid format. Use: ipl, odi, test, wwe, fifa, pkl")
         return
     if rarity not in ('common', 'rare', 'epic', 'legend'):
         await update.effective_message.reply_text("❌ Invalid rarity. Use: common, rare, epic, legend")
@@ -2638,7 +2751,7 @@ async def handle_add_card(update: Update, context: ContextTypes.DEFAULT_TYPE):
     args = context.args
     if not args:
         await update.effective_message.reply_text(
-            "Usage: /add_card <name> format=<ipl|odi|test|wwe|fifa> ovr=<number> rarity=<common|rare|epic|legend>"
+            "Usage: /add_card <name> format=<ipl|odi|test|wwe|fifa|pkl> ovr=<number> rarity=<common|rare|epic|legend>"
         )
         return
     params = {}
@@ -2656,8 +2769,8 @@ async def handle_add_card(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not all([name_query, fmt, ovr_s, rarity]):
         await update.effective_message.reply_text("❌ Missing required parameters.")
         return
-    if fmt not in ('ipl', 'odi', 'test', 'wwe', 'fifa'):
-        await update.effective_message.reply_text("❌ Invalid format. Use: ipl, odi, test, wwe, fifa")
+    if fmt not in ('ipl', 'odi', 'test', 'wwe', 'fifa', 'pkl'):
+        await update.effective_message.reply_text("❌ Invalid format. Use: ipl, odi, test, wwe, fifa, pkl")
         return
     if rarity not in ('common', 'rare', 'epic', 'legend'):
         await update.effective_message.reply_text("❌ Invalid rarity. Use: common, rare, epic, legend")
