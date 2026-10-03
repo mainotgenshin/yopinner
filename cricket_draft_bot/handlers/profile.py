@@ -88,6 +88,34 @@ async def _build_profile_data(user_id: int, name: str) -> dict:
     name_html = html.escape(name or "Player")
     rank_line_html = f"🏆 Global Rank: <b>#{rank}</b>\n" if rank else ""
 
+    # Ranked & EXP Progression
+    ranked_rp = stats.get("ranked_rp", 0)
+    peak_rp = stats.get("peak_rp", ranked_rp)
+    level = stats.get("level", 1)
+    current_exp = stats.get("current_exp", 0)
+
+    from database import get_rank_tier, get_next_rank_tier, exp_required_for_next_level
+    tier_name, tier_emoji, min_rp, max_rp, tier_badge = get_rank_tier(ranked_rp)
+    peak_tier_name, peak_tier_emoji, _, _, _ = get_rank_tier(peak_rp)
+    next_info = get_next_rank_tier(ranked_rp)
+    exp_req = exp_required_for_next_level(level)
+
+    if next_info:
+        next_name = next_info[0]
+        next_emoji = next_info[1]
+        rp_needed = max(0, next_info[2] - ranked_rp)
+        next_line = f"🎯 Next: <code>{rp_needed:,} RP</code> needed for {next_emoji} {next_name}\n"
+    else:
+        next_line = "🎯 Next: 👑 <b>Max Rank Reached!</b>\n"
+
+    ranked_section = (
+        "━━━━━━━━━━━━━━━━━━\n"
+        f"⭐ Level: <code>{level}</code> ({current_exp:,} / {exp_req:,} EXP)\n"
+        f"🎖️ Rank: {tier_emoji} <b>{tier_name}</b> (<code>{ranked_rp:,} RP</code>)\n"
+        f"{next_line}"
+        f"⭐ Peak: {peak_tier_emoji} <b>{peak_tier_name}</b>\n"
+    )
+
     # Clean HTML version
     body_html = (
         "━━━━━━━━━━━━━━━━━━\n"
@@ -95,6 +123,7 @@ async def _build_profile_data(user_id: int, name: str) -> dict:
         "━━━━━━━━━━━━━━━━━━\n"
         f"{rank_line_html}"
         f"📅 Joined: <code>{joined_str}</code>\n"
+        f"{ranked_section}"
         "━━━━━━━━━━━━━━━━━━\n"
         f"🔘 matches : <code>{total_matches}</code>\n"
         f"🟢 wins    : <code>{wins}</code>\n"
@@ -113,7 +142,7 @@ async def _build_profile_data(user_id: int, name: str) -> dict:
     href_text = None
     full_caption = None
 
-    # Show favorite card image if available
+    # Show favorite card image if available (only image preview/photo, no duplicate text)
     try:
         from database import get_fav_card, get_player, _get_card_image, _get_card_image_url
         fav = await get_fav_card(user_id)
@@ -124,17 +153,9 @@ async def _build_profile_data(user_id: int, name: str) -> dict:
                 image_url = _get_card_image_url(player_doc, fmt)
                 image_fid = _get_card_image(player_doc, fmt)
 
-                card_data = player_doc.get("cards", {}).get(fmt, {})
-                fmt_labels = {"ipl": "IPL", "odi": "ODI", "test": "Test", "wwe": "WWE", "fifa": "FIFA", "pkl": "PKL"}
-                RARITY_EMOJI_MAP = {"common": "⚪", "rare": "🔵", "epic": "🟣", "legend": "🟡"}
-                rarity = card_data.get("rarity", "")
-                ovr    = card_data.get("ovr", "")
-                p_name_safe = html.escape(player_doc.get("name", "Unknown"))
-                fav_line_html = f"\n\n⭐ <b>Fav Card:</b> {p_name_safe} ({fmt_labels.get(fmt, fmt.upper())}) {RARITY_EMOJI_MAP.get(rarity, '')} OVR {ovr}"
-
                 if image_url:
-                    href_text = f'<a href="{image_url}">&#8205;</a>' + body_html + fav_line_html
-                full_caption = body_html + fav_line_html
+                    href_text = f'<a href="{image_url}">&#8205;</a>' + body_html
+                full_caption = body_html
     except Exception:
         pass
 
