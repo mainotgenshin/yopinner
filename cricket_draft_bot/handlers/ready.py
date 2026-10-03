@@ -88,7 +88,7 @@ async def handle_ready(update: Update, context: ContextTypes.DEFAULT_TYPE, match
 
             # Run Simulation with complete exception safety
             try:
-                result_text = await run_simulation(match)
+                result_text = await run_simulation(match, bot=context.bot)
             except Exception as sim_err:
                 logger.error(f"Simulation failed for match {match_id}: {sim_err}", exc_info=True)
                 match.state = "READY_CHECK"
