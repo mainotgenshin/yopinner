@@ -50,14 +50,21 @@ async def global_ban_filter(update: Update, context: ContextTypes.DEFAULT_TYPE):
         raise ApplicationHandlerStop
 
 async def global_anti_stale_filter(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Drops replayed commands from before bot restart (older than 30s)."""
+    """Drops foreign bot commands and replayed commands from before bot restart (older than 30s)."""
     msg = update.effective_message
     if msg and msg.text and msg.text.startswith('/'):
+        cmd_part = msg.text.split()[0]
+        # Silently ignore commands targeted at other bots (e.g. /claim@DoodleGatorBot)
+        if '@' in cmd_part:
+            target_bot = cmd_part.split('@', 1)[1]
+            bot_username = getattr(context.bot, "username", None)
+            if bot_username and target_bot.lower() != bot_username.lower():
+                raise ApplicationHandlerStop
         try:
             msg_age = time.time() - msg.date.timestamp()
             if msg_age > 30:
                 logging.getLogger(__name__).info(
-                    f"Global anti-stale: dropped '{msg.text.split()[0]}' from "
+                    f"Global anti-stale: dropped '{cmd_part}' from "
                     f"{update.effective_user.id if update.effective_user else 'unknown'} "
                     f"(age={msg_age:.0f}s > 30s)"
                 )
@@ -286,8 +293,11 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def post_init(application):
     try:
         await application.bot.delete_webhook(drop_pending_updates=True)
+        if not getattr(application.bot, "username", None):
+            bot_info = await application.bot.get_me()
+            application.bot.username = bot_info.username
     except Exception as _wh_e:
-        logging.getLogger(__name__).warning(f"delete_webhook on startup: {_wh_e}")
+        logging.getLogger(__name__).warning(f"delete_webhook/get_me on startup: {_wh_e}")
 
     from database import init_db, get_db, warmup_card_pools
     await init_db()
@@ -314,6 +324,19 @@ async def post_init(application):
                 _log.warning(f"Trade cleanup error: {e}")
             await asyncio.sleep(120)     # then every 2 minutes
     asyncio.create_task(_trade_cleanup_loop())
+
+    # Periodic Ranked Season transition check (every 1 hour)
+    async def _season_check_loop():
+        from database import check_and_process_season_transition
+        _log = logging.getLogger(__name__)
+        await asyncio.sleep(120)  # first run 2 min after boot
+        while True:
+            try:
+                await check_and_process_season_transition(application.bot)
+            except Exception as e:
+                _log.warning(f"Season transition check error: {e}")
+            await asyncio.sleep(3600)  # then check every 1 hour
+    asyncio.create_task(_season_check_loop())
 
     # Background Maintenance Loop (Option 3 unpin batching + pool refresh)
     async def _background_maintenance_loop():
@@ -580,7 +603,7 @@ async def _auto_simulate(bot, match_id: str):
             await save_match_state(match)
 
             try:
-                result_text = await run_simulation(match)
+                result_text = await run_simulation(match, bot=bot)
             except Exception as sim_e:
                 logger.error(f"Auto-simulation computation failed for {match_id}: {sim_e}", exc_info=True)
                 match.state = "READY_CHECK"
@@ -848,8 +871,9 @@ if __name__ == '__main__':
     application.add_handler(CommandHandler('addplayerfifa',  wrap_admin_logging(add_player_fifa, "Add Player (FIFA)")))
     application.add_handler(CommandHandler('addplayer',      wrap_admin_logging(add_player, "Add/Update Player (Cricket)")))
 
-    from handlers.admin import handle_broadcast, handle_banner
+    from handlers.admin import handle_broadcast, handle_broadcast_callback, handle_banner
     application.add_handler(CommandHandler('broadcast', wrap_admin_logging(handle_broadcast, "Send Broadcast Message")))
+    application.add_handler(CallbackQueryHandler(handle_broadcast_callback, pattern=r"^bc_"))
     application.add_handler(CommandHandler('banner', wrap_admin_logging(handle_banner, "Modify Banner overrides")))
 
     # Card Catalog Admin commands
@@ -911,7 +935,7 @@ if __name__ == '__main__':
     from handlers.cards import (
         handle_pack, handle_inventory, handle_mycards, handle_viewcard,
         handle_trade_card, handle_quest,
-        handle_ggive, handle_h2h, handle_multi_sell,
+        handle_ggive, handle_multi_sell,
         cb_pack_sport, cb_pack_tier, cb_pack_confirm, cb_pack_back,
         cb_inv_packs, cb_inv_open,
         cb_mc_page, cb_mc_collections, cb_mc_sort,
@@ -929,7 +953,6 @@ if __name__ == '__main__':
     application.add_handler(CommandHandler('trade_card', handle_trade_card))
     application.add_handler(CommandHandler('quest',      handle_quest))
     application.add_handler(CommandHandler('ggive',      handle_ggive))
-    application.add_handler(CommandHandler('h2h',        handle_h2h))
     application.add_handler(CommandHandler('multi_sell', handle_multi_sell))
 
     # Coin Flip Bet
