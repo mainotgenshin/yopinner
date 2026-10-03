@@ -95,12 +95,14 @@ async def _afk_forfeit(match_id: str, expected_turn: int, bot, chat_id: int):
         from utils.rate_limit import debouncer
         debouncer.cancel_updates(chat_id, match.draft_message_id)
 
-        # Deduct 20 card coins from forfeiting user
+        # Deduct 20 card coins and 10 RP from forfeiting user (NO winner/RP awarded to opponent)
         try:
-            from database import deduct_card_coins
+            from database import deduct_card_coins, update_ranked_and_exp
             await deduct_card_coins(afk_team.owner_id, 20)
-            coin_note = " \n💸 *-20 card coins deducted.*"
-        except Exception:
+            await update_ranked_and_exp(afk_team.owner_id, afk_team.owner_name, -10, 0)
+            coin_note = " \n💸 *-20 card coins & -10 RP deducted.*"
+        except Exception as e:
+            logger.error(f"AFK forfeit deduction failed: {e}")
             coin_note = ""
         msg = f"💤 *{esc(afk_team.owner_name)} forfeited due to being AFK for 5 mins.*{coin_note}"
         try:
@@ -742,7 +744,7 @@ async def handle_assign(update: Update, context: ContextTypes.DEFAULT_TYPE, matc
                     await _save(m)
 
                     try:
-                        result_text = await run_simulation(m)  # async, returns str
+                        result_text = await run_simulation(m, bot=bot)  # async, returns str
                     except Exception as sim_e:
                         logger.error(f"Auto-ready live simulation error for {match_id}: {sim_e}", exc_info=True)
                         m.state = "READY_CHECK"
