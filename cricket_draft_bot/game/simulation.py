@@ -128,7 +128,7 @@ def calculate_slot_score(player: Player, role: str, mode: str) -> float:
     score = stat_val * multiplier
     return score
 
-async def run_simulation(match: Match) -> str:
+async def run_simulation(match: Match, bot=None) -> str:
     """
     Runs the simulation with enhanced stats and output format.
     """
@@ -221,14 +221,35 @@ async def run_simulation(match: Match) -> str:
     reward_a = _CARD_COIN_REWARDS.get(res_a, default_coin)
     reward_b = _CARD_COIN_REWARDS.get(res_b, default_coin)
 
-    # Final Result — coins shown inline with score
+    # ── Ranked RP & EXP Calculations ─────────────────────────────────────────
+    from database import get_season_info, calculate_match_exp, update_ranked_and_exp
+    try:
+        season = await get_season_info()
+        is_off_season = season.get("is_off_season", False)
+    except Exception:
+        is_off_season = False
+
+    if is_off_season:
+        rp_a = 0
+        rp_b = 0
+    else:
+        rp_a = (score_a - score_b) * 5
+        rp_b = (score_b - score_a) * 5
+
+    exp_a = calculate_match_exp(is_winner=(res_a == "W"), is_draw=(res_a == "D"), positions_won=score_a)
+    exp_b = calculate_match_exp(is_winner=(res_b == "W"), is_draw=(res_b == "D"), positions_won=score_b)
+
+    # Final Result — coins, RP, and EXP shown inline with score
     details.append("➖➖➖➖➖➖➖➖➖➖")
     name_a = match.team_a.owner_name or "Player 1"
     name_b = match.team_b.owner_name or "Player 2"
     rew_str_a = f"+{reward_a}🪙" if reward_a >= 0 else f"{reward_a}🪙"
     rew_str_b = f"+{reward_b}🪙" if reward_b >= 0 else f"{reward_b}🪙"
-    details.append(f"🔵 {esc(name_a)} — {score_a} ({rew_str_a})")
-    details.append(f"🔴 {esc(name_b)} — {score_b} ({rew_str_b})")
+    rp_str_a = f"+{rp_a}" if rp_a >= 0 else f"{rp_a}"
+    rp_str_b = f"+{rp_b}" if rp_b >= 0 else f"{rp_b}"
+
+    details.append(f"🔵 {esc(name_a)} — {score_a} ({rew_str_a} | {rp_str_a} RP | +{exp_a} EXP)")
+    details.append(f"🔴 {esc(name_b)} — {score_b} ({rew_str_b} | {rp_str_b} RP | +{exp_b} EXP)")
     details.append("")
 
     if score_a > score_b:
@@ -243,7 +264,7 @@ async def run_simulation(match: Match) -> str:
     # PERSIST RESULTS (Background Task - Instant Result Delivery)
     async def _persist_results_bg():
         try:
-            from database import update_user_stats, record_match_result, add_card_coins
+            from database import update_user_stats, add_card_coins
 
             async def _award_card_coins(user_id: int, result: str) -> None:
                 """Silently award card coins after a match. Never raises."""
@@ -253,13 +274,65 @@ async def run_simulation(match: Match) -> str:
                 except Exception as _ce:
                     logger.warning(f"Card coin award failed for {user_id}: {_ce}")
 
+            async def _update_ranked_and_notify(user_id: int, user_name: str, rp_delta: int, exp_gained: int) -> None:
+                """Updates ranked RP, EXP, and sends DMs on promotion/demotion/level-up."""
+                try:
+                    res = await update_ranked_and_exp(user_id, user_name, rp_delta, exp_gained)
+                    if not bot:
+                        return
+
+                    # 1. Promotion DM
+                    if res.get("promoted"):
+                        t = res["new_tier"]
+                        promo_text = (
+                            f"🎉 <b>RANK PROMOTION!</b>\n"
+                            f"━━━━━━━━━━━━━━━━━━\n"
+                            f"Outstanding match! You have been promoted to:\n"
+                            f"{t[1]} <b>{t[0]}</b> (<code>{res['new_rp']} RP</code>)\n\n"
+                            f"<i>Keep winning to reach higher ranks!</i>\n"
+                            f"━━━━━━━━━━━━━━━━━━"
+                        )
+                        try:
+                            await bot.send_message(chat_id=user_id, text=promo_text, parse_mode="HTML")
+                        except Exception:
+                            pass
+
+                    # 2. Demotion DM
+                    elif res.get("demoted"):
+                        t = res["new_tier"]
+                        demo_text = (
+                            f"⚠️ <b>RANK DEMOTION</b>\n"
+                            f"━━━━━━━━━━━━━━━━━━\n"
+                            f"You dropped below the threshold and have been demoted to:\n"
+                            f"{t[1]} <b>{t[0]}</b> (<code>{res['new_rp']} RP</code>)\n\n"
+                            f"<i>Win your next match to climb back up!</i>\n"
+                            f"━━━━━━━━━━━━━━━━━━"
+                        )
+                        try:
+                            await bot.send_message(chat_id=user_id, text=demo_text, parse_mode="HTML")
+                        except Exception:
+                            pass
+
+                    # 3. Level-Up DM
+                    if res.get("leveled_up"):
+                        lvl_text = (
+                            f"⭐ <b>LEVEL UP!</b>\n"
+                            f"━━━━━━━━━━━━━━━━━━\n"
+                            f"Congratulations! You reached <b>Level {res['new_level']}</b>!\n"
+                            f"EXP: <code>{res['current_exp']} / {res['exp_req']}</code>\n"
+                            f"━━━━━━━━━━━━━━━━━━"
+                        )
+                        try:
+                            await bot.send_message(chat_id=user_id, text=lvl_text, parse_mode="HTML")
+                        except Exception:
+                            pass
+                except Exception as _re:
+                    logger.warning(f"Ranked update/DM failed for {user_id}: {_re}")
+
             is_draw = (res_a == "D")
             winner_id   = match.team_a.owner_id   if res_a == "W" else match.team_b.owner_id
-            winner_name = match.team_a.owner_name if res_a == "W" else match.team_b.owner_name
-            loser_id    = match.team_b.owner_id   if res_a == "W" else match.team_a.owner_id
-            loser_name  = match.team_b.owner_name if res_a == "W" else match.team_a.owner_name
 
-            # Write stats + award card coins + record H2H result concurrently in background
+            # Write stats + coins + ranked RP + EXP concurrently in background
             await asyncio.gather(
                 update_user_stats(match.team_a.owner_id, match.team_a.owner_name, res_a,
                                   mode=match.mode, chat_id=match.chat_id),
@@ -267,8 +340,8 @@ async def run_simulation(match: Match) -> str:
                                   mode=match.mode, chat_id=match.chat_id),
                 _award_card_coins(match.team_a.owner_id, res_a),
                 _award_card_coins(match.team_b.owner_id, res_b),
-                record_match_result(winner_id, winner_name, loser_id, loser_name,
-                                    is_draw, match.mode, match.chat_id),
+                _update_ranked_and_notify(match.team_a.owner_id, match.team_a.owner_name, rp_a, exp_a),
+                _update_ranked_and_notify(match.team_b.owner_id, match.team_b.owner_name, rp_b, exp_b),
             )
 
             # Mirror current_streak → daily_quests.win_streak for the streak quest
@@ -283,7 +356,6 @@ async def run_simulation(match: Match) -> str:
                         current_streak = winner_doc.get("current_streak", 1)
                         daily_q = winner_doc.get("daily_quests", {})
                         prev_daily_streak = daily_q.get("win_streak", 0)
-                        # Only increment if today's streak went up
                         if current_streak > prev_daily_streak:
                             diff = current_streak - prev_daily_streak
                             await increment_quest_progress(winner_id, "win_streak", diff)
