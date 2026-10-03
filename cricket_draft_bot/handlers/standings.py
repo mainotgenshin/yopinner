@@ -165,6 +165,13 @@ async def _fetch_leaderboard(view: str, chat_id: int | None = None) -> list:
     from database import get_db
     db = get_db()
 
+    if view == "ranked":
+        cursor = db.users.find({}, {
+            "user_id": 1, "name": 1, "ranked_rp": 1, "peak_rp": 1,
+            f"prev_rank_{view}": 1, "_id": 0
+        }).sort([("ranked_rp", -1)]).limit(10)
+        return [doc async for doc in cursor]
+
     sort_field = {
         "overall": "wins",
         "daily": "daily_wins",
@@ -203,9 +210,17 @@ async def _fetch_leaderboard(view: str, chat_id: int | None = None) -> list:
 
 
 async def _get_user_rank(user_id: int, view: str, chat_id: int | None = None) -> tuple:
-    """Returns (rank, wins_for_view) for a specific user. Lightweight count query."""
+    """Returns (rank, wins_or_rp_for_view) for a specific user. Lightweight count query."""
     from database import get_db
     db = get_db()
+
+    if view == "ranked":
+        user_doc = await db.users.find_one({"user_id": user_id}, {"ranked_rp": 1, "_id": 0})
+        user_rp = user_doc.get("ranked_rp", 0) if user_doc else 0
+        if user_rp <= 0:
+            return (None, 0)
+        rank = await db.users.count_documents({"ranked_rp": {"$gt": user_rp}}) + 1
+        return (rank, user_rp)
 
     sort_field = {
         "overall": "wins",
@@ -271,9 +286,67 @@ def _wins_for_view(doc: dict, view: str, chat_id: int | None) -> int:
 
 def _build_text(
     view: str, rows: list, user_id: int,
-    user_rank: int | None, user_wins: int,
-    chat_id: int | None, last_updated_ts: float | None
+    user_rank: int | None, user_metric: int,
+    chat_id: int | None, last_updated_ts: float | None,
+    season_info: dict | None = None,
+    gap_info: int | None = None
 ) -> str:
+    if view == "ranked":
+        from database import get_rank_tier
+        s_num = season_info.get("season_number", 1) if season_info else 1
+        is_off = season_info.get("is_off_season", False) if season_info else False
+        secs_left = season_info.get("time_remaining", 0) if season_info else 0
+        days = int(secs_left // 86400)
+        hours = int((secs_left % 86400) // 3600)
+        mins = int((secs_left % 3600) // 60)
+
+        title = f"⏸️ *RANKED OFF-SEASON STANDINGS*" if is_off else f"🎖️ *RANKED SEASON {s_num} STANDINGS*"
+        lines = [f"{title}\n"]
+
+        if not rows:
+            lines.append("No ranked players yet 👀\nPlay matches to earn RP and climb tiers!")
+        else:
+            for i, doc in enumerate(rows, 1):
+                rp = doc.get("ranked_rp", 0)
+                tier_name, tier_emoji, _, _, _ = get_rank_tier(rp)
+                raw_name = str(doc.get("name", "Player")).replace("[", "(").replace("]", ")")
+                name = esc(raw_name)
+                uid = doc.get("user_id")
+                is_you = uid == user_id
+                name_link = f"[{name}](tg://user?id={uid})" if uid else name
+                rank_sym = _rank_emoji(i)
+                crown = " 👑" if i == 1 else ""
+                you = " 👈 *YOU*" if is_you else ""
+
+                change = doc.get("_rank_change", 0)
+                if change > 0:
+                    change_str = f" ⬆️ +{change}"
+                elif change < 0:
+                    change_str = f" ⬇️ {change}"
+                else:
+                    change_str = ""
+
+                lines.append(f"{rank_sym} {name_link} — *{rp:,} RP* ({tier_emoji} {tier_name}){crown}{change_str}{you}")
+
+        lines.append(f"\n━━━━━━━━━━━━━━━")
+        u_tier_name, u_tier_emoji, _, _, _ = get_rank_tier(user_metric)
+        if user_rank:
+            lines.append(f"📍 Your Rank: *#{user_rank}* ({user_metric:,} RP — {u_tier_emoji} {u_tier_name})")
+            if user_rank == 1:
+                lines.append("👑 You are #1!")
+            elif gap_info is not None:
+                lines.append(f"⬆️ *{gap_info:,} RP* to reach *#{user_rank - 1}*")
+        else:
+            lines.append(f"📍 Your Rank: *Unranked* ({user_metric:,} RP — {u_tier_emoji} {u_tier_name})")
+
+        if is_off:
+            lines.append(f"\n⏸️ *Off-Season*: Season {s_num + 1} Starts In: *{days}d {hours}h {mins}m*")
+        else:
+            lines.append(f"\n⏳ Season {s_num} Ends In: *{days}d {hours}h {mins}m*")
+
+        lines.append(f"🕒 Updated: {_time_ago(last_updated_ts)}")
+        return "\n".join(lines)
+
     labels = {
         "overall": "🏆 GLOBAL STANDINGS",
         "daily":   "📅 DAILY STANDINGS",
@@ -323,7 +396,7 @@ def _build_text(
 
     # User's own stats
     if user_rank:
-        lines.append(f"📍 Your Rank: *#{user_rank}* — {user_wins} Wins")
+        lines.append(f"📍 Your Rank: *#{user_rank}* — {user_metric} Wins")
         if user_rank == 1:
             lines.append("👑 You are #1!")
         else:
@@ -331,10 +404,10 @@ def _build_text(
             above_wins = None
             for doc in rows:
                 dw = _wins_for_view(doc, view, chat_id)
-                if dw > user_wins:
+                if dw > user_metric:
                     above_wins = dw
             if above_wins is not None:
-                gap = above_wins - user_wins
+                gap = above_wins - user_metric
                 lines.append(f"⬆️ *{gap}* wins to reach *#{user_rank - 1}*")
     else:
         lines.append("📍 Your Rank: *Unranked*")
@@ -350,25 +423,26 @@ def _build_text(
     return "\n".join(lines)
 
 
-def _build_keyboard(active: str, is_group: bool = True) -> InlineKeyboardMarkup:
+def _build_keyboard(active: str, owner_id: int, is_group: bool = True) -> InlineKeyboardMarkup:
     def btn(label, cb, is_active):
         return InlineKeyboardButton(f"{label} ✅" if is_active else label, callback_data=cb)
 
     row1 = [
-        btn("🏆 Overall", "lb_overall", active == "overall"),
-        btn("📅 Daily",   "lb_daily",   active == "daily"),
-        btn("📆 Weekly",  "lb_weekly",  active == "weekly"),
+        btn("🏆 Overall", f"lb_overall|{owner_id}", active == "overall"),
+        btn("🎖️ Ranked",  f"lb_ranked|{owner_id}",  active == "ranked"),
+        btn("📅 Daily",   f"lb_daily|{owner_id}",   active == "daily"),
+        btn("📆 Weekly",  f"lb_weekly|{owner_id}",  active == "weekly"),
     ]
     row2 = [
-        btn("🏏 Cricket", "lb_cricket", active == "cricket"),
-        btn("⚽ FIFA",    "lb_fifa",    active == "fifa"),
-        btn("🤼 WWE",     "lb_wwe",     active == "wwe"),
-        btn("🤸 PKL",     "lb_pkl",     active == "pkl"),
+        btn("🏏 Cricket", f"lb_cricket|{owner_id}", active == "cricket"),
+        btn("⚽ FIFA",    f"lb_fifa|{owner_id}",    active == "fifa"),
+        btn("🤼 WWE",     f"lb_wwe|{owner_id}",     active == "wwe"),
+        btn("🤸 PKL",     f"lb_pkl|{owner_id}",     active == "pkl"),
     ]
     rows = [row1, row2]
     # Only show "This Chat" button in groups (not DMs)
     if is_group:
-        rows.append([btn("🏠 This Chat", "lb_chat", active == "chat")])
+        rows.append([btn("🏠 This Chat", f"lb_chat|{owner_id}", active == "chat")])
     return InlineKeyboardMarkup(rows)
 
 
@@ -376,10 +450,12 @@ def _build_keyboard(active: str, is_group: bool = True) -> InlineKeyboardMarkup:
 
 async def _render_standings(
     update: Update, context: ContextTypes.DEFAULT_TYPE,
-    view: str, edit: bool = False
+    view: str, owner_id: int | None = None, edit: bool = False
 ):
     user_id = update.effective_user.id
     chat_id = update.effective_chat.id
+    if owner_id is None:
+        owner_id = user_id
 
     # Run reset check silently in background — ensures daily/weekly
     # counters are correct even if user hasn't played a match today.
@@ -399,7 +475,7 @@ async def _render_standings(
         _set_cache(ck, (rows, last_ts))
 
     rank_data = await _get_user_rank(user_id, view, chat_id if view == "chat" else None)
-    user_rank, user_wins = rank_data
+    user_rank, user_metric = rank_data
 
     # Track rank change
     if user_rank:
@@ -409,9 +485,27 @@ async def _render_standings(
             if r.get("user_id") == user_id:
                 r["_rank_change"] = delta
 
+    season_info = None
+    gap_info = None
+    if view == "ranked":
+        from database import get_season_info, get_db
+        season_info = await get_season_info()
+        if user_rank and user_rank > 1:
+            if user_rank <= len(rows) + 1 and user_rank - 2 < len(rows):
+                above_rp = rows[user_rank - 2].get("ranked_rp", 0)
+                gap_info = max(0, above_rp - user_metric)
+            else:
+                db = get_db()
+                above_doc = await db.users.find({"ranked_rp": {"$gt": user_metric}}).sort([("ranked_rp", 1)]).limit(1).to_list(length=1)
+                if above_doc:
+                    gap_info = max(0, above_doc[0].get("ranked_rp", 0) - user_metric)
+
     is_group = update.effective_chat.type != "private"
-    text = _build_text(view, rows, user_id, user_rank, user_wins, chat_id, last_ts)
-    kb   = _build_keyboard(active=view, is_group=is_group)
+    text = _build_text(
+        view, rows, user_id, user_rank, user_metric, chat_id, last_ts,
+        season_info=season_info, gap_info=gap_info
+    )
+    kb = _build_keyboard(active=view, owner_id=owner_id, is_group=is_group)
 
     if edit and update.callback_query:
         try:
@@ -428,15 +522,28 @@ async def _render_standings(
 
 async def handle_standings(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Entry point for /standings command."""
-    await _render_standings(update, context, view="overall", edit=False)
+    user_id = update.effective_user.id
+    await _render_standings(update, context, view="overall", owner_id=user_id, edit=False)
 
 
 async def handle_standings_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Handles [Overall] [Daily] [Weekly] [This Chat] [Cricket] [FIFA] [WWE] [PKL] button clicks."""
+    """Handles [Overall] [Ranked] [Daily] [Weekly] [This Chat] [Cricket] [FIFA] [WWE] [PKL] button clicks."""
     query = update.callback_query
     user_id = query.from_user.id
-    now = time.time()
+    data = query.data or ""
+    parts = data.split("|")
+    action = parts[0]
+    owner_id = int(parts[1]) if len(parts) > 1 and parts[1].isdigit() else None
 
+    # Check button ownership: only the user who typed /standings can interact
+    if owner_id and user_id != owner_id:
+        try:
+            await query.answer("⛔ Only the player who opened /standings can use these buttons.", show_alert=True)
+        except Exception:
+            pass
+        return
+
+    now = time.time()
     # Anti-spam cooldown
     if now - _user_cooldown.get(user_id, 0) < COOLDOWN_SECS:
         try:
@@ -453,6 +560,7 @@ async def handle_standings_callback(update: Update, context: ContextTypes.DEFAUL
 
     view_map = {
         "lb_overall": "overall",
+        "lb_ranked":  "ranked",
         "lb_daily":   "daily",
         "lb_weekly":  "weekly",
         "lb_chat":    "chat",
@@ -461,7 +569,7 @@ async def handle_standings_callback(update: Update, context: ContextTypes.DEFAUL
         "lb_wwe":     "wwe",
         "lb_pkl":     "pkl",
     }
-    view = view_map.get(query.data)
+    view = view_map.get(action)
     if not view:
         return
 
@@ -469,6 +577,7 @@ async def handle_standings_callback(update: Update, context: ContextTypes.DEFAUL
     current_text = query.message.text or ""
     tab_headers = {
         "overall": "GLOBAL STANDINGS",
+        "ranked":  "RANKED",
         "daily":   "DAILY STANDINGS",
         "weekly":  "WEEKLY STANDINGS",
         "cricket": "CRICKET STANDINGS",
@@ -481,4 +590,4 @@ async def handle_standings_callback(update: Update, context: ContextTypes.DEFAUL
         await query.answer("Already viewing this tab.", show_alert=False)
         return
 
-    await _render_standings(update, context, view=view, edit=True)
+    await _render_standings(update, context, view=view, owner_id=owner_id, edit=True)
