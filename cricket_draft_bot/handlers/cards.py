@@ -1800,62 +1800,6 @@ async def handle_ggive(update: Update, context: ContextTypes.DEFAULT_TYPE):
             parse_mode="Markdown"
         )
 
-# ─────────────────────────────────────────────────────────────────────────────
-# /h2h — Head-to-head stats (PM only, during an active match)
-# ─────────────────────────────────────────────────────────────────────────────
-async def handle_h2h(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user = update.effective_user
-    if update.effective_chat.type != "private":
-        await update.effective_message.reply_text("⚔️ Use /h2h in my DM during an active match!")
-        return
-    # Find the user's active match to determine opponent
-    from database import get_db
-    db = get_db()
-    # Search for an active DRAFTING or READY_CHECK match involving this user
-    match_doc = await db.matches.find_one({
-        "$or": [
-            {"state_data.team_a.owner_id": user.id, "state_data.state": {"$in": ["DRAFTING", "READY_CHECK"]}},
-            {"state_data.team_b.owner_id": user.id, "state_data.state": {"$in": ["DRAFTING", "READY_CHECK"]}},
-        ]
-    })
-    if not match_doc:
-        await update.effective_message.reply_text(
-            "❌ No active match found.\n\n/challenge someone to see H2H stats!"
-        )
-        return
-    state = match_doc.get("state_data", {})
-    team_a = state.get("team_a", {})
-    team_b = state.get("team_b", {})
-    if team_a.get("owner_id") == user.id:
-        my_name  = team_a["owner_name"]
-        opp_id   = team_b["owner_id"]
-        opp_name = team_b["owner_name"]
-    else:
-        my_name  = team_b["owner_name"]
-        opp_id   = team_a["owner_id"]
-        opp_name = team_a["owner_name"]
-    from database import get_h2h_stats
-    stats = await get_h2h_stats(user.id, opp_id)
-    total   = stats["total"]
-    my_wins = stats["a_wins"]
-    op_wins = stats["b_wins"]
-    draws   = stats["draws"]
-    my_pct  = round(my_wins / total * 100) if total else 0
-    op_pct  = round(op_wins / total * 100) if total else 0
-    await update.effective_message.reply_text(
-        f"⚔️ *HEAD-TO-HEAD*\n"
-        f"━━━━━━━━━━━━━━━━━━\n"
-        f"🔵 {esc(my_name)}  vs  🔴 {esc(opp_name)}\n"
-        f"━━━━━━━━━━━━━━━━━━\n"
-        f"Matches: *{total}*\n"
-        f"🔵 {esc(my_name)} wins: *{my_wins}* ({my_pct}%)\n"
-        f"🔴 {esc(opp_name)} wins: *{op_wins}* ({op_pct}%)\n"
-        f"Draws: *{draws}*\n"
-        f"━━━━━━━━━━━━━━━━━━\n"
-        + (f"_H2H tracked from latest bot update onwards_" if total == 0 else ""),
-        parse_mode="Markdown"
-    )
-
 # # ─────────────────────────────────────────────────────────────────────────────
 # /multi_sell
 # ─────────────────────────────────────────────────────────────────────────────
