@@ -49,22 +49,54 @@ async def global_ban_filter(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 pass
         raise ApplicationHandlerStop
 
+_RECOGNIZED_COMMANDS = {
+    "start", "help", "challenge", "challengeipl", "challengeodi", "challengetest",
+    "challengefifa", "challengewwe", "challengepkl", "challenge_ipl", "challenge_odi",
+    "challenge_intl", "challenge_test", "challenge_fifa", "challenge_wwe", "challenge_pkl",
+    "c", "draft", "myprofile", "profile", "standings", "pack", "inventory", "mycards",
+    "viewcard", "trade_card", "quest", "ggive", "multi_sell", "bbet", "checkin", "sort",
+    "collections", "collection", "stats", "reset_matches", "check", "mod", "unmod",
+    "modrm", "mods", "changecap", "changewk", "changetop", "changemiddle", "changedefence",
+    "changepacer", "changespinner", "changeallrounder", "changefinisher", "changefielder",
+    "setstats", "fix_roles", "migrate_roles", "add_role", "rem_role", "nonrolefix",
+    "run_fix_now", "revert", "add_playeripl", "add_roleipl", "rem_roleipl", "removeipl",
+    "add_playertest", "add_roletest", "rem_roletest", "rem_playerodi", "rem_playertest",
+    "update_image", "enable_ipl", "disable_ipl", "clearcache", "update_imagefifa",
+    "add_playerfifa", "addplayerfifa", "removeplayerfifa", "add_playerwwe", "addplayerwwe",
+    "remove_playerwwe", "removeplayerwwe", "update_imagewwe", "add_playerpkl", "rem_playerpkl",
+    "update_imagepkl", "updateimagepkl", "addplayer", "add_player", "remove_player",
+    "broadcast", "banner", "add_card", "update_card", "gift", "gift_pack", "add_packall",
+    "bban", "unbban", "botstatus", "add_achievement", "rem_achievement", "map_api"
+}
+
 async def global_anti_stale_filter(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Drops foreign bot commands and replayed commands from before bot restart (older than 30s)."""
     msg = update.effective_message
     if msg and msg.text and msg.text.startswith('/'):
-        cmd_part = msg.text.split()[0]
-        # Silently ignore commands targeted at other bots (e.g. /claim@DoodleGatorBot)
-        if '@' in cmd_part:
-            target_bot = cmd_part.split('@', 1)[1]
+        cmd_token = msg.text.split()[0].lstrip('/')
+        target_bot = None
+        if '@' in cmd_token:
+            cmd_name, target_bot = cmd_token.split('@', 1)
+        else:
+            cmd_name = cmd_token
+        cmd_name = cmd_name.lower()
+
+        # 1. Silently ignore commands targeted at other bots (e.g. /claim@OtherBot)
+        if target_bot:
             bot_username = getattr(context.bot, "username", None)
             if bot_username and target_bot.lower() != bot_username.lower():
                 raise ApplicationHandlerStop
+
+        # 2. Silently ignore foreign bot commands (e.g. /claim, /extend, /qrand) without log spam
+        if cmd_name not in _RECOGNIZED_COMMANDS:
+            raise ApplicationHandlerStop
+
+        # 3. Drop stale commands replayed upon bot restart (> 30s old)
         try:
             msg_age = time.time() - msg.date.timestamp()
             if msg_age > 30:
-                logging.getLogger(__name__).info(
-                    f"Global anti-stale: dropped '{cmd_part}' from "
+                logging.getLogger(__name__).debug(
+                    f"Anti-stale: dropped '{cmd_name}' from "
                     f"{update.effective_user.id if update.effective_user else 'unknown'} "
                     f"(age={msg_age:.0f}s > 30s)"
                 )
