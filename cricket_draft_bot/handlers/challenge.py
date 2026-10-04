@@ -543,20 +543,23 @@ async def challenge_fifa(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 
-async def send_wwe_gender_selector(update: Update, context: ContextTypes.DEFAULT_TYPE, owner_id: int):
+async def send_wwe_gender_selector(update: Update, context: ContextTypes.DEFAULT_TYPE, owner_id: int, target_id: int = 0):
     """
     Replies to the user with 2 buttons (Men / Women) to choose WWE challenge mode.
     """
-    target_id = 0
-    if context and getattr(context, 'user_data', None) and context.user_data.get('challenge_target_id'):
-        target_id = context.user_data.pop('challenge_target_id', 0)
-    elif not update.callback_query:
-        target_u, err = _get_challenge_target(update, owner_id)
-        if err:
-            await _safe_send_error(update, context, update.effective_chat.id, err)
-            return
-        if target_u:
-            target_id = target_u.id
+    if target_id <= 0:
+        if context and getattr(context, 'user_data', None) and context.user_data.get('challenge_target_id'):
+            target_id = context.user_data.pop('challenge_target_id', 0)
+        elif not update.callback_query:
+            target_u, err = _get_challenge_target(update, owner_id)
+            if err:
+                await _safe_send_error(update, context, update.effective_chat.id, err)
+                return
+            if target_u:
+                target_id = target_u.id
+    else:
+        if context and getattr(context, 'user_data', None):
+            context.user_data.pop('challenge_target_id', None)
 
     keyboard = [
         [
@@ -717,7 +720,7 @@ async def challenge_wwe_start(update: Update, context: ContextTypes.DEFAULT_TYPE
     except Exception:
         pass
 
-async def challenge_wwe(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def challenge_wwe(update: Update, context: ContextTypes.DEFAULT_TYPE, target_id: int = 0):
     if _is_stale_command(update): return  # Drop replayed command from before bot restart
     if update.effective_chat.type == "private":
         await update.effective_message.reply_text("⚔️ Challenges can only be started in *group chats*!\nAdd me to a group and use /challenge there.", parse_mode="Markdown"); return
@@ -728,7 +731,7 @@ async def challenge_wwe(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
     if not _check_challenge_cooldown(owner_id):
         return
-    await send_wwe_gender_selector(update, context, owner_id)
+    await send_wwe_gender_selector(update, context, owner_id, target_id=target_id)
 
 async def challenge_test(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if _is_stale_command(update): return  # Drop replayed command from before bot restart
@@ -834,6 +837,8 @@ async def challenge_unified(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     await update.effective_message.reply_text("❌ You can't challenge a bot!")
                     return
                 target_id = replied_u.id
+                if context and getattr(context, 'user_data', None):
+                    context.user_data['challenge_target_id'] = target_id
 
         keyboard = [
             [
@@ -873,7 +878,16 @@ async def challenge_unified(update: Update, context: ContextTypes.DEFAULT_TYPE):
         real_mode = "FIFA"
         banner = await get_banner_for_mode("fifa")
     elif mode_arg in ('wwe', 'wrestling'):
-        await send_wwe_gender_selector(update, context, owner_id)
+        target_id = 0
+        target_u, err = _get_challenge_target(update, owner_id)
+        if err:
+            await _safe_send_error(update, context, update.effective_chat.id, err)
+            return
+        if target_u:
+            target_id = target_u.id
+            if context and getattr(context, 'user_data', None):
+                context.user_data['challenge_target_id'] = target_id
+        await send_wwe_gender_selector(update, context, owner_id, target_id=target_id)
         return
     elif mode_arg in ('pkl', 'kabaddi'):
         real_mode = "PKL"
@@ -1005,6 +1019,8 @@ async def handle_mode_pick_callback(update: Update, context: ContextTypes.DEFAUL
     if target_id > 0:
         if context and getattr(context, 'user_data', None):
             context.user_data['challenge_target_id'] = target_id
+    elif context and getattr(context, 'user_data', None) and context.user_data.get('challenge_target_id'):
+        target_id = context.user_data.get('challenge_target_id')
     else:
         if context and getattr(context, 'user_data', None):
             context.user_data.pop('challenge_target_id', None)
@@ -1038,7 +1054,9 @@ async def handle_mode_pick_callback(update: Update, context: ContextTypes.DEFAUL
             "PKL": challenge_pkl,
         }
         fn = dispatch.get(mode)
-        if fn:
+        if mode == "WWE":
+            await challenge_wwe(update, context, target_id=target_id)
+        elif fn:
             await fn(update, context)
     finally:
         if msg_id:
