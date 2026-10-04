@@ -478,9 +478,11 @@ async def update_draft_message(update: Update, context: ContextTypes.DEFAULT_TYP
                 )
         except Exception as e:
             if "message is not modified" in str(e).lower():
+                debouncer.record_state(match.chat_id, match.draft_message_id, caption, reply_markup, media)
                 return
             logger.warning(f"Synchronous draft board edit failed: {e}. Falling back to recreation...")
             await debouncer._recreate_message(match, context.bot, caption, reply_markup, media, "HTML")
+        debouncer.record_state(match.chat_id, match.draft_message_id, caption, reply_markup, media)
         return
 
 
