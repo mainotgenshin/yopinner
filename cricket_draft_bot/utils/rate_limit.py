@@ -6,24 +6,28 @@ from game.state import save_match_state
 
 logger = logging.getLogger(__name__)
 
-# ── Per-chat sliding-window rate gate ────────────────────────────────────────
+# ── Per-chat sliding-window rate gate & smooth pacer ───────────────────────
 # Telegram limit: ~20 edits per chat per minute.
-# Target 18/min to coordinate with AIORateLimiter without causing queue lockups.
-_CHAT_MAX_CALLS = 18
-_CHAT_WINDOW    = 60.0   # rolling window in seconds
-
+# We cap at 18 edits per rolling 60-second window AND enforce a minimum interval
+# of 2.85s between consecutive edits to the same chat.
+# 2.85s spacing = maximum ~21 calls/min, ensuring edits flow in a smooth stream
+# rather than in a sharp burst that locks the queue.
+_CHAT_MAX_CALLS    = 18
+_CHAT_WINDOW       = 60.0   # rolling window in seconds
+_MIN_CHAT_INTERVAL = 2.85   # minimum seconds between edits in the same chat
 
 _chat_call_times: dict = {}   # chat_id_str -> [float timestamps]
 _chat_locks:      dict = {}   # chat_id_str -> asyncio.Lock
+_last_chat_call:  dict = {}   # chat_id_str -> float timestamp of last API call
 
 
 async def _acquire_chat_slot(chat_id: int) -> None:
     """
-    Non-blocking sliding-window rate gate.
-    Prevents exceeding _CHAT_MAX_CALLS in any 60-second window.
-    Crucial: Lock is ONLY held for microseconds to check/prune timestamps.
-    Any required wait happens OUTSIDE the lock so other matches in the same
-    chat are never blocked from checking and scheduling in parallel.
+    Non-blocking sliding-window rate gate with Smooth Leaky-Bucket Pacer.
+    Caps calls at _CHAT_MAX_CALLS per 60s AND enforces at least _MIN_CHAT_INTERVAL (2.85s)
+    between consecutive edits to the same group chat.
+    Lock is held for microseconds to compute wait times and reserve slots.
+    Wait sleep happens OUTSIDE the lock so other tasks are not blocked.
     """
     key = str(chat_id)
     if key not in _chat_locks:
@@ -36,14 +40,24 @@ async def _acquire_chat_slot(chat_id: int) -> None:
             times = _chat_call_times.setdefault(key, [])
             _chat_call_times[key] = times = [t for t in times if now - t < _CHAT_WINDOW]
 
-            if len(times) < _CHAT_MAX_CALLS:
-                _chat_call_times[key].append(now)
-                return
-            else:
-                # Oldest call in window needs to expire before we can claim a slot
-                wait = _CHAT_WINDOW - (now - times[0]) + 0.05
+            # Pacer check: minimum interval since last call in this chat
+            last_call = _last_chat_call.get(key, 0.0)
+            pacer_wait = max(0.0, (last_call + _MIN_CHAT_INTERVAL) - now)
 
-        # Sleep OUTSIDE the lock so other tasks in this chat aren't blocked!
+            # Window check: 60-second rolling window capacity
+            if len(times) >= _CHAT_MAX_CALLS:
+                window_wait = _CHAT_WINDOW - (now - times[0]) + 0.05
+            else:
+                window_wait = 0.0
+
+            wait = max(pacer_wait, window_wait)
+
+            if wait <= 0.0:
+                _chat_call_times[key].append(now)
+                _last_chat_call[key] = now
+                return
+
+        # Sleep outside the lock so other tasks/chats are never blocked
         if wait > 0:
             await asyncio.sleep(wait)
 
@@ -69,6 +83,7 @@ async def cleanup_chat_rate_state() -> None:
         for k in stale:
             _chat_call_times.pop(k, None)
             _chat_locks.pop(k, None)
+            _last_chat_call.pop(k, None)
         if stale:
             logger.debug(f"Rate-gate cleanup: removed {len(stale)} inactive chat entries")
 
@@ -95,6 +110,18 @@ class MessageDebouncer:
         self.last_state: dict = {}
         self._pending:   dict = {}
 
+    def record_state(
+        self, chat_id: int, message_id: int, caption: str, reply_markup, media=None
+    ) -> None:
+        """Record state set outside debouncer (e.g. synchronous edits) to keep cache fresh."""
+        key = f"{chat_id}_{message_id}"
+        markup_dict = reply_markup.to_dict() if reply_markup else None
+        self.last_state[key] = {
+            "text": caption,
+            "media": str(media) if media else None,
+            "markup": markup_dict
+        }
+
     def cancel_updates(self, chat_id: int, message_id: int) -> None:
         """Cancel pending updates for this message (match ended)."""
         key = f"{chat_id}_{message_id}"
@@ -114,7 +141,7 @@ class MessageDebouncer:
 
         # Dedup: skip if UI would look identical
         markup_dict  = reply_markup.to_dict() if reply_markup else None
-        target_state = {"text": caption, "media": media, "markup": markup_dict}
+        target_state = {"text": caption, "media": str(media) if media else None, "markup": markup_dict}
         if self.last_state.get(key) == target_state:
             logger.debug(f"Debouncer: ignored duplicate update for {key}")
             return
@@ -136,9 +163,6 @@ class MessageDebouncer:
         concurrent      = _count_active_in_chat(self.tasks, match.chat_id)
         effective_delay = self.delay + max(0, concurrent - 1) * 0.05
 
-
-
-
         self.tasks[key] = asyncio.create_task(
             self._execute_update(key, match, bot, parse_mode, effective_delay)
         )
@@ -153,6 +177,10 @@ class MessageDebouncer:
             while key in self._pending and _iters < _max_iters:
                 _iters += 1
                 caption, reply_markup, send_media, target_state = self._pending.pop(key)
+                # In-flight ghost check: if state is already rendered on Telegram, skip API call completely
+                if self.last_state.get(key) == target_state:
+                    logger.debug(f"Debouncer: dropped in-flight ghost duplicate for {key}")
+                    continue
                 active_media = target_state.get("media")
                 success = await self._run_api_call(
                     bot, match.chat_id, match.draft_message_id,
