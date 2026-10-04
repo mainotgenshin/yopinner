@@ -56,7 +56,7 @@ def _get_challenge_target(update: Update, owner_id: int):
 async def _get_target_user_safe(update: Update, context: ContextTypes.DEFAULT_TYPE, owner_id: int, chat_id: int):
     target_user, err = _get_challenge_target(update, owner_id)
     if not target_user and context and getattr(context, 'user_data', None) and context.user_data.get('challenge_target_id'):
-        tid = context.user_data.pop('challenge_target_id')
+        tid = context.user_data.pop('challenge_target_id', 0)
         if tid > 0:
             try:
                 member = await context.bot.get_chat_member(chat_id=chat_id, user_id=tid)
@@ -549,11 +549,14 @@ async def send_wwe_gender_selector(update: Update, context: ContextTypes.DEFAULT
     """
     target_id = 0
     if context and getattr(context, 'user_data', None) and context.user_data.get('challenge_target_id'):
-        target_id = context.user_data.get('challenge_target_id')
-    elif not update.callback_query and update.effective_message and update.effective_message.reply_to_message:
-        replied_user = update.effective_message.reply_to_message.from_user
-        if replied_user and replied_user.id != owner_id:
-            target_id = replied_user.id
+        target_id = context.user_data.pop('challenge_target_id', 0)
+    elif not update.callback_query:
+        target_u, err = _get_challenge_target(update, owner_id)
+        if err:
+            await _safe_send_error(update, context, update.effective_chat.id, err)
+            return
+        if target_u:
+            target_id = target_u.id
 
     keyboard = [
         [
@@ -615,6 +618,8 @@ async def handle_wwe_pick_callback(update: Update, context: ContextTypes.DEFAULT
             pass
 
         # Start WWE challenge
+        if context and getattr(context, 'user_data', None):
+            context.user_data.pop('challenge_target_id', None)
         await challenge_wwe_start(update, context, owner_id, mode, target_id)
     finally:
         if msg_id:
@@ -813,6 +818,10 @@ async def challenge_unified(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not await _check_match_limit(owner_id, update.effective_message):
         return
 
+    # Clear any leftover challenge target state from previous sessions
+    if context and getattr(context, 'user_data', None):
+        context.user_data.pop('challenge_target_id', None)
+
     if not context.args:
         target_id = 0
         if update.effective_message and update.effective_message.reply_to_message:
@@ -994,7 +1003,11 @@ async def handle_mode_pick_callback(update: Update, context: ContextTypes.DEFAUL
         owner_id = None
 
     if target_id > 0:
-        context.user_data['challenge_target_id'] = target_id
+        if context and getattr(context, 'user_data', None):
+            context.user_data['challenge_target_id'] = target_id
+    else:
+        if context and getattr(context, 'user_data', None):
+            context.user_data.pop('challenge_target_id', None)
 
     # Owner check — only the challenger can pick a mode
     if owner_id and query.from_user.id != owner_id:
