@@ -201,24 +201,33 @@ def check_milestone(prev_runs: int, new_runs: int, balls_faced: int) -> Optional
     return None
 
 
+WINNER_REWARDS = {
+    1: 3,
+    2: 5,
+    3: 7,
+    4: 9,
+    5: 13,
+}
+
 def calculate_rewards(overs: int, winner_id: int, loser_id: int, is_draw: bool, is_forfeit: bool) -> Dict[int, int]:
     """
     Calculate coin rewards based on allocated overs:
-    1 Over: Winner +10, Loser +5, Tie +5 each
-    2 Overs: Winner +20, Loser +10, Tie +10 each
-    Up to 5 Overs: Winner +50, Loser +25, Tie +25 each
+    1 Over: Winner +3, Loser 0
+    2 Overs: Winner +5, Loser 0
+    3 Overs: Winner +7, Loser 0
+    4 Overs: Winner +9, Loser 0
+    5 Overs: Winner +13, Loser 0
+    Tie: +1 each.
     If forfeit / abandon / /end: 0 coins to both.
     """
     if is_forfeit:
         return {winner_id: 0, loser_id: 0}
 
-    base_win = overs * 10
-    base_lose = overs * 5
-
     if is_draw:
-        return {winner_id: base_lose, loser_id: base_lose}
+        return {winner_id: 1, loser_id: 1}
 
+    win_coins = WINNER_REWARDS.get(overs, max(3, overs * 2))
     return {
-        winner_id: base_win,
-        loser_id: base_lose
+        winner_id: win_coins,
+        loser_id: 0
     }
