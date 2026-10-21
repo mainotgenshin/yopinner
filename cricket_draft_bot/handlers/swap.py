@@ -256,6 +256,7 @@ async def handle_swap_pick2(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"✅ *Swap Complete!*\n\n"
         f"• *{esc(p1_obj.name)}* is now in the *{p2_slot}* slot\n"
         f"• *{esc(p2_obj.name)}* is now in the *{p1_slot}* slot\n\n"
+        f"🔒 *Your swap is hidden from your opponent until simulation starts!*\n"
         f"Head back to the group to click *🚀 READY* when you're set!",
         parse_mode="Markdown",
         reply_markup=go_back_kb
