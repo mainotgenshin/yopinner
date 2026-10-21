@@ -233,6 +233,17 @@ async def _check_match_limit(user_id: int, mode_of_reply) -> bool:
             pass
         return False
 
+    from handlers.mini_cric import is_user_in_mini_cric
+    if is_user_in_mini_cric(user_id):
+        try:
+            if hasattr(mode_of_reply, 'answer'):
+                await mode_of_reply.answer("⛔ You are currently playing a Mini Cricket match! Finish it first.", show_alert=True)
+            elif hasattr(mode_of_reply, 'reply_text'):
+                await mode_of_reply.reply_text("⛔ You are currently playing a Mini Cricket match! Finish it first.")
+        except Exception:
+            pass
+        return False
+
     matches = await get_user_active_matches_info(user_id)
 
     if len(matches) < 1:
@@ -1101,6 +1112,14 @@ async def handle_join(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
     if len(owner_matches) >= 1:
         await query.answer("⛔ The challenger already has an active match.", show_alert=True)
+        return
+
+    from handlers.mini_cric import is_user_in_mini_cric
+    if is_user_in_mini_cric(query.from_user.id):
+        await query.answer("⛔ You are currently playing a Mini Cricket match!", show_alert=True)
+        return
+    if is_user_in_mini_cric(owner_id):
+        await query.answer("⛔ The challenger is currently playing a Mini Cricket match!", show_alert=True)
         return
 
 
