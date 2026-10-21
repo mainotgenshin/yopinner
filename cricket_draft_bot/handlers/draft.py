@@ -329,7 +329,8 @@ def format_draft_board(match: Match, include_turn: bool = True) -> str:
     def format_team(team):
         name_clean = _html.escape(team.owner_name or "Player")
         lines = [f"🔵 <b>{name_clean}</b>" if team == match.team_a else f"🔴 <b>{name_clean}</b>"]
-        for slot, player in team.slots.items():
+        display_slots = getattr(team, 'drafted_slots', None) or team.slots
+        for slot, player in display_slots.items():
             val = _html.escape(player.name) if player else ". . ."
             lines.append(f"• {slot}: {val}")
         return "\n".join(lines)
@@ -725,6 +726,9 @@ async def handle_assign(update: Update, context: ContextTypes.DEFAULT_TYPE, matc
         import time
         match.state = "READY_CHECK"
         match.draft_completed_at = time.time()  # Timestamp for 5-min auto-ready
+        # Snapshot drafted positions for pure stealth blind swapping
+        match.team_a.drafted_slots = dict(match.team_a.slots)
+        match.team_b.drafted_slots = dict(match.team_b.slots)
         await save_match_state(match)
 
         # Start 5-min auto-simulate timer (live — not just on startup recovery)
