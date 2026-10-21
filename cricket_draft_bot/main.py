@@ -67,7 +67,7 @@ _RECOGNIZED_COMMANDS = {
     "update_imagepkl", "updateimagepkl", "addplayer", "add_player", "remove_player",
     "broadcast", "banner", "add_card", "update_card", "gift", "gift_pack", "add_packall",
     "bban", "unbban", "botstatus", "add_achievement", "rem_achievement", "map_api",
-    "mini_cric", "minicric", "mini_cric_cancel", "minicric_cancel", "end",
+    "mini_cric", "minicric", "mini_cric_cancel", "minicric_cancel", "end", "refresh", "mc_refresh", "mini_cric_refresh", "minicric_refresh",
     "challengeintl", "removeplayer"
 }
 
@@ -862,11 +862,19 @@ if __name__ == '__main__':
     application.add_handler(CommandHandler('help', help_command))
 
     # Mini-Cricket Commands (Registered with start/help)
-    from handlers.mini_cric import handle_mini_cric, handle_mini_cric_cancel, handle_mini_cric_end
+    from handlers.mini_cric import (
+        handle_mini_cric,
+        handle_mini_cric_cancel,
+        handle_mini_cric_end,
+        handle_mini_cric_refresh,
+    )
     application.add_handler(CommandHandler('mini_cric',        handle_mini_cric))
     application.add_handler(CommandHandler('minicric',         handle_mini_cric))
     application.add_handler(CommandHandler('mini_cric_cancel', handle_mini_cric_cancel))
     application.add_handler(CommandHandler('minicric_cancel',  handle_mini_cric_cancel))
+    application.add_handler(CommandHandler('mini_cric_refresh', handle_mini_cric_refresh))
+    application.add_handler(CommandHandler('minicric_refresh',  handle_mini_cric_refresh))
+    application.add_handler(CommandHandler('refresh',          handle_mini_cric_refresh))
     application.add_handler(CommandHandler('end',              handle_mini_cric_end))
 
 
