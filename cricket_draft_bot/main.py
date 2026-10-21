@@ -66,7 +66,9 @@ _RECOGNIZED_COMMANDS = {
     "remove_playerwwe", "removeplayerwwe", "update_imagewwe", "add_playerpkl", "rem_playerpkl",
     "update_imagepkl", "updateimagepkl", "addplayer", "add_player", "remove_player",
     "broadcast", "banner", "add_card", "update_card", "gift", "gift_pack", "add_packall",
-    "bban", "unbban", "botstatus", "add_achievement", "rem_achievement", "map_api"
+    "bban", "unbban", "botstatus", "add_achievement", "rem_achievement", "map_api",
+    "mini_cric", "minicric", "mini_cric_cancel", "minicric_cancel", "end",
+    "challengeintl", "removeplayer"
 }
 
 async def global_anti_stale_filter(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -89,7 +91,21 @@ async def global_anti_stale_filter(update: Update, context: ContextTypes.DEFAULT
 
         # 2. Silently ignore foreign bot commands (e.g. /claim, /extend, /qrand) without log spam
         if cmd_name not in _RECOGNIZED_COMMANDS:
-            raise ApplicationHandlerStop
+            is_registered = False
+            try:
+                for handlers_list in context.application.handlers.values():
+                    for h in handlers_list:
+                        if hasattr(h, "commands") and cmd_name in h.commands:
+                            is_registered = True
+                            _RECOGNIZED_COMMANDS.add(cmd_name)
+                            break
+                    if is_registered:
+                        break
+            except Exception:
+                pass
+
+            if not is_registered:
+                raise ApplicationHandlerStop
 
         # 3. Drop stale commands replayed upon bot restart (> 30s old)
         try:
@@ -845,6 +861,14 @@ if __name__ == '__main__':
     application.add_handler(CommandHandler('start', start))
     application.add_handler(CommandHandler('help', help_command))
 
+    # Mini-Cricket Commands (Registered with start/help)
+    from handlers.mini_cric import handle_mini_cric, handle_mini_cric_cancel, handle_mini_cric_end
+    application.add_handler(CommandHandler('mini_cric',        handle_mini_cric))
+    application.add_handler(CommandHandler('minicric',         handle_mini_cric))
+    application.add_handler(CommandHandler('mini_cric_cancel', handle_mini_cric_cancel))
+    application.add_handler(CommandHandler('minicric_cancel',  handle_mini_cric_cancel))
+    application.add_handler(CommandHandler('end',              handle_mini_cric_end))
+
 
     # Admin
     application.add_handler(CommandHandler('add_player', wrap_admin_logging(add_player, "Add/Update Player (Cricket)")))
@@ -1067,17 +1091,10 @@ if __name__ == '__main__':
 
     # Mini-Cricket Commands & Callbacks
     from handlers.mini_cric import (
-        handle_mini_cric, handle_mini_cric_cancel, handle_mini_cric_end,
         cb_mc_accept, cb_mc_decline, cb_mc_toss, cb_mc_decision,
         cb_mc_bowl, cb_mc_shot
     )
     from handlers.admin import cb_admin_card
-
-    application.add_handler(CommandHandler('mini_cric',        handle_mini_cric))
-    application.add_handler(CommandHandler('minicric',         handle_mini_cric))
-    application.add_handler(CommandHandler('mini_cric_cancel', handle_mini_cric_cancel))
-    application.add_handler(CommandHandler('minicric_cancel',  handle_mini_cric_cancel))
-    application.add_handler(CommandHandler('end',              handle_mini_cric_end))
 
     application.add_handler(CallbackQueryHandler(cb_mc_accept,   pattern=r"^mc_acc\|"))
     application.add_handler(CallbackQueryHandler(cb_mc_decline,  pattern=r"^mc_dec\|"))
