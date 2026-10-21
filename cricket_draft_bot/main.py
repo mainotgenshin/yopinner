@@ -20,7 +20,7 @@ apscheduler.util.astimezone = fixed_astimezone
 from telegram import Update
 from telegram.ext import (
     ApplicationBuilder, ContextTypes, CommandHandler, CallbackQueryHandler,
-    AIORateLimiter, TypeHandler, ApplicationHandlerStop
+    AIORateLimiter, TypeHandler, ApplicationHandlerStop, filters
 )
 from config import BOT_TOKEN
 from database import init_db
@@ -872,10 +872,10 @@ if __name__ == '__main__':
     application.add_handler(CommandHandler('minicric',         handle_mini_cric))
     application.add_handler(CommandHandler('mini_cric_cancel', handle_mini_cric_cancel))
     application.add_handler(CommandHandler('minicric_cancel',  handle_mini_cric_cancel))
-    application.add_handler(CommandHandler('mini_cric_refresh', handle_mini_cric_refresh))
-    application.add_handler(CommandHandler('minicric_refresh',  handle_mini_cric_refresh))
-    application.add_handler(CommandHandler('refresh',          handle_mini_cric_refresh))
-    application.add_handler(CommandHandler('end',              handle_mini_cric_end))
+    application.add_handler(CommandHandler('mini_cric_refresh', handle_mini_cric_refresh, filters=filters.ChatType.PRIVATE))
+    application.add_handler(CommandHandler('minicric_refresh',  handle_mini_cric_refresh, filters=filters.ChatType.PRIVATE))
+    application.add_handler(CommandHandler('refresh',          handle_mini_cric_refresh, filters=filters.ChatType.PRIVATE))
+    application.add_handler(CommandHandler('end',              handle_mini_cric_end, filters=filters.ChatType.PRIVATE))
 
 
     # Admin
