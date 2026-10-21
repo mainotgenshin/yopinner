@@ -44,6 +44,7 @@ class Team:
     owner_id: int
     owner_name: str
     slots: Dict[str, Optional[Player]] = field(default_factory=dict) # "Captain": PlayerObject
+    drafted_slots: Dict[str, Optional[Player]] = field(default_factory=dict)
     redraws_remaining: int = 2
     replacements_remaining: int = 1
     is_ready: bool = False
