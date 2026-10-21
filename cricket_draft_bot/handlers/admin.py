@@ -1482,15 +1482,17 @@ async def set_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def check_role_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """/check [role/stat] [mode]  — paginated, 30/page"""
+    """/check [role/stat] [mode] — paginated, 30/page"""
     if not await check_admin(update): return
 
     args = context.args
     if not args or len(args) < 2:
         await update.message.reply_text(
-            "Usage: `/check [role] [mode]`\n"
-            "Cricket: `/check middle odi` · `/check wk ipl`\n"
-            "WWE: `/check power wwe` · `/check sub wwe`",
+            "Usage: `/check [role/stat] [mode]`\n\n"
+            "• FIFA: `/check lb fifa` • `/check st fifa` • `/check overall fifa`\n"
+            "• PKL: `/check raider pkl` • `/check ldef pkl` • `/check cap pkl`\n"
+            "• Cricket: `/check middle odi` • `/check wk ipl` • `/check pacer test`\n"
+            "• WWE: `/check power wwe` • `/check sub wwewomen`",
             parse_mode="Markdown"
         )
         return
@@ -1507,8 +1509,85 @@ async def _render_check(update, cb_query, role_query: str, mode: str, page: int)
     from telegram import InlineKeyboardButton, InlineKeyboardMarkup
     db = get_db()
 
-    # ── WWE ──────────────────────────────────────────────────────────────────
-    if mode == "wwe":
+    # ── FIFA ─────────────────────────────────────────────────────────────
+    if mode in ("fifa", "football"):
+        fifa_alias = {
+            "st": "ST", "cf": "CF", "st/cf": "ST/CF", "gk": "GK",
+            "lw": "LW", "rw": "RW", "cam": "CAM", "cm": "CM",
+            "cdm": "CDM", "cb": "CB", "lb": "LB", "rb": "RB",
+            "overall": "overall", "ovr": "overall",
+        }
+        stat_key = fifa_alias.get(role_query)
+        if not stat_key:
+            err = (
+                f"❌ Unknown FIFA position/stat: `{role_query}`\n"
+                "Available: `overall`, `st`, `cf`, `st/cf`, `gk`, `lw`, `rw`, `cam`, `cm`, `cdm`, `cb`, `lb`, `rb`"
+            )
+            if cb_query: await cb_query.edit_message_text(err, parse_mode="Markdown")
+            else:        await update.message.reply_text(err, parse_mode="Markdown")
+            return
+
+        if stat_key == "overall":
+            cursor = db.players.find(
+                {"sport": "football", "overall": {"$gt": 0}},
+                {"name": 1, "overall": 1, "_id": 0}
+            )
+            docs = [d async for d in cursor]
+            results = [(d["name"], d.get("overall", 0)) for d in docs]
+            display_label = "Overall (FIFA)"
+        elif stat_key == "ST/CF":
+            cursor = db.players.find(
+                {"sport": "football"},
+                {"name": 1, "stats.fifa.ST": 1, "stats.fifa.CF": 1, "_id": 0}
+            )
+            docs = [d async for d in cursor]
+            results = [
+                (d["name"], max(d.get("stats", {}).get("fifa", {}).get("ST", 0), d.get("stats", {}).get("fifa", {}).get("CF", 0)))
+                for d in docs
+            ]
+            results = [r for r in results if r[1] > 0]
+            display_label = "ST/CF (FIFA)"
+        else:
+            cursor = db.players.find(
+                {"sport": "football", f"stats.fifa.{stat_key}": {"$gt": 0}},
+                {"name": 1, f"stats.fifa.{stat_key}": 1, "_id": 0}
+            )
+            docs = [d async for d in cursor]
+            results = [(d["name"], d.get("stats", {}).get("fifa", {}).get(stat_key, 0)) for d in docs]
+            display_label = f"{stat_key} (FIFA)"
+        results.sort(key=lambda x: x[1], reverse=True)
+
+    # ── PKL / Kabaddi ────────────────────────────────────────────────────
+    elif mode in ("pkl", "kabaddi"):
+        pkl_alias = {
+            "cap": "captain", "captain": "captain",
+            "raider": "raider", "raid": "raider",
+            "ldef": "left_defender", "left_defender": "left_defender", "leftdefender": "left_defender",
+            "rdef": "right_defender", "right_defender": "right_defender", "rightdefender": "right_defender",
+            "ar": "all_rounder", "all_rounder": "all_rounder", "allrounder": "all_rounder",
+        }
+        stat_key = pkl_alias.get(role_query)
+        if not stat_key:
+            err = (
+                f"❌ Unknown PKL role/stat: `{role_query}`\n"
+                "Available: `captain` (cap), `raider`, `left_defender` (ldef), `right_defender` (rdef), `all_rounder` (ar)"
+            )
+            if cb_query: await cb_query.edit_message_text(err, parse_mode="Markdown")
+            else:        await update.message.reply_text(err, parse_mode="Markdown")
+            return
+
+        cursor = db.players.find(
+            {"sport": {"$in": ["pkl", "kabaddi"]}, f"stats.pkl.{stat_key}": {"$gt": 0}},
+            {"name": 1, f"stats.pkl.{stat_key}": 1, "_id": 0}
+        )
+        docs = [d async for d in cursor]
+        results = [(d["name"], d.get("stats", {}).get("pkl", {}).get(stat_key, 0)) for d in docs]
+        results.sort(key=lambda x: x[1], reverse=True)
+        pkl_clean = stat_key.replace("_", " ").title()
+        display_label = f"{pkl_clean} (PKL)"
+
+    # ── WWE ──────────────────────────────────────────────────────────────
+    elif mode in ("wwe", "wwemen", "wwewomen", "wwe_women"):
         wwe_alias = {
             "power": "power", "speed": "speed",
             "technique": "technique", "tech": "technique",
@@ -1529,27 +1608,24 @@ async def _render_check(update, cb_query, role_query: str, mode: str, page: int)
             else:        await update.message.reply_text(err, parse_mode="Markdown")
             return
 
-        # Efficient projection — only name + the needed stat
-        cursor = db.players.find(
-            {"sport": "wwe"},
-            {"name": 1, f"stats.wwe.{stat_key}": 1, "_id": 0}
-        )
-        docs    = [d async for d in cursor]
+        if mode in ("wwewomen", "wwe_women"):
+            q = {"sport": "wwe", "gender": "female", f"stats.wwe.{stat_key}": {"$gt": 0}}
+            display_label = f"{stat_key.capitalize()} (WWE Women)"
+        elif mode == "wwemen":
+            q = {"sport": "wwe", "gender": {"$ne": "female"}, f"stats.wwe.{stat_key}": {"$gt": 0}}
+            display_label = f"{stat_key.capitalize()} (WWE Men)"
+        else:
+            q = {"sport": "wwe", f"stats.wwe.{stat_key}": {"$gt": 0}}
+            display_label = f"{stat_key.capitalize()} (WWE)"
+
+        cursor = db.players.find(q, {"name": 1, f"stats.wwe.{stat_key}": 1, "_id": 0})
+        docs = [d async for d in cursor]
         results = [(d["name"], d.get("stats", {}).get("wwe", {}).get(stat_key, 0)) for d in docs]
         results.sort(key=lambda x: x[1], reverse=True)
-        display_label = f"{stat_key.capitalize()} (WWE)"
 
-    # ── Cricket/IPL ───────────────────────────────────────────────────────────
-    else:
-        if mode in ('odi', 'intl'): db_mode = 'odi'
-        elif mode == 'ipl': db_mode = 'ipl'
-        elif mode == 'test': db_mode = 'test'
-        else:
-            err = "Mode must be `ipl`, `odi`, `test`, or `wwe`."
-            if cb_query: await cb_query.edit_message_text(err, parse_mode="Markdown")
-            else:        await update.message.reply_text(err, parse_mode="Markdown")
-            return
-
+    # ── Cricket / IPL / ODI / Test ───────────────────────────────────────
+    elif mode in ("odi", "intl", "ipl", "test"):
+        db_mode = "odi" if mode in ("odi", "intl") else mode
         from config import ROLE_STATS_MAP
         alias_map = {
             "hitting": "Top", "batting": "Top", "pace": "Pacer",
@@ -1571,18 +1647,22 @@ async def _render_check(update, cb_query, role_query: str, mode: str, page: int)
             return
 
         stat_key = ROLE_STATS_MAP[canonical_role]
-
-        # Efficient DB query — filter 0 at DB level, project only what's needed
         cursor = db.players.find(
             {f"stats.{db_mode}.{stat_key}": {"$gt": 0}},
             {"name": 1, f"stats.{db_mode}.{stat_key}": 1, "_id": 0}
         )
-        docs    = [d async for d in cursor]
+        docs = [d async for d in cursor]
         results = [(d["name"], d.get("stats", {}).get(db_mode, {}).get(stat_key, 0)) for d in docs]
         results.sort(key=lambda x: x[1], reverse=True)
         display_label = f"{canonical_role} ({mode.upper()})"
 
-    # ── Pagination ────────────────────────────────────────────────────────────
+    else:
+        err = "Mode must be `ipl`, `odi`, `test`, `fifa`, `pkl`, or `wwe`."
+        if cb_query: await cb_query.edit_message_text(err, parse_mode="Markdown")
+        else:        await update.message.reply_text(err, parse_mode="Markdown")
+        return
+
+    # ── Pagination ────────────────────────────────────────────────────────
     total       = len(results)
     total_pages = max(1, (total + PAGE_SIZE - 1) // PAGE_SIZE)
     page        = max(0, min(page, total_pages - 1))
@@ -1617,8 +1697,10 @@ async def handle_check_callback(update: Update, context: ContextTypes.DEFAULT_TY
     query = update.callback_query
     await query.answer()
     try:
-        # Split into exactly 4 parts: chk, role, mode, page
-        _, role_query, mode, page_str = query.data.split("_", 3)
+        parts = query.data.split("_")
+        role_query = parts[1]
+        page_str = parts[-1]
+        mode = "_".join(parts[2:-1])
         await _render_check(update, query, role_query, mode, int(page_str))
     except Exception as e:
         logger.warning(f"check callback parse error: {e}")
