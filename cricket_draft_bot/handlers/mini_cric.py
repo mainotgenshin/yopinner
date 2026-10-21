@@ -338,10 +338,12 @@ async def handle_mini_cric_refresh(update: Update, context: ContextTypes.DEFAULT
     """
     /refresh command in DM:
     Immediately restores turn buttons and current scoreboard if buttons ever disappear.
+    Only operates in private bot DM.
     """
     user = update.effective_user
+    chat = update.effective_chat
     msg = update.effective_message
-    if not user or not msg:
+    if not user or not chat or not msg or str(chat.type).lower() != "private":
         return
     await _try_refresh_dm_turn(context, user.id, msg)
 
