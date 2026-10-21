@@ -93,7 +93,7 @@ async def handle_mini_cric(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # Must be in group or supergroup
         chat_type_str = str(chat.type).lower()
         if "private" in chat_type_str:
-            await msg.reply_text("🏏 Mini Cricket challenges must be sent in a group chat!\nAdd me to a group to play.")
+            await msg.reply_text("Mini Cricket challenges must be sent in a group chat!\nAdd me to a group to play.")
             return
 
         # Check cancel subcommand first (e.g. /mini_cric cancel)
@@ -105,7 +105,7 @@ async def handle_mini_cric(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # Cooldown check (3s)
         now = time.time()
         if now - _USER_COOLDOWNS.get(user.id, 0.0) < 3.0:
-            await msg.reply_text("⏳ Please wait a moment before sending another command.")
+            await msg.reply_text("Please wait a moment before sending another command.")
             return
         _USER_COOLDOWNS[user.id] = now
 
@@ -117,19 +117,19 @@ async def handle_mini_cric(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "status": "pending"
         })
         if existing_pending:
-            await msg.reply_text("⚠️ You already have a pending challenge! Wait for it to be accepted/declined, or type `/mini_cric cancel` to abort it.", parse_mode="Markdown")
+            await msg.reply_text("You already have a pending challenge! Wait for it to be accepted/declined, or type /mini_cric cancel to abort it.")
             return
 
         # Check user active mini cric
         if is_user_in_mini_cric(user.id):
-            await msg.reply_text("❌ You are already playing a Mini Cricket match! Finish it first.")
+            await msg.reply_text("You are already playing a Mini Cricket match! Finish it first.")
             return
 
         # Cross-mode check: active draft matches
         from database import get_user_active_matches_info
         user_drafts = await get_user_active_matches_info(user.id)
         if user_drafts:
-            await msg.reply_text("❌ You are currently in an active draft match. Finish it before playing Mini Cricket!")
+            await msg.reply_text("You are currently in an active draft match. Finish it before playing Mini Cricket!")
             return
 
         # Parse overs argument
@@ -156,36 +156,36 @@ async def handle_mini_cric(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if not target_user:
             logger.info("=== [MINI_CRIC] No opponent found; replying with usage instructions ===")
             usage_html = (
-                f"🏏 <b>Tactical Mini-Cricket (1-Wicket Match)</b>\n\n"
+                f"<b>Tactical Mini-Cricket (1-Wicket Match)</b>\n\n"
                 f"Usage: <code>/mini_cric [1-5]</code> (in reply to opponent's message)\n"
                 f"Example: <code>/mini_cric 2</code> (replying to your opponent)\n"
-                f"• Overs: <b>{overs}</b> | Rewards: <b>+{overs*10}🪙</b> / <b>+{overs*5}🪙</b>"
+                f"• Overs: <b>{overs}</b> | Rewards: <b>+{overs*10}</b> / <b>+{overs*5} Card Coins</b>"
             )
             try:
                 await msg.reply_text(usage_html, parse_mode="HTML")
             except Exception:
                 await msg.reply_text(
-                    f"🏏 Tactical Mini-Cricket (1-Wicket Match)\n\n"
+                    f"Tactical Mini-Cricket (1-Wicket Match)\n\n"
                     f"Usage: /mini_cric [1-5] (in reply to opponent's message)\n"
                     f"Example: /mini_cric 2 (replying to your opponent)\n"
-                    f"• Overs: {overs} | Rewards: +{overs*10}🪙 / +{overs*5}🪙"
+                    f"• Overs: {overs} | Rewards: +{overs*10} / +{overs*5} Card Coins"
                 )
             return
 
         if target_user.is_bot or target_user.id == user.id:
-            await msg.reply_text("❌ You cannot challenge a bot or yourself.")
+            await msg.reply_text("You cannot challenge a bot or yourself.")
             return
 
         # Target active check
         if is_user_in_mini_cric(target_user.id):
             t_name = esc_html(target_user.first_name)
-            await msg.reply_text(f"❌ <b>{t_name}</b> is already in a Mini Cricket match.", parse_mode="HTML")
+            await msg.reply_text(f"<b>{t_name}</b> is already in a Mini Cricket match.", parse_mode="HTML")
             return
 
         target_drafts = await get_user_active_matches_info(target_user.id)
         if target_drafts:
             t_name = esc_html(target_user.first_name)
-            await msg.reply_text(f"❌ <b>{t_name}</b> is currently playing a draft match.", parse_mode="HTML")
+            await msg.reply_text(f"<b>{t_name}</b> is currently playing a draft match.", parse_mode="HTML")
             return
 
         # Create challenge
@@ -219,18 +219,18 @@ async def handle_mini_cric(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await _save_match(match_doc)
 
         keyboard = InlineKeyboardMarkup([[
-            InlineKeyboardButton("✅ Accept Match", callback_data=f"mc_acc|{match_id}|{target_user.id}"),
-            InlineKeyboardButton("❌ Decline", callback_data=f"mc_dec|{match_id}|{target_user.id}")
+            InlineKeyboardButton("Accept Match", callback_data=f"mc_acc|{match_id}|{target_user.id}"),
+            InlineKeyboardButton("Decline", callback_data=f"mc_dec|{match_id}|{target_user.id}")
         ]])
 
         c_name = esc_html(user.first_name)
         t_name = esc_html(target_user.first_name)
 
         challenge_text = (
-            f"🏏 <b>Mini-Cricket Challenge!</b> (1-Wicket Match)\n\n"
+            f"<b>Mini-Cricket Challenge!</b> (1-Wicket Match)\n\n"
             f"<b>{c_name}</b> challenges <b>{t_name}</b>!\n"
             f"• Overs: <b>{overs}</b> ({overs*6} balls max)\n"
-            f"• Winner: <b>+{overs*10}🪙</b> | Loser: <b>+{overs*5}🪙</b>\n\n"
+            f"• Winner: <b>+{overs*10} Card Coins</b> | Loser: <b>+{overs*5} Card Coins</b>\n\n"
             f"<b>{t_name}</b>, do you accept?"
         )
 
@@ -243,10 +243,10 @@ async def handle_mini_cric(update: Update, context: ContextTypes.DEFAULT_TYPE):
         except Exception as _e1:
             logger.warning(f"HTML challenge send failed: {_e1}, sending plain text...")
             sent_msg = await msg.reply_text(
-                f"🏏 Mini-Cricket Challenge! (1-Wicket Match)\n\n"
+                f"Mini-Cricket Challenge! (1-Wicket Match)\n\n"
                 f"{user.first_name} challenges {target_user.first_name}!\n"
                 f"• Overs: {overs} ({overs*6} balls max)\n"
-                f"• Winner: +{overs*10}🪙 | Loser: +{overs*5}🪙\n\n"
+                f"• Winner: +{overs*10} Card Coins | Loser: +{overs*5} Card Coins\n\n"
                 f"{target_user.first_name}, do you accept?",
                 reply_markup=keyboard
             )
@@ -258,7 +258,7 @@ async def handle_mini_cric(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except Exception as err:
         logger.error(f"=== [MINI_CRIC ERROR] Unhandled exception in handle_mini_cric: {err}", exc_info=True)
         try:
-            await update.effective_message.reply_text(f"⚠️ Mini-Cricket Error: {err}")
+            await update.effective_message.reply_text(f"Mini-Cricket Error: {err}")
         except Exception:
             pass
 
@@ -277,7 +277,7 @@ async def handle_mini_cric_cancel(update: Update, context: ContextTypes.DEFAULT_
         "status": "pending"
     })
     if not match:
-        await update.effective_message.reply_text("❌ You don't have any pending Mini Cricket challenge to cancel.")
+        await update.effective_message.reply_text("You don't have any pending Mini Cricket challenge to cancel.")
         return
 
     match["status"] = "cancelled"
@@ -290,7 +290,7 @@ async def handle_mini_cric_cancel(update: Update, context: ContextTypes.DEFAULT_
             await context.bot.edit_message_text(
                 chat_id=group_chat_id,
                 message_id=challenge_msg_id,
-                text=f"❌ <b>Challenge cancelled by {esc_html(user.first_name)}</b>.",
+                text=f"<b>Challenge cancelled by {esc_html(user.first_name)}</b>.",
                 parse_mode="HTML"
             )
         except Exception:
@@ -298,15 +298,76 @@ async def handle_mini_cric_cancel(update: Update, context: ContextTypes.DEFAULT_
                 await context.bot.edit_message_text(
                     chat_id=group_chat_id,
                     message_id=challenge_msg_id,
-                    text=f"❌ Challenge cancelled by {user.first_name}."
+                    text=f"Challenge cancelled by {user.first_name}."
                 )
             except Exception:
                 pass
 
     try:
-        await update.effective_message.reply_text("✅ <b>Your Mini Cricket challenge has been cancelled.</b>", parse_mode="HTML")
+        await update.effective_message.reply_text("<b>Your Mini Cricket challenge has been cancelled.</b>", parse_mode="HTML")
     except Exception:
-        await update.effective_message.reply_text("✅ Your Mini Cricket challenge has been cancelled.")
+        await update.effective_message.reply_text("Your Mini Cricket challenge has been cancelled.")
+
+
+# ── Clean HTML & In-Place DM Editing Helpers ─────────────────────────────────
+
+_USER_CLICK_COOLDOWN: dict[int, float] = {}
+
+def _check_click_rate_limit(user_id: int) -> bool:
+    """Returns True if user is allowed to click; False if spamming within 2 seconds."""
+    now = time.time()
+    last = _USER_CLICK_COOLDOWN.get(user_id, 0.0)
+    if now - last < 2.0:
+        return False
+    _USER_CLICK_COOLDOWN[user_id] = now
+    return True
+
+def _strip_html_tags(text: str) -> str:
+    return re.sub(r'<[^>]+>', '', str(text or ''))
+
+async def _send_or_edit_dm(bot, user_id: int, msg_id: Optional[int], text: str, reply_markup=None, parse_mode="HTML") -> int:
+    """Edits active message in-place to prevent chat flood, falling back to sending a new message."""
+    if msg_id:
+        try:
+            await bot.edit_message_text(
+                chat_id=user_id,
+                message_id=msg_id,
+                text=text,
+                reply_markup=reply_markup,
+                parse_mode=parse_mode,
+                disable_web_page_preview=True
+            )
+            return msg_id
+        except Exception:
+            try:
+                # Plain-text fallback for edit in case formatting fails
+                await bot.edit_message_text(
+                    chat_id=user_id,
+                    message_id=msg_id,
+                    text=_strip_html_tags(text),
+                    reply_markup=reply_markup,
+                    parse_mode=None
+                )
+                return msg_id
+            except Exception:
+                pass
+    try:
+        sent = await bot.send_message(
+            chat_id=user_id,
+            text=text,
+            reply_markup=reply_markup,
+            parse_mode=parse_mode,
+            disable_web_page_preview=True
+        )
+        return sent.message_id
+    except Exception:
+        sent = await bot.send_message(
+            chat_id=user_id,
+            text=_strip_html_tags(text),
+            reply_markup=reply_markup,
+            parse_mode=None
+        )
+        return sent.message_id
 
 
 # ── Challenge Accept / Decline Callbacks ───────────────────────────────────────
@@ -317,19 +378,23 @@ async def cb_mc_accept(update: Update, context: ContextTypes.DEFAULT_TYPE):
     _, match_id, target_str = parts
 
     if str(query.from_user.id) != target_str:
-        await query.answer("⛔ This challenge is not for you!", show_alert=True)
+        await query.answer("This challenge is not for you!", show_alert=True)
+        return
+
+    if not _check_click_rate_limit(query.from_user.id):
+        await query.answer("Please wait 2 seconds...", show_alert=True)
         return
 
     lock = _get_lock(match_id)
     if lock.locked():
-        await query.answer("⏳ Processing...", show_alert=False)
+        await query.answer("Please wait 2 seconds...", show_alert=True)
         return
 
     async with lock:
         await query.answer()
         match = await _get_match(match_id)
         if not match or match["status"] != "pending":
-            await query.edit_message_text("❌ Challenge expired or already processed.")
+            await query.edit_message_text("Challenge expired or already processed.")
             return
 
         # Double check active states
@@ -337,7 +402,7 @@ async def cb_mc_accept(update: Update, context: ContextTypes.DEFAULT_TYPE):
         c_drafts = await get_user_active_matches_info(match["challenger_id"])
         o_drafts = await get_user_active_matches_info(match["opponent_id"])
         if c_drafts or o_drafts:
-            await query.edit_message_text("❌ One of the players entered a draft match. Challenge cancelled.")
+            await query.edit_message_text("One of the players entered a draft match. Challenge cancelled.")
             return
 
         # Update state to toss
@@ -358,15 +423,24 @@ async def cb_mc_accept(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await _save_match(match)
 
         bot_username = context.bot.username or "Bot"
-        # Edit group message to announce DM start
-        await query.edit_message_text(
-            f"🏏 *Challenge Accepted!*\n\n"
-            f"*{esc(match['challenger_name'])}* vs *{esc(match['opponent_name'])}*\n"
-            f"• Match is taking place in Bot DMs!\n"
-            f"• [Click here to open DM](https://t.me/{bot_username})",
-            parse_mode="Markdown",
-            disable_web_page_preview=True
-        )
+        # Edit group message to announce DM start and remove challenge buttons
+        try:
+            await query.edit_message_text(
+                f"<b>Challenge Accepted!</b>\n\n"
+                f"<b>{esc_html(match['challenger_name'])}</b> vs <b>{esc_html(match['opponent_name'])}</b>\n"
+                f"• Match is taking place in Bot DMs!\n"
+                f"• <a href=\"https://t.me/{bot_username}\">Click here to open DM</a>",
+                parse_mode="HTML",
+                disable_web_page_preview=True
+            )
+        except Exception:
+            await query.edit_message_text(
+                f"Challenge Accepted!\n\n"
+                f"{match['challenger_name']} vs {match['opponent_name']}\n"
+                f"• Match is taking place in Bot DMs!\n"
+                f"• https://t.me/{bot_username}",
+                disable_web_page_preview=True
+            )
 
         # Send Toss UI in DMs
         await _send_toss_ui(context, match)
@@ -378,7 +452,11 @@ async def cb_mc_decline(update: Update, context: ContextTypes.DEFAULT_TYPE):
     _, match_id, target_str = parts
 
     if str(query.from_user.id) != target_str:
-        await query.answer("⛔ Not your challenge!", show_alert=True)
+        await query.answer("Not your challenge!", show_alert=True)
+        return
+
+    if not _check_click_rate_limit(query.from_user.id):
+        await query.answer("Please wait 2 seconds...", show_alert=True)
         return
 
     await query.answer()
@@ -386,7 +464,10 @@ async def cb_mc_decline(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if match and match["status"] == "pending":
         match["status"] = "declined"
         await _save_match(match)
-        await query.edit_message_text(f"❌ *{esc(query.from_user.first_name)} declined the challenge.*", parse_mode="Markdown")
+        try:
+            await query.edit_message_text(f"<b>{esc_html(query.from_user.first_name)} declined the challenge.</b>", parse_mode="HTML")
+        except Exception:
+            await query.edit_message_text(f"{query.from_user.first_name} declined the challenge.")
 
 
 # ── Toss Flow in DMs ──────────────────────────────────────────────────────────
@@ -397,35 +478,27 @@ async def _send_toss_ui(context: ContextTypes.DEFAULT_TYPE, match: dict):
     match_id = match["match_id"]
 
     toss_kb = InlineKeyboardMarkup([[
-        InlineKeyboardButton("🪙 Heads", callback_data=f"mc_toss|{match_id}|{caller_id}|heads"),
-        InlineKeyboardButton("🪙 Tails", callback_data=f"mc_toss|{match_id}|{caller_id}|tails"),
+        InlineKeyboardButton("Heads", callback_data=f"mc_toss|{match_id}|{caller_id}|heads"),
+        InlineKeyboardButton("Tails", callback_data=f"mc_toss|{match_id}|{caller_id}|tails"),
     ]])
 
-    # Caller gets toss buttons
-    try:
-        c_msg = await context.bot.send_message(
-            chat_id=caller_id,
-            text=f"🪙 *Toss Time!* (Mini-Cricket {match['overs']} Over)\n\nCall the coin toss:",
-            reply_markup=toss_kb,
-            parse_mode="Markdown"
-        )
-        match["caller_dm_msg_id"] = c_msg.message_id
-    except Exception as e:
-        logger.warning(f"Could not send toss DM to caller {caller_id}: {e}")
+    caller_text = (
+        f"<b>Toss Time!</b> (Mini-Cricket <b>{match['overs']} Over</b>)\n\n"
+        f"Call the coin toss:"
+    )
+    match["caller_dm_msg_id"] = await _send_or_edit_dm(
+        context.bot, caller_id, match.get("caller_dm_msg_id"), caller_text, reply_markup=toss_kb
+    )
 
-    # Waiting player sees status
     caller_name = match["challenger_name"] if caller_id == match["challenger_id"] else match["opponent_name"]
-    try:
-        w_msg = await context.bot.send_message(
-            chat_id=waiting_id,
-            text=f"🪙 *Toss Time!*\nWaiting for *{esc(caller_name)}* to call the toss...",
-            parse_mode="Markdown"
-        )
-        match["waiting_dm_msg_id"] = w_msg.message_id
-    except Exception as e:
-        logger.warning(f"Could not send toss DM to waiter {waiting_id}: {e}")
+    waiting_text = (
+        f"<b>Toss Time!</b> (Mini-Cricket <b>{match['overs']} Over</b>)\n\n"
+        f"<i>Waiting for <b>{esc_html(caller_name)}</b> to call the toss...</i>"
+    )
+    match["waiting_dm_msg_id"] = await _send_or_edit_dm(
+        context.bot, waiting_id, match.get("waiting_dm_msg_id"), waiting_text, reply_markup=None
+    )
 
-    # Start 5-min AFK timer
     _reset_turn_timer(context, match_id, caller_id)
     await _save_match(match)
 
@@ -436,12 +509,16 @@ async def cb_mc_toss(update: Update, context: ContextTypes.DEFAULT_TYPE):
     _, match_id, caller_str, call = parts
 
     if str(query.from_user.id) != caller_str:
-        await query.answer("⛔ Not your toss call!", show_alert=True)
+        await query.answer("Not your toss call!", show_alert=True)
+        return
+
+    if not _check_click_rate_limit(query.from_user.id):
+        await query.answer("Please wait 2 seconds...", show_alert=True)
         return
 
     lock = _get_lock(match_id)
     if lock.locked():
-        await query.answer("⏳ Processing...", show_alert=False)
+        await query.answer("Please wait 2 seconds...", show_alert=True)
         return
 
     async with lock:
@@ -463,34 +540,44 @@ async def cb_mc_toss(update: Update, context: ContextTypes.DEFAULT_TYPE):
         match["status"] = "decision"
         match["toss_winner_id"] = toss_winner_id
         match["toss_loser_id"] = toss_loser_id
+        match["coin_flip"] = coin_flip
         await _save_match(match)
 
         decision_kb = InlineKeyboardMarkup([[
-            InlineKeyboardButton("🏏 Bat First", callback_data=f"mc_decide|{match_id}|{toss_winner_id}|bat"),
-            InlineKeyboardButton("⚡ Bowl First", callback_data=f"mc_decide|{match_id}|{toss_winner_id}|bowl"),
+            InlineKeyboardButton("Bat First", callback_data=f"mc_decide|{match_id}|{toss_winner_id}|bat"),
+            InlineKeyboardButton("Bowl First", callback_data=f"mc_decide|{match_id}|{toss_winner_id}|bowl"),
         ]])
 
-        # Winner picks Bat or Bowl
-        try:
-            await context.bot.send_message(
-                chat_id=toss_winner_id,
-                text=f"🪙 Coin showed *{coin_flip.title()}*!\n🎉 *You won the toss!*\nChoose to Bat or Bowl:",
-                reply_markup=decision_kb,
-                parse_mode="Markdown"
-            )
-        except Exception:
-            pass
+        winner_text = (
+            f"Coin showed <b>{coin_flip.title()}</b>!\n"
+            f"<b>You won the toss!</b>\n\n"
+            f"Choose to Bat or Bowl:"
+        )
+        loser_text = (
+            f"Coin showed <b>{coin_flip.title()}</b>.\n"
+            f"<i><b>{esc_html(winner_name)} won the toss</b> and is choosing to Bat or Bowl...</i>"
+        )
 
-        # Loser waits
-        try:
-            await context.bot.send_message(
-                chat_id=toss_loser_id,
-                text=f"🪙 Coin showed *{coin_flip.title()}*.\n*{esc(winner_name)} won the toss* and is choosing to Bat or Bowl...",
-                parse_mode="Markdown"
+        if caller_id == toss_winner_id:
+            # Caller won: edit caller's message in-place to decision buttons (removes Heads/Tails!)
+            match["caller_dm_msg_id"] = await _send_or_edit_dm(
+                context.bot, caller_id, query.message.message_id, winner_text, reply_markup=decision_kb
             )
-        except Exception:
-            pass
+            # Edit waiting player's message in-place
+            match["waiting_dm_msg_id"] = await _send_or_edit_dm(
+                context.bot, waiting_id, match.get("waiting_dm_msg_id"), loser_text, reply_markup=None
+            )
+        else:
+            # Caller lost: edit caller's message in-place (removes Heads/Tails!)
+            match["caller_dm_msg_id"] = await _send_or_edit_dm(
+                context.bot, caller_id, query.message.message_id, loser_text, reply_markup=None
+            )
+            # Edit waiting player's message in-place to decision buttons
+            match["waiting_dm_msg_id"] = await _send_or_edit_dm(
+                context.bot, waiting_id, match.get("waiting_dm_msg_id"), winner_text, reply_markup=decision_kb
+            )
 
+        await _save_match(match)
         _reset_turn_timer(context, match_id, toss_winner_id)
 
 
@@ -500,12 +587,16 @@ async def cb_mc_decision(update: Update, context: ContextTypes.DEFAULT_TYPE):
     _, match_id, winner_str, choice = parts
 
     if str(query.from_user.id) != winner_str:
-        await query.answer("⛔ Not your decision!", show_alert=True)
+        await query.answer("Not your decision!", show_alert=True)
+        return
+
+    if not _check_click_rate_limit(query.from_user.id):
+        await query.answer("Please wait 2 seconds...", show_alert=True)
         return
 
     lock = _get_lock(match_id)
     if lock.locked():
-        await query.answer("⏳ Processing...", show_alert=False)
+        await query.answer("Please wait 2 seconds...", show_alert=True)
         return
 
     async with lock:
@@ -516,6 +607,8 @@ async def cb_mc_decision(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         winner_id = int(winner_str)
         loser_id = match["toss_loser_id"]
+        caller_id = match["toss_caller_id"]
+        winner_name = match["challenger_name"] if winner_id == match["challenger_id"] else match["opponent_name"]
 
         if choice == "bat":
             batting_first_id = winner_id
@@ -523,6 +616,28 @@ async def cb_mc_decision(update: Update, context: ContextTypes.DEFAULT_TYPE):
         else:
             batting_first_id = loser_id
             bowling_first_id = winner_id
+
+        other_choice = "Bowl" if choice == "bat" else "Bat"
+
+        # Edit winner message in-place (removes Bat/Bowl buttons!)
+        winner_msg_id = query.message.message_id
+        await _send_or_edit_dm(
+            context.bot,
+            winner_id,
+            winner_msg_id,
+            f"<b>You chose to {choice.title()} First!</b>\n<i>Preparing pitch & match ball...</i>",
+            reply_markup=None
+        )
+
+        # Edit loser message in-place
+        loser_dm_msg_id = match["waiting_dm_msg_id"] if winner_id == caller_id else match["caller_dm_msg_id"]
+        await _send_or_edit_dm(
+            context.bot,
+            loser_id,
+            loser_dm_msg_id,
+            f"<b>{esc_html(winner_name)} chose to {choice.title()} First.</b> You will {other_choice} First!\n<i>Preparing pitch & match ball...</i>",
+            reply_markup=None
+        )
 
         match["batting_first_id"] = batting_first_id
         match["bowling_first_id"] = bowling_first_id
@@ -535,19 +650,31 @@ async def cb_mc_decision(update: Update, context: ContextTypes.DEFAULT_TYPE):
         match["pending_delivery_actual"] = None
         match["last_ball_commentary"] = "Match beginning! Innings 1 underway."
 
+        # Assign in-progress DM message IDs
+        if choice == "bat":
+            match["batter_dm_msg_id"] = winner_msg_id
+            match["bowler_dm_msg_id"] = loser_dm_msg_id
+        else:
+            match["bowler_dm_msg_id"] = winner_msg_id
+            match["batter_dm_msg_id"] = loser_dm_msg_id
+
         await _save_match(match)
 
-        # Clear existing messages and launch ball 1
+        # Launch ball 1 (directly edits messages in-place!)
         await _start_new_ball(context, match)
 
 
 # ── Ball-by-Ball Gameplay Loop ────────────────────────────────────────────────
 
-def _build_over_reel_text(reel: list) -> str:
-    if not reel:
-        return "[ . . . . . . ]"
-    clean = "  ".join(reel)
-    return f"[  {clean}  ]"
+def _build_over_reel_text(reel: list, over_num: int) -> str:
+    start_idx = max(0, (over_num - 1) * 6)
+    over_balls = reel[start_idx : start_idx + 6]
+    display = []
+    for b in over_balls:
+        display.append(str(b))
+    while len(display) < 6:
+        display.append(".")
+    return "  ".join(display)
 
 
 def _build_bowler_keyboard(match: dict, over_num: int) -> InlineKeyboardMarkup:
@@ -556,16 +683,16 @@ def _build_bowler_keyboard(match: dict, over_num: int) -> InlineKeyboardMarkup:
     used = match.get("mystery_used_over", {}).get(str(over_num), False)
 
     row1 = [
-        InlineKeyboardButton("⚡ Bouncer", callback_data=f"mc_bowl|{match_id}|{bowler_id}|Bouncer"),
-        InlineKeyboardButton("🎯 Yorker",  callback_data=f"mc_bowl|{match_id}|{bowler_id}|Yorker"),
+        InlineKeyboardButton("Bouncer", callback_data=f"mc_bowl|{match_id}|{bowler_id}|Bouncer"),
+        InlineKeyboardButton("Yorker",  callback_data=f"mc_bowl|{match_id}|{bowler_id}|Yorker"),
     ]
     row2 = [
-        InlineKeyboardButton("🏏 Fuller",  callback_data=f"mc_bowl|{match_id}|{bowler_id}|Fuller"),
-        InlineKeyboardButton("🟢 Good",    callback_data=f"mc_bowl|{match_id}|{bowler_id}|Good"),
+        InlineKeyboardButton("Fuller",  callback_data=f"mc_bowl|{match_id}|{bowler_id}|Fuller"),
+        InlineKeyboardButton("Good",    callback_data=f"mc_bowl|{match_id}|{bowler_id}|Good"),
     ]
     rows = [row1, row2]
     if not used:
-        rows.append([InlineKeyboardButton("❓ Mystery Ball (1/over)", callback_data=f"mc_bowl|{match_id}|{bowler_id}|Mystery")])
+        rows.append([InlineKeyboardButton("Mystery Ball (1/over)", callback_data=f"mc_bowl|{match_id}|{bowler_id}|Mystery")])
     return InlineKeyboardMarkup(rows)
 
 
@@ -578,8 +705,8 @@ def _build_batter_keyboard(match: dict) -> InlineKeyboardMarkup:
         InlineKeyboardButton("Pull",   callback_data=f"mc_shot|{match_id}|{batter_id}|Pull"),
     ]
     row2 = [
-        InlineKeyboardButton("🛡️ Defend", callback_data=f"mc_shot|{match_id}|{batter_id}|Defend"),
-        InlineKeyboardButton("🚀 Loft",   callback_data=f"mc_shot|{match_id}|{batter_id}|Loft"),
+        InlineKeyboardButton("Defend", callback_data=f"mc_shot|{match_id}|{batter_id}|Defend"),
+        InlineKeyboardButton("Loft",   callback_data=f"mc_shot|{match_id}|{batter_id}|Loft"),
     ]
     return InlineKeyboardMarkup([row1, row2])
 
@@ -611,12 +738,14 @@ async def _start_new_ball(context: ContextTypes.DEFAULT_TYPE, match: dict):
         reel = match["innings_2_reel"]
         target = match["target"]
         needed = max(0, target - score)
-        balls_left = total_balls - balls_bowled
-        target_line = f"🎯 Need: *{needed} runs* from *{balls_left} balls*\n"
+        balls_left = max(0, total_balls - balls_bowled)
+        rrr = (needed / (balls_left / 6.0)) if balls_left > 0 else 0.0
+        target_line = f"Target: <b>{target}</b> (Need <b>{needed} runs</b> from <b>{balls_left} balls</b> | RRR: <b>{rrr:.1f}</b>)\n"
 
     over_num = (balls_bowled // 6) + 1
     ball_in_over = (balls_bowled % 6) + 1
-    reel_text = _build_over_reel_text(reel)
+    reel_text = _build_over_reel_text(reel, over_num)
+    ov_str = f"{balls_bowled // 6}.{balls_bowled % 6}"
 
     # Names
     c_name = match["challenger_name"]
@@ -625,66 +754,42 @@ async def _start_new_ball(context: ContextTypes.DEFAULT_TYPE, match: dict):
     bowl_name = o_name if batter_id == match["challenger_id"] else c_name
 
     bowler_text = (
-        f"🏏 *Mini-Cricket ({overs} Ov) — Innings {innings}*\n"
-        f"━━━━━━━━━━━━━━━━━━\n"
-        f"Batting: *{esc(bat_name)}* | Score: *{score}/{wkts}* ({balls_bowled // 6}.{balls_bowled % 6} ov)\n"
+        f"<b>Mini-Cricket ({overs} Ov) — Innings {innings}</b>\n"
+        f"━━━━━━━━━━━━━━━━━━━━\n"
+        f"Batting: <b>{esc_html(bat_name)}</b>\n"
+        f"Score: <b>{score}/{wkts}</b> ({ov_str} ov)\n"
         f"{target_line}"
-        f"Over {over_num}: `{reel_text}`\n"
-        f"━━━━━━━━━━━━━━━━━━\n"
-        f"💬 {match['last_ball_commentary']}\n"
-        f"━━━━━━━━━━━━━━━━━━\n"
-        f"⚡ *Your Turn to Bowl!* Pick delivery (Ball {ball_in_over}/6):"
+        f"Over {over_num}: [ {reel_text} ]\n"
+        f"━━━━━━━━━━━━━━━━━━━━\n"
+        f"Last Ball: <i>{esc_html(match['last_ball_commentary'])}</i>\n"
+        f"━━━━━━━━━━━━━━━━━━━━\n"
+        f"Your Turn to Bowl! Pick delivery (Ball {ball_in_over}/6):"
     )
 
     batter_text = (
-        f"🏏 *Mini-Cricket ({overs} Ov) — Innings {innings}*\n"
-        f"━━━━━━━━━━━━━━━━━━\n"
-        f"Batting: *{esc(bat_name)}* | Score: *{score}/{wkts}* ({balls_bowled // 6}.{balls_bowled % 6} ov)\n"
+        f"<b>Mini-Cricket ({overs} Ov) — Innings {innings}</b>\n"
+        f"━━━━━━━━━━━━━━━━━━━━\n"
+        f"Batting: <b>{esc_html(bat_name)}</b>\n"
+        f"Score: <b>{score}/{wkts}</b> ({ov_str} ov)\n"
         f"{target_line}"
-        f"Over {over_num}: `{reel_text}`\n"
-        f"━━━━━━━━━━━━━━━━━━\n"
-        f"💬 {match['last_ball_commentary']}\n"
-        f"━━━━━━━━━━━━━━━━━━\n"
-        f"⏳ Waiting for *{esc(bowl_name)}* to bowl..."
+        f"Over {over_num}: [ {reel_text} ]\n"
+        f"━━━━━━━━━━━━━━━━━━━━\n"
+        f"Last Ball: <i>{esc_html(match['last_ball_commentary'])}</i>\n"
+        f"━━━━━━━━━━━━━━━━━━━━\n"
+        f"<i>Waiting for <b>{esc_html(bowl_name)}</b> to bowl...</i>"
     )
 
     bowler_kb = _build_bowler_keyboard(match, over_num)
 
-    # Send / Edit Bowler Message
-    b_msg_id = match.get("bowler_dm_msg_id")
-    if b_msg_id:
-        try:
-            await context.bot.edit_message_text(
-                chat_id=bowler_id,
-                message_id=b_msg_id,
-                text=bowler_text,
-                reply_markup=bowler_kb,
-                parse_mode="Markdown"
-            )
-        except Exception:
-            b_msg = await context.bot.send_message(chat_id=bowler_id, text=bowler_text, reply_markup=bowler_kb, parse_mode="Markdown")
-            match["bowler_dm_msg_id"] = b_msg.message_id
-    else:
-        b_msg = await context.bot.send_message(chat_id=bowler_id, text=bowler_text, reply_markup=bowler_kb, parse_mode="Markdown")
-        match["bowler_dm_msg_id"] = b_msg.message_id
+    # Edit Bowler Message in-place
+    match["bowler_dm_msg_id"] = await _send_or_edit_dm(
+        context.bot, bowler_id, match.get("bowler_dm_msg_id"), bowler_text, reply_markup=bowler_kb
+    )
 
-    # Send / Edit Batter Message
-    bat_msg_id = match.get("batter_dm_msg_id")
-    if bat_msg_id:
-        try:
-            await context.bot.edit_message_text(
-                chat_id=batter_id,
-                message_id=bat_msg_id,
-                text=batter_text,
-                reply_markup=None,
-                parse_mode="Markdown"
-            )
-        except Exception:
-            bat_msg = await context.bot.send_message(chat_id=batter_id, text=batter_text, parse_mode="Markdown")
-            match["batter_dm_msg_id"] = bat_msg.message_id
-    else:
-        bat_msg = await context.bot.send_message(chat_id=batter_id, text=batter_text, parse_mode="Markdown")
-        match["batter_dm_msg_id"] = bat_msg.message_id
+    # Edit Batter Message in-place
+    match["batter_dm_msg_id"] = await _send_or_edit_dm(
+        context.bot, batter_id, match.get("batter_dm_msg_id"), batter_text, reply_markup=None
+    )
 
     await _save_match(match)
     _reset_turn_timer(context, match_id, bowler_id)
@@ -698,25 +803,68 @@ async def cb_mc_bowl(update: Update, context: ContextTypes.DEFAULT_TYPE):
     _, match_id, bowler_str, delivery = parts
 
     if str(query.from_user.id) != bowler_str:
-        await query.answer("⛔ Not your bowling turn!", show_alert=True)
+        await query.answer("Not your bowling turn!", show_alert=True)
+        return
+
+    # 2-second rate limit to prevent spamming
+    if not _check_click_rate_limit(query.from_user.id):
+        await query.answer("Please wait 2 seconds...", show_alert=True)
         return
 
     lock = _get_lock(match_id)
     if lock.locked():
-        await query.answer("⏳ Processing...", show_alert=False)
+        await query.answer("Please wait 2 seconds...", show_alert=True)
         return
 
     async with lock:
-        await query.answer()
         match = await _get_match(match_id)
         if not match or match["status"] != "in_progress":
+            await query.answer("Match is not in progress.", show_alert=False)
             return
+
+        # Double delivery check: if already locked in, do not re-send to batter!
+        if match.get("pending_delivery") is not None:
+            await query.answer("Delivery already locked in! Waiting for batter...", show_alert=True)
+            return
+
+        # Immediately strip reply markup from bowler so no double clicks can trigger
+        try:
+            await query.edit_message_reply_markup(reply_markup=None)
+        except Exception:
+            pass
+
+        await query.answer()
 
         bowler_id = int(bowler_str)
         batter_id = match["batter_id"]
         innings = match["innings"]
-        balls_bowled = match["innings_1_balls"] if innings == 1 else match["innings_2_balls"]
+        overs = match["overs"]
+        total_balls = match["total_balls"]
+
+        if innings == 1:
+            score = match["innings_1_score"]
+            wkts = match["innings_1_wickets"]
+            balls_bowled = match["innings_1_balls"]
+            reel = match["innings_1_reel"]
+            target_line = ""
+        else:
+            score = match["innings_2_score"]
+            wkts = match["innings_2_wickets"]
+            balls_bowled = match["innings_2_balls"]
+            reel = match["innings_2_reel"]
+            target = match["target"]
+            needed = max(0, target - score)
+            balls_left = max(0, total_balls - balls_bowled)
+            rrr = (needed / (balls_left / 6.0)) if balls_left > 0 else 0.0
+            target_line = f"Target: <b>{target}</b> (Need <b>{needed} runs</b> from <b>{balls_left} balls</b> | RRR: <b>{rrr:.1f}</b>)\n"
+
         over_num = (balls_bowled // 6) + 1
+        reel_text = _build_over_reel_text(reel, over_num)
+        ov_str = f"{balls_bowled // 6}.{balls_bowled % 6}"
+
+        c_name = match["challenger_name"]
+        o_name = match["opponent_name"]
+        bat_name = c_name if batter_id == match["challenger_id"] else o_name
 
         is_mystery = (delivery == "Mystery")
         actual_del = resolve_mystery_ball() if is_mystery else delivery
@@ -728,36 +876,41 @@ async def cb_mc_bowl(update: Update, context: ContextTypes.DEFAULT_TYPE):
         match["pending_delivery_actual"] = actual_del
         await _save_match(match)
 
-        # Update bowler UI (locked in)
-        try:
-            await query.edit_message_text(
-                f"🎯 *Delivery Locked In: {delivery}*\nWaiting for batter to play their shot...",
-                parse_mode="Markdown"
-            )
-        except Exception:
-            pass
+        # Update bowler UI (locked in, retaining scoreboard)
+        bowler_locked_text = (
+            f"<b>Mini-Cricket ({overs} Ov) — Innings {innings}</b>\n"
+            f"━━━━━━━━━━━━━━━━━━━━\n"
+            f"Batting: <b>{esc_html(bat_name)}</b>\n"
+            f"Score: <b>{score}/{wkts}</b> ({ov_str} ov)\n"
+            f"{target_line}"
+            f"Over {over_num}: [ {reel_text} ]\n"
+            f"━━━━━━━━━━━━━━━━━━━━\n"
+            f"Delivery Locked In: <b>{delivery}</b>\n"
+            f"<i>Waiting for <b>{esc_html(bat_name)}</b> to play their shot...</i>"
+        )
+        match["bowler_dm_msg_id"] = await _send_or_edit_dm(
+            context.bot, bowler_id, query.message.message_id, bowler_locked_text, reply_markup=None
+        )
 
         # Update batter UI with shot choices
         batter_kb = _build_batter_keyboard(match)
-        shown_del = "❓ Mystery Ball" if is_mystery else delivery
-        try:
-            await context.bot.edit_message_text(
-                chat_id=batter_id,
-                message_id=match["batter_dm_msg_id"],
-                text=f"⚡ *Bowler has bowled: {shown_del}!*\nChoose your shot:",
-                reply_markup=batter_kb,
-                parse_mode="Markdown"
-            )
-        except Exception:
-            bat_msg = await context.bot.send_message(
-                chat_id=batter_id,
-                text=f"⚡ *Bowler has bowled: {shown_del}!*\nChoose your shot:",
-                reply_markup=batter_kb,
-                parse_mode="Markdown"
-            )
-            match["batter_dm_msg_id"] = bat_msg.message_id
-            await _save_match(match)
+        shown_del = "Mystery Ball" if is_mystery else delivery
+        batter_prompt_text = (
+            f"<b>Mini-Cricket ({overs} Ov) — Innings {innings}</b>\n"
+            f"━━━━━━━━━━━━━━━━━━━━\n"
+            f"Batting: <b>{esc_html(bat_name)}</b>\n"
+            f"Score: <b>{score}/{wkts}</b> ({ov_str} ov)\n"
+            f"{target_line}"
+            f"Over {over_num}: [ {reel_text} ]\n"
+            f"━━━━━━━━━━━━━━━━━━━━\n"
+            f"Bowler bowled: <b>{shown_del}</b>!\n"
+            f"Choose your shot:"
+        )
+        match["batter_dm_msg_id"] = await _send_or_edit_dm(
+            context.bot, batter_id, match.get("batter_dm_msg_id"), batter_prompt_text, reply_markup=batter_kb
+        )
 
+        await _save_match(match)
         _reset_turn_timer(context, match_id, batter_id)
 
 
@@ -769,24 +922,43 @@ async def cb_mc_shot(update: Update, context: ContextTypes.DEFAULT_TYPE):
     _, match_id, batter_str, shot = parts
 
     if str(query.from_user.id) != batter_str:
-        await query.answer("⛔ Not your batting turn!", show_alert=True)
+        await query.answer("Not your batting turn!", show_alert=True)
+        return
+
+    # 2-second rate limit to prevent spamming
+    if not _check_click_rate_limit(query.from_user.id):
+        await query.answer("Please wait 2 seconds...", show_alert=True)
         return
 
     lock = _get_lock(match_id)
     if lock.locked():
-        await query.answer("⏳ Processing...", show_alert=False)
+        await query.answer("Please wait 2 seconds...", show_alert=True)
         return
 
     async with lock:
-        await query.answer()
         match = await _get_match(match_id)
         if not match or match["status"] != "in_progress":
+            await query.answer("Match is not in progress.", show_alert=False)
             return
 
-        delivery = match["pending_delivery"]
-        actual_del = match["pending_delivery_actual"]
+        delivery = match.get("pending_delivery")
+        actual_del = match.get("pending_delivery_actual")
         if not delivery:
+            await query.answer("Shot already played for this ball!", show_alert=True)
             return
+
+        # Immediately clear pending delivery and strip batter buttons
+        match["pending_delivery"] = None
+        match["pending_delivery_actual"] = None
+        try:
+            await query.edit_message_reply_markup(reply_markup=None)
+        except Exception:
+            pass
+
+        await query.answer()
+
+        # Update batter message ID
+        match["batter_dm_msg_id"] = query.message.message_id
 
         is_mystery = (delivery == "Mystery")
         is_wicket, runs, comment = simulate_ball(delivery, shot, is_mystery, actual_del)
@@ -803,7 +975,7 @@ async def cb_mc_shot(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 match["innings_1_reel"].append("W")
             else:
                 match["innings_1_score"] += runs
-                match["innings_1_reel"].append(str(runs) if runs > 0 else ".")
+                match["innings_1_reel"].append(str(runs) if runs > 0 else "0")
             new_score = match["innings_1_score"]
             reel = match["innings_1_reel"]
         else:
@@ -815,7 +987,7 @@ async def cb_mc_shot(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 match["innings_2_reel"].append("W")
             else:
                 match["innings_2_score"] += runs
-                match["innings_2_reel"].append(str(runs) if runs > 0 else ".")
+                match["innings_2_reel"].append(str(runs) if runs > 0 else "0")
             new_score = match["innings_2_score"]
             reel = match["innings_2_reel"]
 
@@ -824,6 +996,8 @@ async def cb_mc_shot(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if milestone:
             comment = f"{comment}\n{milestone}"
 
+        match["last_ball_delivery"] = delivery
+        match["last_ball_shot"] = shot
         match["last_ball_commentary"] = comment
         await _save_match(match)
 
@@ -858,7 +1032,7 @@ async def cb_mc_shot(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return
 
 
-# ── Innings Swap (Option A: 3-Second Target Pause) ────────────────────────────
+# ── Innings Swap (3-Second Pause in Place) ────────────────────────────────────
 
 async def _end_innings_1(context: ContextTypes.DEFAULT_TYPE, match: dict):
     match["status"] = "innings_break"
@@ -873,32 +1047,34 @@ async def _end_innings_1(context: ContextTypes.DEFAULT_TYPE, match: dict):
     score_1 = match["innings_1_score"]
     wkts_1 = match["innings_1_wickets"]
     balls_1 = match["innings_1_balls"]
+    ov_1 = f"{balls_1 // 6}.{balls_1 % 6}"
 
     break_text = (
         f"━━━━━━━━━━━━━━━━━━━━\n"
-        f"   *INNINGS 1 COMPLETE*\n"
+        f"   <b>INNINGS 1 COMPLETE</b>\n"
         f"━━━━━━━━━━━━━━━━━━━━\n"
-        f"*{esc(b1_name)}*: *{score_1}/{wkts_1}* ({balls_1 // 6}.{balls_1 % 6} ov)\n"
-        f"🎯 *Target for {esc(b2_name)}*: *{target} runs* from *{match['total_balls']} balls*\n\n"
-        f"💬 {match['last_ball_commentary']}\n\n"
-        f"🔄 _Swapping roles... Innings 2 starts now!_"
+        f"<b>{esc_html(b1_name)}</b>: <b>{score_1}/{wkts_1}</b> ({ov_1} ov)\n"
+        f"Target for <b>{esc_html(b2_name)}</b>: <b>{target} runs</b> ({match['total_balls']} balls)\n"
+        f"━━━━━━━━━━━━━━━━━━━━\n"
+        f"Last Ball: <i>{esc_html(match['last_ball_commentary'])}</i>\n"
+        f"━━━━━━━━━━━━━━━━━━━━\n"
+        f"<i>Swapping roles... Innings 2 starts in 3 seconds!</i>"
     )
 
     p1 = match["challenger_id"]
     p2 = match["opponent_id"]
 
-    try:
-        await context.bot.send_message(chat_id=p1, text=break_text, parse_mode="Markdown")
-    except Exception:
-        pass
-    try:
-        await context.bot.send_message(chat_id=p2, text=break_text, parse_mode="Markdown")
-    except Exception:
-        pass
+    # Edit both messages in-place with break screen
+    match["bowler_dm_msg_id"] = await _send_or_edit_dm(
+        context.bot, p1, match.get("bowler_dm_msg_id"), break_text, reply_markup=None
+    )
+    match["batter_dm_msg_id"] = await _send_or_edit_dm(
+        context.bot, p2, match.get("batter_dm_msg_id"), break_text, reply_markup=None
+    )
 
     await _save_match(match)
 
-    # 3-Second pause (Option A)
+    # 3-Second pause
     await asyncio.sleep(3)
 
     # Swap roles
@@ -908,6 +1084,12 @@ async def _end_innings_1(context: ContextTypes.DEFAULT_TYPE, match: dict):
     match["status"] = "in_progress"
     match["mystery_used_over"] = {}
     match["last_ball_commentary"] = f"Innings 2 begins! Target: {target} runs."
+
+    # Swap message IDs to match new bowler and batter roles
+    old_b_mid = match.get("bowler_dm_msg_id")
+    match["bowler_dm_msg_id"] = match.get("batter_dm_msg_id")
+    match["batter_dm_msg_id"] = old_b_mid
+
     await _save_match(match)
 
     await _start_new_ball(context, match)
@@ -933,18 +1115,18 @@ async def _finalize_match(context: ContextTypes.DEFAULT_TYPE, match: dict, winne
     if is_draw:
         winner_id = c_id
         loser_id = o_id
-        result_str = f"🤝 *Match Tied!* Scores level."
+        result_str_html = "<b>Match Tied!</b> Scores level."
     elif winner_role == "batter":
         winner_id = match["batter_id"]
         loser_id = match["bowler_id"]
         w_name = c_name if winner_id == c_id else o_name
-        result_str = f"🏆 *{esc(w_name)} won by 1 wicket!*"
+        result_str_html = f"<b>{esc_html(w_name)} won by 1 wicket!</b>"
     else:  # bowler won
         winner_id = match["bowler_id"]
         loser_id = match["batter_id"]
         w_name = c_name if winner_id == c_id else o_name
         margin = match["target"] - match["innings_2_score"] - 1
-        result_str = f"🏆 *{esc(w_name)} won by {margin} runs!*"
+        result_str_html = f"<b>{esc_html(w_name)} won by {margin} runs!</b>"
 
     # Coin rewards
     from database import add_card_coins
@@ -960,37 +1142,54 @@ async def _finalize_match(context: ContextTypes.DEFAULT_TYPE, match: dict, winne
     b1_name = c_name if match["batting_first_id"] == c_id else o_name
     b2_name = o_name if match["batting_first_id"] == c_id else c_name
 
+    last_del = match.get("last_ball_delivery") or match.get("pending_delivery", "Ball")
+    last_shot = match.get("last_ball_shot", "Shot")
+    last_comm = match.get("last_ball_commentary", "")
+
+    # Decisive last ball over and outcome notation (e.g. W for wicket or runs on chase)
+    balls_2 = match.get("innings_2_balls", 0)
+    final_ov = f"{balls_2 // 6}.{balls_2 % 6}"
+    reel_2 = match.get("innings_2_reel", [])
+    ball_sym = reel_2[-1] if reel_2 else ""
+    sym_str = f"<b>{ball_sym}</b> · " if ball_sym else ""
+
+    last_ball_info = (
+        f"Last Ball ({final_ov} ov): {sym_str}{esc_html(last_del)} vs {esc_html(last_shot)}\n"
+        f"<i>{esc_html(last_comm)}</i>\n\n"
+    ) if last_comm else ""
+
     final_card = (
         f"━━━━━━━━━━━━━━━━━━━━\n"
-        f"    *MATCH SUMMARY*\n"
+        f"   <b>MATCH SUMMARY</b>\n"
         f"━━━━━━━━━━━━━━━━━━━━\n"
-        f"*{esc(b1_name)}*: {s1}\n"
-        f"*{esc(b2_name)}*: {s2}\n\n"
-        f"{result_str}\n\n"
-        f"🪙 Rewards:\n"
-        f"• *{esc(c_name)}*: +{rewards.get(c_id, 0)}🪙\n"
-        f"• *{esc(o_name)}*: +{rewards.get(o_id, 0)}🪙"
+        f"<b>{esc_html(b1_name)}</b>: {s1}\n"
+        f"<b>{esc_html(b2_name)}</b>: {s2}\n"
+        f"━━━━━━━━━━━━━━━━━━━━\n"
+        f"{result_str_html}\n\n"
+        f"{last_ball_info}"
+        f"Rewards:\n"
+        f"• <b>{esc_html(c_name)}</b>: +{rewards.get(c_id, 0)} Card Coins\n"
+        f"• <b>{esc_html(o_name)}</b>: +{rewards.get(o_id, 0)} Card Coins\n"
+        f"━━━━━━━━━━━━━━━━━━━━"
     )
 
-    # Send final scorecard to both players in DMs
-    try:
-        await context.bot.send_message(chat_id=c_id, text=final_card, parse_mode="Markdown")
-    except Exception:
-        pass
-    try:
-        await context.bot.send_message(chat_id=o_id, text=final_card, parse_mode="Markdown")
-    except Exception:
-        pass
+    # Edit existing DM messages in-place for both players (no lingering buttons!)
+    c_mid = match.get("bowler_dm_msg_id") if c_id == match.get("bowler_id") else match.get("batter_dm_msg_id")
+    o_mid = match.get("bowler_dm_msg_id") if o_id == match.get("bowler_id") else match.get("batter_dm_msg_id")
 
-    # Post 3-line result announcement in group chat
+    await _send_or_edit_dm(context.bot, c_id, c_mid, final_card, reply_markup=None)
+    await _send_or_edit_dm(context.bot, o_id, o_mid, final_card, reply_markup=None)
+
+    # Post result announcement in group chat
     try:
         group_summary = (
-            f"🏆 *Mini-Cricket Result ({match['overs']} Over)*\n"
-            f"*{esc(b1_name)}*: {s1} · *{esc(b2_name)}*: {s2}\n"
-            f"{result_str}\n"
-            f"🪙 Rewards: *+{win_coins}🪙* / *+{lose_coins}🪙*"
+            f"<b>Mini-Cricket Result ({match['overs']} Over)</b>\n"
+            f"<b>{esc_html(b1_name)}</b>: {s1} · <b>{esc_html(b2_name)}</b>: {s2}\n"
+            f"{result_str_html}\n"
+            f"Last Ball ({final_ov} ov): {sym_str}{esc_html(last_del)} vs {esc_html(last_shot)}\n"
+            f"Rewards: +{win_coins} / +{lose_coins} Card Coins"
         )
-        await context.bot.send_message(chat_id=match["chat_id"], text=group_summary, parse_mode="Markdown")
+        await context.bot.send_message(chat_id=match["chat_id"], text=group_summary, parse_mode="HTML")
     except Exception as e:
         logger.warning(f"Could not send group result announcement: {e}")
 
@@ -1027,16 +1226,13 @@ def _reset_turn_timer(context: ContextTypes.DEFAULT_TYPE, match_id: str, active_
             _MATCH_LOCKS.pop(match_id, None)
         
             afk_name = match["challenger_name"] if active_user_id == c_id else match["opponent_name"]
-            msg = f"💤 *Match ended: {esc(afk_name)} went AFK (5 min timeout).* No coins awarded."
+            msg = f"<b>Match ended: {esc_html(afk_name)} went AFK (5 min timeout).</b> No coins awarded."
 
-            try:
-                await context.bot.send_message(chat_id=c_id, text=msg, parse_mode="Markdown")
-            except Exception:
-                pass
-            try:
-                await context.bot.send_message(chat_id=o_id, text=msg, parse_mode="Markdown")
-            except Exception:
-                pass
+            c_mid = match.get("bowler_dm_msg_id") if c_id == match.get("bowler_id") else match.get("batter_dm_msg_id")
+            o_mid = match.get("bowler_dm_msg_id") if o_id == match.get("bowler_id") else match.get("batter_dm_msg_id")
+
+            await _send_or_edit_dm(context.bot, c_id, c_mid, msg, reply_markup=None)
+            await _send_or_edit_dm(context.bot, o_id, o_mid, msg, reply_markup=None)
             await _save_match(match)
 
     _ACTIVE_TIMERS[match_id] = asyncio.create_task(_timer_coro())
@@ -1049,19 +1245,19 @@ async def handle_mini_cric_end(update: Update, context: ContextTypes.DEFAULT_TYP
     """
     user = update.effective_user
     chat = update.effective_chat
-    if not user or not chat or chat.type != "private":
+    if not user or not chat or str(chat.type).lower() != "private":
         return
 
     match_id = _ACTIVE_USER_MATCH.get(user.id)
     if not match_id:
-        await update.effective_message.reply_text("❌ You are not in an active Mini Cricket match.")
+        await update.effective_message.reply_text("You are not in an active Mini Cricket match.")
         return
 
     lock = _get_lock(match_id)
     async with lock:
         match = await _get_match(match_id)
         if not match or match["status"] not in ("toss", "decision", "in_progress", "innings_break"):
-            await update.effective_message.reply_text("❌ No active match to end.")
+            await update.effective_message.reply_text("No active match to end.")
             return
 
         end_list = match.setdefault("end_requested_by", [])
@@ -1080,29 +1276,34 @@ async def handle_mini_cric_end(update: Update, context: ContextTypes.DEFAULT_TYP
             _ACTIVE_USER_MATCH.pop(c_id, None)
             _ACTIVE_USER_MATCH.pop(o_id, None)
         
-            abort_msg = "🛑 *Match mutually ended via /end.* No coins awarded to either player."
-            try:
-                await context.bot.send_message(chat_id=c_id, text=abort_msg, parse_mode="Markdown")
-            except Exception:
-                pass
-            try:
-                await context.bot.send_message(chat_id=o_id, text=abort_msg, parse_mode="Markdown")
-            except Exception:
-                pass
+            abort_msg = "<b>Match mutually ended via /end.</b> No coins awarded to either player."
+            c_mid = match.get("bowler_dm_msg_id") if c_id == match.get("bowler_id") else match.get("batter_dm_msg_id")
+            o_mid = match.get("bowler_dm_msg_id") if o_id == match.get("bowler_id") else match.get("batter_dm_msg_id")
+
+            await _send_or_edit_dm(context.bot, c_id, c_mid, abort_msg, reply_markup=None)
+            await _send_or_edit_dm(context.bot, o_id, o_mid, abort_msg, reply_markup=None)
             await _save_match(match)
         else:
-            await update.effective_message.reply_text(
-                "🛑 *You voted to end the match.*\nWaiting for your opponent to type /end in their DM to confirm termination.",
-                parse_mode="Markdown"
-            )
+            try:
+                await update.effective_message.reply_text(
+                    "<b>You voted to end the match.</b>\nWaiting for your opponent to type /end in their DM to confirm termination.",
+                    parse_mode="HTML"
+                )
+            except Exception:
+                await update.effective_message.reply_text(
+                    "You voted to end the match.\nWaiting for your opponent to type /end in their DM to confirm termination."
+                )
             try:
                 await context.bot.send_message(
                     chat_id=other_id,
-                    text="🛑 *Your opponent requested to end the match.*\nType `/end` here if you agree to abort (0 coins).",
-                    parse_mode="Markdown"
+                    text="<b>Your opponent requested to end the match.</b>\nType <code>/end</code> here if you agree to abort (0 coins).",
+                    parse_mode="HTML"
                 )
             except Exception:
-                pass
+                await context.bot.send_message(
+                    chat_id=other_id,
+                    text="Your opponent requested to end the match.\nType /end here if you agree to abort (0 coins)."
+                )
 
 
 # ── Auto-Resume Hook for GitHub & Dyno Restarts ───────────────────────────────
@@ -1136,23 +1337,23 @@ async def resume_mini_cric_matches(bot):
         _ACTIVE_USER_MATCH[o_id] = match_id
     
         # Send recovery notification & refresh interactive turn in DM
-        resume_notice = "🔄 *Bot restarted — resuming your Mini Cricket match!*"
+        resume_notice = "<b>Bot restarted — resuming your Mini Cricket match!</b>"
         try:
-            await bot.send_message(chat_id=c_id, text=resume_notice, parse_mode="Markdown")
+            await bot.send_message(chat_id=c_id, text=resume_notice, parse_mode="HTML")
         except Exception:
             pass
         try:
-            await bot.send_message(chat_id=o_id, text=resume_notice, parse_mode="Markdown")
+            await bot.send_message(chat_id=o_id, text=resume_notice, parse_mode="HTML")
         except Exception:
             pass
 
         if m["status"] == "in_progress":
             if m.get("pending_delivery"):
                 b_kb = _build_batter_keyboard(m)
-                shown_del = "🎭 Mystery Ball" if m["pending_delivery"] == "Mystery" else m["pending_delivery"]
-                prompt = f"🏏 *Bowler bowled: {shown_del}*\nChoose your shot:"
+                shown_del = "Mystery Ball" if m["pending_delivery"] == "Mystery" else m["pending_delivery"]
+                prompt = f"<b>Bowler bowled: {shown_del}!</b>\nChoose your shot:"
                 try:
-                    bat_msg = await bot.send_message(chat_id=m["batter_id"], text=prompt, reply_markup=b_kb, parse_mode="Markdown")
+                    bat_msg = await bot.send_message(chat_id=m["batter_id"], text=prompt, reply_markup=b_kb, parse_mode="HTML")
                     m["batter_dm_msg_id"] = bat_msg.message_id
                 except Exception:
                     pass
@@ -1161,9 +1362,9 @@ async def resume_mini_cric_matches(bot):
                 over_num = (balls_bowled // 6) + 1
                 bowl_kb = _build_bowler_keyboard(m, over_num)
                 ball_in_over = (balls_bowled % 6) + 1
-                prompt = f"⚡ *Your Turn to Bowl!* Pick delivery (Ball {ball_in_over}/6):"
+                prompt = f"Your Turn to Bowl! Pick delivery (Ball {ball_in_over}/6):"
                 try:
-                    bowl_msg = await bot.send_message(chat_id=m["bowler_id"], text=prompt, reply_markup=bowl_kb, parse_mode="Markdown")
+                    bowl_msg = await bot.send_message(chat_id=m["bowler_id"], text=prompt, reply_markup=bowl_kb, parse_mode="HTML")
                     m["bowler_dm_msg_id"] = bowl_msg.message_id
                 except Exception:
                     pass
