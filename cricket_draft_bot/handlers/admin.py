@@ -1392,6 +1392,13 @@ async def set_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
             'rdef': 'right_defender', 'right_defender': 'right_defender', 'rightdefender': 'right_defender',
             'ar': 'all_rounder', 'all_rounder': 'all_rounder', 'allrounder': 'all_rounder',
         }
+        pkl_label_map = {
+            'captain': 'Captain',
+            'raider': 'Raider',
+            'left_defender': 'Left Defender',
+            'right_defender': 'Right Defender',
+            'all_rounder': 'All Rounder',
+        }
         pkl_stats = stats.get('pkl', {})
         has_updates = False
         for k, v in kwargs.items():
@@ -1402,7 +1409,8 @@ async def set_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 val = max(1, min(100, int(v)))
                 old = pkl_stats.get(sk, 'N/A')
                 pkl_stats[sk] = val
-                changes.append(f"PKL {sk}: {old} → {val}")
+                clean_lbl = pkl_label_map.get(sk, sk.replace('_', ' ').title())
+                changes.append(f"PKL {clean_lbl}: {old} → {val}")
                 has_updates = True
             except ValueError:
                 await message.reply_text(f"❌ Invalid value for {k}: `{v}` (must be 1-100)", parse_mode="Markdown")
@@ -1464,7 +1472,8 @@ async def set_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
     p['stats'] = stats
     await save_player(p)
 
-    summary = "\n".join(changes)
+    summary_lines = [esc(c) for c in changes]
+    summary = "\n".join(summary_lines)
     await message.reply_text(
         f"✅ *Updated {esc(p['name'])}*\n\n{summary}",
         parse_mode="Markdown"
@@ -2709,23 +2718,39 @@ async def handle_update_card(update: Update, context: ContextTypes.DEFAULT_TYPE)
     except ValueError:
         await update.effective_message.reply_text("❌ OVR must be a number.")
         return
-    # Find player by name
-    from database import get_db
+    from database import get_db, update_card_catalog, _invalidate_card_pool_cache
+    from telegram import InlineKeyboardButton, InlineKeyboardMarkup
     import re
     db = get_db()
-    pattern = re.compile(re.escape(name_query), re.IGNORECASE)
-    players = await db.players.find({"name": pattern}).to_list(10)
-    if not players:
-        await update.effective_message.reply_text(f"❌ No player found matching '{name_query}'.")
-        return
-    if len(players) > 1:
-        lines = [f"Multiple players found for '{name_query}'. Please be more specific:"]
-        for p in players:
-            lines.append(f"• {p['name']} ({p.get('player_id', '')})")        
-        await update.effective_message.reply_text('\n'.join(lines))
-        return
-    player = players[0]
-    from database import update_card_catalog, _invalidate_card_pool_cache
+    target_pid = params.get('id') or params.get('player_id')
+    if target_pid:
+        player = await db.players.find_one({"player_id": target_pid})
+        if not player:
+            await update.effective_message.reply_text(f"❌ Player ID `{target_pid}` not found.", parse_mode='Markdown')
+            return
+    else:
+        pattern = re.compile(re.escape(name_query), re.IGNORECASE)
+        players = await db.players.find({"name": pattern}).to_list(10)
+        if not players:
+            await update.effective_message.reply_text(f"❌ No player found matching '{name_query}'.")
+            return
+        exact = [p for p in players if p.get('name', '').strip().lower() == name_query.strip().lower()]
+        if len(exact) == 1:
+            player = exact[0]
+        elif len(players) == 1:
+            player = players[0]
+        else:
+            buttons = [
+                [InlineKeyboardButton(f"• {p['name']} ({p.get('player_id', '')})", callback_data=f"adm_card|upd|{p['player_id']}|{fmt}|{ovr}|{rarity}")]
+                for p in players[:8]
+            ]
+            await update.effective_message.reply_text(
+                f"Multiple players found for *{name_query}*. Tap to update card:",
+                reply_markup=InlineKeyboardMarkup(buttons),
+                parse_mode='Markdown'
+            )
+            return
+
     success = await update_card_catalog(player['player_id'], fmt, ovr, rarity)
     _invalidate_card_pool_cache()
     if not success:
@@ -2780,22 +2805,39 @@ async def handle_add_card(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except ValueError:
         await update.effective_message.reply_text("❌ OVR must be a number.")
         return
-    from database import get_db
+    from database import get_db, add_to_card_catalog, _invalidate_card_pool_cache
+    from telegram import InlineKeyboardButton, InlineKeyboardMarkup
     import re
     db = get_db()
-    pattern = re.compile(re.escape(name_query), re.IGNORECASE)
-    players = await db.players.find({"name": pattern}).to_list(10)
-    if not players:
-        await update.effective_message.reply_text(f"❌ No player found matching '{name_query}'.")
-        return
-    if len(players) > 1:
-        lines = [f"Multiple players found for '{name_query}'. Please be more specific:"]
-        for p in players:
-            lines.append(f"• {p['name']} ({p.get('player_id', '')})")        
-        await update.effective_message.reply_text('\n'.join(lines))
-        return
-    player = players[0]
-    from database import add_to_card_catalog, _invalidate_card_pool_cache
+    target_pid = params.get('id') or params.get('player_id')
+    if target_pid:
+        player = await db.players.find_one({"player_id": target_pid})
+        if not player:
+            await update.effective_message.reply_text(f"❌ Player ID `{target_pid}` not found.", parse_mode='Markdown')
+            return
+    else:
+        pattern = re.compile(re.escape(name_query), re.IGNORECASE)
+        players = await db.players.find({"name": pattern}).to_list(10)
+        if not players:
+            await update.effective_message.reply_text(f"❌ No player found matching '{name_query}'.")
+            return
+        exact = [p for p in players if p.get('name', '').strip().lower() == name_query.strip().lower()]
+        if len(exact) == 1:
+            player = exact[0]
+        elif len(players) == 1:
+            player = players[0]
+        else:
+            buttons = [
+                [InlineKeyboardButton(f"• {p['name']} ({p.get('player_id', '')})", callback_data=f"adm_card|add|{p['player_id']}|{fmt}|{ovr}|{rarity}")]
+                for p in players[:8]
+            ]
+            await update.effective_message.reply_text(
+                f"Multiple players found for *{name_query}*. Tap to add card:",
+                reply_markup=InlineKeyboardMarkup(buttons),
+                parse_mode='Markdown'
+            )
+            return
+
     success = await add_to_card_catalog(player['player_id'], fmt, ovr, rarity)
     _invalidate_card_pool_cache()
     RARITY_EMOJI = {'common': '⚪', 'rare': '🔵', 'epic': '🟣', 'legend': '🟡'}
@@ -3248,6 +3290,7 @@ async def handle_botstatus(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"🃏 Total Cards: `{data['total_cards']:,}`\n"
             f"\n🎮 Active Matches: `{data['active_total']}`\n"
             f"{mode_lines}"
+            f"⚡ Active Mini Cricket: `{data.get('active_mini_cric', 0)}`\n"
             f"\n📦 Cache\n"
             f"   🗂️ Players: `{data['cache_size']} / {data['cache_max']}`\n"
             f"{perf_lines}"
@@ -3348,3 +3391,43 @@ async def handle_rem_achievement(update: Update, context: ContextTypes.DEFAULT_T
         )
     else:
         await update.effective_message.reply_text(f"❌ {msg_text}")
+
+# ── Admin Card Selection Callback ────────────────────────────────────────────
+async def cb_admin_card(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    from database import is_admin, get_player, update_card_catalog, add_to_card_catalog, _invalidate_card_pool_cache
+    if not await is_admin(query.from_user.id):
+        await query.answer("⛔ Admin only.", show_alert=True)
+        return
+    await query.answer()
+    parts = query.data.split("|")
+    if len(parts) != 6:
+        await query.edit_message_text("❌ Invalid action data.")
+        return
+    _, action, player_id, fmt, ovr_str, rarity = parts
+    ovr = int(ovr_str)
+    player = await get_player(player_id)
+    if not player:
+        await query.edit_message_text("❌ Player not found.")
+        return
+    RARITY_EMOJI = {'common': '⚪', 'rare': '🔵', 'epic': '🟣', 'legend': '🟡'}
+    if action == "upd":
+        success = await update_card_catalog(player_id, fmt, ovr, rarity)
+        _invalidate_card_pool_cache()
+        if not success:
+            await query.edit_message_text(f"❌ '{player['name']}' has no {fmt.upper()} card in catalog yet. Use /add_card first.")
+            return
+        await query.edit_message_text(
+            f"✅ Updated card:\n*{player['name']}* ({fmt.upper()})\nOVR: {ovr} | {RARITY_EMOJI.get(rarity, '')} {rarity.title()}",
+            parse_mode='Markdown'
+        )
+    elif action == "add":
+        success = await add_to_card_catalog(player_id, fmt, ovr, rarity)
+        _invalidate_card_pool_cache()
+        if not success:
+            await query.edit_message_text(f"❌ *{player['name']}* already has an {fmt.upper()} card in catalog.", parse_mode='Markdown')
+            return
+        await query.edit_message_text(
+            f"✅ Added to card catalog:\n*{player['name']}* ({fmt.upper()})\nOVR: {ovr} | {RARITY_EMOJI.get(rarity, '')} {rarity.title()}",
+            parse_mode='Markdown'
+        )
