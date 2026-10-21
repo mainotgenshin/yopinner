@@ -53,6 +53,19 @@ def _get_lock(match_id: str) -> asyncio.Lock:
         _MATCH_LOCKS[match_id] = asyncio.Lock()
     return _MATCH_LOCKS[match_id]
 
+async def _safe_answer_query(query, text: Optional[str] = None, show_alert: bool = False):
+    """Safely answers callback query; suppresses 'Query is too old' and connection timeouts."""
+    if not query:
+        return
+    try:
+        if text:
+            await query.answer(text, show_alert=show_alert)
+        else:
+            await query.answer()
+    except Exception as e:
+        logger.debug(f"query.answer safely suppressed error: {e}")
+
+
 def is_user_in_mini_cric(user_id: int) -> bool:
     """Check if a user is currently engaged in an active mini-cricket match."""
     return user_id in _ACTIVE_USER_MATCH
@@ -95,7 +108,13 @@ async def handle_mini_cric(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # Must be in group or supergroup
         chat_type_str = str(chat.type).lower()
         if "private" in chat_type_str:
-            await msg.reply_text("Mini Cricket challenges must be sent in a group chat!\nAdd me to a group to play.")
+            if await _try_refresh_dm_turn(context, user.id, msg):
+                return
+            await msg.reply_text(
+                "Mini Cricket challenges must be sent in a group chat!\n"
+                "Add me to a group to play.\n\n"
+                "(If you are in an active match, send /refresh to restore your turn buttons.)"
+            )
             return
 
         # Check cancel subcommand first (e.g. /mini_cric cancel)
@@ -315,6 +334,175 @@ async def handle_mini_cric_cancel(update: Update, context: ContextTypes.DEFAULT_
         await update.effective_message.reply_text("Your Mini Cricket challenge has been cancelled.")
 
 
+async def handle_mini_cric_refresh(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """
+    /refresh command in DM:
+    Immediately restores turn buttons and current scoreboard if buttons ever disappear.
+    """
+    user = update.effective_user
+    msg = update.effective_message
+    if not user or not msg:
+        return
+    await _try_refresh_dm_turn(context, user.id, msg)
+
+
+async def _try_refresh_dm_turn(context: ContextTypes.DEFAULT_TYPE, user_id: int, reply_msg) -> bool:
+    """Finds active match for user and re-sends current turn prompt with interactive buttons."""
+    from database import get_db
+    db = get_db()
+
+    match_id = _ACTIVE_USER_MATCH.get(user_id)
+    match = None
+    if match_id:
+        match = await _get_match(match_id)
+    if not match:
+        match = await db.mini_cric_matches.find_one({
+            "$or": [{"challenger_id": user_id}, {"opponent_id": user_id}],
+            "status": {"$in": ["toss", "decision", "in_progress"]}
+        })
+
+    if not match or match.get("status") not in ("toss", "decision", "in_progress"):
+        if reply_msg:
+            await reply_msg.reply_text("You are not in an active Mini Cricket match.")
+        return False
+
+    m_id = match["match_id"]
+    _ACTIVE_USER_MATCH[match["challenger_id"]] = m_id
+    _ACTIVE_USER_MATCH[match["opponent_id"]] = m_id
+    status = match.get("status")
+
+    if status == "toss":
+        caller_id = match.get("toss_caller_id")
+        if user_id == caller_id:
+            toss_kb = InlineKeyboardMarkup([[
+                InlineKeyboardButton("Heads", callback_data=f"mc_toss|{m_id}|{caller_id}|heads"),
+                InlineKeyboardButton("Tails", callback_data=f"mc_toss|{m_id}|{caller_id}|tails"),
+            ]])
+            sent = await reply_msg.reply_text("<b>Toss Time!</b>\nCall the coin toss:", reply_markup=toss_kb, parse_mode="HTML")
+            match["caller_dm_msg_id"] = sent.message_id
+            await _save_match(match)
+        else:
+            await reply_msg.reply_text("<i>Waiting for opponent to call the toss...</i>", parse_mode="HTML")
+        return True
+
+    elif status == "decision":
+        winner_id = match.get("toss_winner_id")
+        if user_id == winner_id:
+            decision_kb = InlineKeyboardMarkup([[
+                InlineKeyboardButton("Bat First", callback_data=f"mc_decide|{m_id}|{winner_id}|bat"),
+                InlineKeyboardButton("Bowl First", callback_data=f"mc_decide|{m_id}|{winner_id}|bowl"),
+            ]])
+            sent = await reply_msg.reply_text("<b>You won the toss!</b>\nChoose to Bat or Bowl:", reply_markup=decision_kb, parse_mode="HTML")
+            match["caller_dm_msg_id"] = sent.message_id
+            await _save_match(match)
+        else:
+            await reply_msg.reply_text("<i>Waiting for toss winner to choose Bat or Bowl...</i>", parse_mode="HTML")
+        return True
+
+    elif status == "in_progress":
+        bowler_id = match["bowler_id"]
+        batter_id = match["batter_id"]
+        innings = match["innings"]
+        overs = match["overs"]
+        total_balls = match["total_balls"]
+        balls_bowled = match["innings_1_balls"] if innings == 1 else match["innings_2_balls"]
+        over_num = (balls_bowled // 6) + 1
+        ball_in_over = (balls_bowled % 6) + 1
+        score = match["innings_1_score"] if innings == 1 else match["innings_2_score"]
+        wkts = match["innings_1_wickets"] if innings == 1 else match["innings_2_wickets"]
+        reel = match["innings_1_reel"] if innings == 1 else match["innings_2_reel"]
+        reel_text = _build_over_reel_text(reel, over_num)
+        ov_str = f"{balls_bowled // 6}.{balls_bowled % 6}"
+        ov_label = f"{overs} Over" if overs == 1 else f"{overs} Overs"
+
+        c_name = match["challenger_name"]
+        o_name = match["opponent_name"]
+        bat_name = c_name if batter_id == match["challenger_id"] else o_name
+        bowl_name = o_name if batter_id == match["challenger_id"] else c_name
+
+        target_line = ""
+        if innings == 2:
+            target = match["target"]
+            needed = max(0, target - score)
+            balls_left = max(0, total_balls - balls_bowled)
+            rrr = (needed / (balls_left / 6.0)) if balls_left > 0 else 0.0
+            run_term = "run" if needed == 1 else "runs"
+            ball_term = "ball" if balls_left == 1 else "balls"
+            target_line = f"Target: <b>{target}</b> (Need <b>{needed} {run_term}</b> from <b>{balls_left} {ball_term}</b> | RRR: <b>{rrr:.1f}</b>)\n"
+
+        if user_id == bowler_id:
+            if match.get("pending_delivery"):
+                delivery = match["pending_delivery"]
+                text = (
+                    f"<b>Mini-Cricket ({ov_label}) — Innings {innings}</b>\n"
+                    f"━━━━━━━━━━━━━━━━━━━━\n"
+                    f"Batting: <b>{esc_html(bat_name)}</b>\n"
+                    f"Score: <b>{score}/{wkts}</b> ({ov_str} ov)\n"
+                    f"{target_line}"
+                    f"Over {over_num}: [ {reel_text} ]\n"
+                    f"━━━━━━━━━━━━━━━━━━━━\n"
+                    f"Delivery Locked In: <b>{delivery}</b>\n"
+                    f"<i>Waiting for <b>{esc_html(bat_name)}</b> to play their shot...</i>"
+                )
+                sent = await reply_msg.reply_text(text, parse_mode="HTML")
+                match["bowler_dm_msg_id"] = sent.message_id
+            else:
+                bowl_kb = _build_bowler_keyboard(match, over_num)
+                text = (
+                    f"<b>Mini-Cricket ({ov_label}) — Innings {innings}</b>\n"
+                    f"━━━━━━━━━━━━━━━━━━━━\n"
+                    f"Batting: <b>{esc_html(bat_name)}</b>\n"
+                    f"Score: <b>{score}/{wkts}</b> ({ov_str} ov)\n"
+                    f"{target_line}"
+                    f"Over {over_num}: [ {reel_text} ]\n"
+                    f"━━━━━━━━━━━━━━━━━━━━\n"
+                    f"Last Ball: <i>{esc_html(match['last_ball_commentary'])}</i>\n"
+                    f"━━━━━━━━━━━━━━━━━━━━\n"
+                    f"Your Turn to Bowl! Pick delivery (Ball {ball_in_over}/6):"
+                )
+                sent = await reply_msg.reply_text(text, reply_markup=bowl_kb, parse_mode="HTML")
+                match["bowler_dm_msg_id"] = sent.message_id
+            await _save_match(match)
+            return True
+
+        elif user_id == batter_id:
+            if match.get("pending_delivery"):
+                bat_kb = _build_batter_keyboard(match)
+                del_shown = "Mystery Ball" if match["pending_delivery"] == "Mystery" else match["pending_delivery"]
+                text = (
+                    f"<b>Mini-Cricket ({ov_label}) — Innings {innings}</b>\n"
+                    f"━━━━━━━━━━━━━━━━━━━━\n"
+                    f"Batting: <b>{esc_html(bat_name)}</b>\n"
+                    f"Score: <b>{score}/{wkts}</b> ({ov_str} ov)\n"
+                    f"{target_line}"
+                    f"Over {over_num}: [ {reel_text} ]\n"
+                    f"━━━━━━━━━━━━━━━━━━━━\n"
+                    f"Bowler bowled: <b>{del_shown}</b>!\n"
+                    f"Choose your shot:"
+                )
+                sent = await reply_msg.reply_text(text, reply_markup=bat_kb, parse_mode="HTML")
+                match["batter_dm_msg_id"] = sent.message_id
+            else:
+                text = (
+                    f"<b>Mini-Cricket ({ov_label}) — Innings {innings}</b>\n"
+                    f"━━━━━━━━━━━━━━━━━━━━\n"
+                    f"Batting: <b>{esc_html(bat_name)}</b>\n"
+                    f"Score: <b>{score}/{wkts}</b> ({ov_str} ov)\n"
+                    f"{target_line}"
+                    f"Over {over_num}: [ {reel_text} ]\n"
+                    f"━━━━━━━━━━━━━━━━━━━━\n"
+                    f"Last Ball: <i>{esc_html(match['last_ball_commentary'])}</i>\n"
+                    f"━━━━━━━━━━━━━━━━━━━━\n"
+                    f"<i>Waiting for <b>{esc_html(bowl_name)}</b> to bowl...</i>"
+                )
+                sent = await reply_msg.reply_text(text, parse_mode="HTML")
+                match["batter_dm_msg_id"] = sent.message_id
+            await _save_match(match)
+            return True
+
+    return False
+
+
 # ── Clean HTML & In-Place DM Editing Helpers ─────────────────────────────────
 
 _USER_CLICK_COOLDOWN: dict[int, float] = {}
@@ -384,20 +572,20 @@ async def cb_mc_accept(update: Update, context: ContextTypes.DEFAULT_TYPE):
     _, match_id, target_str = parts
 
     if str(query.from_user.id) != target_str:
-        await query.answer("This challenge is not for you!", show_alert=True)
+        await _safe_answer_query(query, "This challenge is not for you!", show_alert=True)
         return
 
     if not _check_click_rate_limit(query.from_user.id):
-        await query.answer("Please wait 2 seconds...", show_alert=True)
+        await _safe_answer_query(query, "Please wait 2 seconds...", show_alert=True)
         return
 
     lock = _get_lock(match_id)
     if lock.locked():
-        await query.answer("Please wait 2 seconds...", show_alert=True)
+        await _safe_answer_query(query, "Please wait 2 seconds...", show_alert=True)
         return
 
     async with lock:
-        await query.answer()
+        await _safe_answer_query(query)
         match = await _get_match(match_id)
         if not match or match["status"] != "pending":
             await query.edit_message_text("Challenge expired or already processed.")
@@ -458,14 +646,14 @@ async def cb_mc_decline(update: Update, context: ContextTypes.DEFAULT_TYPE):
     _, match_id, target_str = parts
 
     if str(query.from_user.id) != target_str:
-        await query.answer("Not your challenge!", show_alert=True)
+        await _safe_answer_query(query, "Not your challenge!", show_alert=True)
         return
 
     if not _check_click_rate_limit(query.from_user.id):
-        await query.answer("Please wait 2 seconds...", show_alert=True)
+        await _safe_answer_query(query, "Please wait 2 seconds...", show_alert=True)
         return
 
-    await query.answer()
+    await _safe_answer_query(query)
     match = await _get_match(match_id)
     if match and match["status"] == "pending":
         match["status"] = "declined"
@@ -516,20 +704,20 @@ async def cb_mc_toss(update: Update, context: ContextTypes.DEFAULT_TYPE):
     _, match_id, caller_str, call = parts
 
     if str(query.from_user.id) != caller_str:
-        await query.answer("Not your toss call!", show_alert=True)
+        await _safe_answer_query(query, "Not your toss call!", show_alert=True)
         return
 
     if not _check_click_rate_limit(query.from_user.id):
-        await query.answer("Please wait 2 seconds...", show_alert=True)
+        await _safe_answer_query(query, "Please wait 2 seconds...", show_alert=True)
         return
 
     lock = _get_lock(match_id)
     if lock.locked():
-        await query.answer("Please wait 2 seconds...", show_alert=True)
+        await _safe_answer_query(query, "Please wait 2 seconds...", show_alert=True)
         return
 
     async with lock:
-        await query.answer()
+        await _safe_answer_query(query)
         match = await _get_match(match_id)
         if not match or match["status"] != "toss":
             return
@@ -594,20 +782,20 @@ async def cb_mc_decision(update: Update, context: ContextTypes.DEFAULT_TYPE):
     _, match_id, winner_str, choice = parts
 
     if str(query.from_user.id) != winner_str:
-        await query.answer("Not your decision!", show_alert=True)
+        await _safe_answer_query(query, "Not your decision!", show_alert=True)
         return
 
     if not _check_click_rate_limit(query.from_user.id):
-        await query.answer("Please wait 2 seconds...", show_alert=True)
+        await _safe_answer_query(query, "Please wait 2 seconds...", show_alert=True)
         return
 
     lock = _get_lock(match_id)
     if lock.locked():
-        await query.answer("Please wait 2 seconds...", show_alert=True)
+        await _safe_answer_query(query, "Please wait 2 seconds...", show_alert=True)
         return
 
     async with lock:
-        await query.answer()
+        await _safe_answer_query(query)
         match = await _get_match(match_id)
         if not match or match["status"] != "decision":
             return
@@ -822,37 +1010,31 @@ async def cb_mc_bowl(update: Update, context: ContextTypes.DEFAULT_TYPE):
     _, match_id, bowler_str, delivery = parts
 
     if str(query.from_user.id) != bowler_str:
-        await query.answer("Not your bowling turn!", show_alert=True)
+        await _safe_answer_query(query, "Not your bowling turn!", show_alert=True)
         return
 
     # 2-second rate limit to prevent spamming
     if not _check_click_rate_limit(query.from_user.id):
-        await query.answer("Please wait 2 seconds...", show_alert=True)
+        await _safe_answer_query(query, "Please wait 2 seconds...", show_alert=True)
         return
 
     lock = _get_lock(match_id)
     if lock.locked():
-        await query.answer("Please wait 2 seconds...", show_alert=True)
+        await _safe_answer_query(query, "Please wait 2 seconds...", show_alert=True)
         return
 
     async with lock:
         match = await _get_match(match_id)
         if not match or match["status"] != "in_progress":
-            await query.answer("Match is not in progress.", show_alert=False)
+            await _safe_answer_query(query, "Match is not in progress.", show_alert=False)
             return
 
         # Double delivery check: if already locked in, do not re-send to batter!
         if match.get("pending_delivery") is not None:
-            await query.answer("Delivery already locked in! Waiting for batter...", show_alert=True)
+            await _safe_answer_query(query, "Delivery already locked in! Waiting for batter...", show_alert=True)
             return
 
-        # Immediately strip reply markup from bowler so no double clicks can trigger
-        try:
-            await query.edit_message_reply_markup(reply_markup=None)
-        except Exception:
-            pass
-
-        await query.answer()
+        await _safe_answer_query(query)
 
         bowler_id = int(bowler_str)
         batter_id = match["batter_id"]
@@ -944,40 +1126,35 @@ async def cb_mc_shot(update: Update, context: ContextTypes.DEFAULT_TYPE):
     _, match_id, batter_str, shot = parts
 
     if str(query.from_user.id) != batter_str:
-        await query.answer("Not your batting turn!", show_alert=True)
+        await _safe_answer_query(query, "Not your batting turn!", show_alert=True)
         return
 
     # 2-second rate limit to prevent spamming
     if not _check_click_rate_limit(query.from_user.id):
-        await query.answer("Please wait 2 seconds...", show_alert=True)
+        await _safe_answer_query(query, "Please wait 2 seconds...", show_alert=True)
         return
 
     lock = _get_lock(match_id)
     if lock.locked():
-        await query.answer("Please wait 2 seconds...", show_alert=True)
+        await _safe_answer_query(query, "Please wait 2 seconds...", show_alert=True)
         return
 
     async with lock:
         match = await _get_match(match_id)
         if not match or match["status"] != "in_progress":
-            await query.answer("Match is not in progress.", show_alert=False)
+            await _safe_answer_query(query, "Match is not in progress.", show_alert=False)
             return
 
         delivery = match.get("pending_delivery")
         actual_del = match.get("pending_delivery_actual")
         if not delivery:
-            await query.answer("Shot already played for this ball!", show_alert=True)
+            await _safe_answer_query(query, "Shot already played for this ball!", show_alert=True)
             return
 
-        # Immediately clear pending delivery and strip batter buttons
         match["pending_delivery"] = None
         match["pending_delivery_actual"] = None
-        try:
-            await query.edit_message_reply_markup(reply_markup=None)
-        except Exception:
-            pass
 
-        await query.answer()
+        await _safe_answer_query(query)
 
         # Update batter message ID
         match["batter_dm_msg_id"] = query.message.message_id
