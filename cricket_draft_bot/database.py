@@ -1950,6 +1950,12 @@ async def get_botstatus_data() -> dict:
     async def _count_cards():
         return await db.user_cards.count_documents({})
 
+    async def _count_active_mini_cric():
+        try:
+            return await db.mini_cric_matches.count_documents({"status": "in_progress"})
+        except Exception:
+            return 0
+
     async def _count_active_matches():
         """Returns total active count + breakdown by mode."""
         cursor = db.matches.find(
@@ -1970,16 +1976,17 @@ async def get_botstatus_data() -> dict:
             mode_counts[key] = mode_counts.get(key, 0) + 1
         return len(docs), mode_counts
 
-    users, cards, (total_active, mode_counts) = await _asyncio.gather(
-        _count_users(), _count_cards(), _count_active_matches()
+    users, cards, (total_active, mode_counts), active_mini_cric = await _asyncio.gather(
+        _count_users(), _count_cards(), _count_active_matches(), _count_active_mini_cric()
     )
     return {
-        "total_users":   users,
-        "total_cards":   cards,
-        "active_total":  total_active,
-        "active_modes":  mode_counts,
-        "cache_size":    len(_player_cache),
-        "cache_max":     CACHE_MAX_SIZE,
+        "total_users":      users,
+        "total_cards":      cards,
+        "active_total":     total_active,
+        "active_modes":     mode_counts,
+        "active_mini_cric": active_mini_cric,
+        "cache_size":       len(_player_cache),
+        "cache_max":        CACHE_MAX_SIZE,
     }
 
 
