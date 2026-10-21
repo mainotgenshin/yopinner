@@ -1067,14 +1067,17 @@ if __name__ == '__main__':
 
     # Mini-Cricket Commands & Callbacks
     from handlers.mini_cric import (
-        handle_mini_cric, handle_mini_cric_end,
+        handle_mini_cric, handle_mini_cric_cancel, handle_mini_cric_end,
         cb_mc_accept, cb_mc_decline, cb_mc_toss, cb_mc_decision,
         cb_mc_bowl, cb_mc_shot
     )
     from handlers.admin import cb_admin_card
 
-    application.add_handler(CommandHandler('mini_cric', handle_mini_cric))
-    application.add_handler(CommandHandler('end',       handle_mini_cric_end))
+    application.add_handler(CommandHandler('mini_cric',        handle_mini_cric))
+    application.add_handler(CommandHandler('minicric',         handle_mini_cric))
+    application.add_handler(CommandHandler('mini_cric_cancel', handle_mini_cric_cancel))
+    application.add_handler(CommandHandler('minicric_cancel',  handle_mini_cric_cancel))
+    application.add_handler(CommandHandler('end',              handle_mini_cric_end))
 
     application.add_handler(CallbackQueryHandler(cb_mc_accept,   pattern=r"^mc_acc\|"))
     application.add_handler(CallbackQueryHandler(cb_mc_decline,  pattern=r"^mc_dec\|"))
