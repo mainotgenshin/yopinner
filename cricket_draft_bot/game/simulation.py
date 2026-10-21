@@ -149,7 +149,8 @@ async def run_simulation(match: Match, bot=None) -> str:
     else:
         active_positions = POSITIONS_T20
     
-    details.append("🏟 *MATCH SIMULATION – POSITION COMPARISON*\n")
+    mode_tag = f"{match.mode.upper()} " if match.mode else ""
+    details.append(f"🏟 *{mode_tag}MATCH SIMULATION – POSITION COMPARISON*\n")
     
     ICONS = {
         "Captain":        "⚔️",
