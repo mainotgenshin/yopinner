@@ -90,6 +90,7 @@ async def save_match_state(match: Match):
             "owner_id": team.owner_id,
             "owner_name": team.owner_name,
             "slots": {k: (v.player_id if v else None) for k, v in team.slots.items()},
+            "drafted_slots": {k: (v.player_id if v else None) for k, v in getattr(team, "drafted_slots", {}).items()} if getattr(team, "drafted_slots", None) else None,
             "redraws_remaining": team.redraws_remaining,
             "replacements_remaining": getattr(team, 'replacements_remaining', 1),
             "is_ready": team.is_ready,
@@ -155,6 +156,18 @@ async def load_match_state(match_id: str) -> Optional[Match]:
                 t.slots[slot] = Player(**filtered_p_data)
             else:
                 t.slots[slot] = None
+
+        if d.get('drafted_slots'):
+            t.drafted_slots = {}
+            for slot, pid in d['drafted_slots'].items():
+                if pid and pid in player_map:
+                    p_data = player_map[pid]
+                    filtered_p_data = {k: v for k, v in p_data.items() if k in _PLAYER_FIELDS}
+                    t.drafted_slots[slot] = Player(**filtered_p_data)
+                else:
+                    t.drafted_slots[slot] = None
+        else:
+            t.drafted_slots = None
         return t
 
     m = Match(
