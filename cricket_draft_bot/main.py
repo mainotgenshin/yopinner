@@ -211,31 +211,46 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return
 
     if chat.type == "private":
-        # DM — no group-specific features
+        # DM — full overview
         await update.effective_message.reply_text(
-            "👋 *Hi! I'm Draft Bot.*\n\n"
-            "Add me to a group to start playing!\n\n"
-            "📖 *Available Modes:*\n"
-            "🏏 IPL · International Cricket\n"
-            "⚽ FIFA Draft\n"
-            "🤼 WWE Draft _(NEW!)_\n\n"
-            "Use `/standings` to view the global leaderboard.",
+            "👋 *Welcome to Draft Bot!*\n\n"
+            "🎮 *1v1 Tactical Mini-Cricket:*\n"
+            "• `/mini_cric [1-5]` — Fast-paced 1v1 tactical cricket in DMs!\n\n"
+            "🃏 *Card Collection & Economy:*\n"
+            "• `/pack` — Buy card packs (Cricket, FIFA, WWE)\n"
+            "• `/inventory` — View & open your packs\n"
+            "• `/mycards` — Browse collection & set favorite card\n"
+            "• `/viewcard <name>` — Card stats & quick sell\n"
+            "• `/quest` — Daily quests for free card coins\n\n"
+            "⚔️ *Group Draft Battles:*\n"
+            "Add me to any group chat to challenge opponents in IPL, ODI, Test, FIFA, WWE & PKL drafts!\n\n"
+            "📊 *Rankings & Info:*\n"
+            "• `/myprofile` — Your stats, coins & favorite card\n"
+            "• `/standings` — Global draft leaderboard",
             parse_mode="Markdown"
         )
     else:
         # Group — full command list
         await update.effective_message.reply_text(
-            "🏏 *Welcome to Draft Bot!* 🏏\n\n"
-            "*Draft Commands:*\n"
-            "/challenge — Select and start any challenge\n"
-            "/challengeipl — IPL Draft\n"
-            "/challengeodi — ODI Draft\n"
-            "/challengetest — Test Draft\n"
-            "/challengefifa — FIFA Draft\n"
-            "/challengewwe — WWE Draft _(NEW!)_\n\n"
-            "/standings — Leaderboard\n"
-            "/myprofile — Your stats\n"
-            "/help — Show this message",
+            "🏏 *Welcome to Draft Bot!* 🏆\n\n"
+            "*⚔️ Draft Challenge Modes:*\n"
+            "• `/challenge` — Interactive challenge menu\n"
+            "• `/challengeipl` — IPL Draft\n"
+            "• `/challengeodi` — ODI Draft\n"
+            "• `/challengetest` — Test Draft\n"
+            "• `/challengefifa` — FIFA Draft\n"
+            "• `/challengewwe` — WWE Draft (Men & Women)\n"
+            "• `/challengepkl` — Pro Kabaddi Draft\n\n"
+            "*🎮 Tactical Mini-Game:*\n"
+            "• `/mini_cric [1-5]` — 1v1 tactical cricket match (played in DMs)\n\n"
+            "*🎲 Mini-Games & Rewards:*\n"
+            "• `/bbet` — Bet match coins on coin tosses\n"
+            "• `/checkin` — Daily check-in streak reward\n\n"
+            "*🃏 Cards & Store (Use in Bot DM):*\n"
+            "• `/pack` · `/inventory` · `/mycards` · `/quest`\n\n"
+            "*📊 Leaderboards:*\n"
+            "• `/standings` — Global draft leaderboard\n"
+            "• `/myprofile` — Your match record & favorite card",
             parse_mode="Markdown"
         )
 
@@ -612,6 +627,13 @@ async def _startup_recovery(bot):
 
     except Exception as e:
         logger.error(f"Stale challenge cleanup failed: {e}")
+
+    # ── Mini-Cricket Recovery on restart ──
+    try:
+        from handlers.mini_cric import resume_mini_cric_matches
+        await resume_mini_cric_matches(bot)
+    except Exception as _mc_err:
+        logger.error(f"Mini-cricket recovery error: {_mc_err}")
 
 
 async def _auto_simulate(bot, match_id: str):
@@ -1042,6 +1064,25 @@ if __name__ == '__main__':
     application.add_handler(CallbackQueryHandler(cb_quest_claim,  pattern=r"^quest_claim\|"))
     application.add_handler(CallbackQueryHandler(cb_msell_ok,     pattern=r"^msell_ok\|"))
     application.add_handler(CallbackQueryHandler(cb_msell_cancel, pattern=r"^msell_cancel\|"))
+
+    # Mini-Cricket Commands & Callbacks
+    from handlers.mini_cric import (
+        handle_mini_cric, handle_mini_cric_end,
+        cb_mc_accept, cb_mc_decline, cb_mc_toss, cb_mc_decision,
+        cb_mc_bowl, cb_mc_shot
+    )
+    from handlers.admin import cb_admin_card
+
+    application.add_handler(CommandHandler('mini_cric', handle_mini_cric))
+    application.add_handler(CommandHandler('end',       handle_mini_cric_end))
+
+    application.add_handler(CallbackQueryHandler(cb_mc_accept,   pattern=r"^mc_acc\|"))
+    application.add_handler(CallbackQueryHandler(cb_mc_decline,  pattern=r"^mc_dec\|"))
+    application.add_handler(CallbackQueryHandler(cb_mc_toss,     pattern=r"^mc_toss\|"))
+    application.add_handler(CallbackQueryHandler(cb_mc_decision, pattern=r"^mc_decide\|"))
+    application.add_handler(CallbackQueryHandler(cb_mc_bowl,     pattern=r"^mc_bowl\|"))
+    application.add_handler(CallbackQueryHandler(cb_mc_shot,     pattern=r"^mc_shot\|"))
+    application.add_handler(CallbackQueryHandler(cb_admin_card,  pattern=r"^adm_card\|"))
 
     # Catch-all callback (must be LAST)
     application.add_handler(CallbackQueryHandler(handle_callback))
