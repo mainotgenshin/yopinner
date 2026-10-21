@@ -15,6 +15,7 @@ import asyncio
 import logging
 import random
 import time
+import html
 import uuid
 from typing import Dict, Optional, Tuple
 
@@ -35,6 +36,9 @@ logger = logging.getLogger(__name__)
 
 def esc(t):
     return escape_markdown(str(t), version=1)
+
+def esc_html(t):
+    return html.escape(str(t or ''))
 
 # In-memory match locks and active lookup
 _MATCH_LOCKS: Dict[str, asyncio.Lock] = {}
@@ -76,143 +80,182 @@ async def handle_mini_cric(update: Update, context: ContextTypes.DEFAULT_TYPE):
     /mini_cric [overs] @opponent
     Starts a 1v1 tactical cricket challenge in group chat.
     """
-    msg = update.effective_message
-    user = update.effective_user
-    chat = update.effective_chat
+    try:
+        msg = update.effective_message
+        user = update.effective_user
+        chat = update.effective_chat
 
-    if not msg or not user or not chat:
-        return
+        if not msg or not user or not chat:
+            return
 
-    # Must be in group
-    if chat.type == "private":
-        await msg.reply_text("🏏 Mini Cricket challenges must be sent in a *group chat*!\nAdd me to a group to play.", parse_mode="Markdown")
-        return
+        # Must be in group or supergroup
+        if chat.type == "private":
+            await msg.reply_text("🏏 Mini Cricket challenges must be sent in a *group chat*!\nAdd me to a group to play.", parse_mode="Markdown")
+            return
 
-    # Check cancel subcommand first
-    args = context.args or []
-    if args and args[0].lower() == "cancel":
-        await handle_mini_cric_cancel(update, context)
-        return
+        # Check cancel subcommand first (e.g. /mini_cric cancel)
+        args = context.args or []
+        if args and args[0].lower() == "cancel":
+            await handle_mini_cric_cancel(update, context)
+            return
 
-    # Cooldown check (5s)
-    now = time.time()
-    if now - _USER_COOLDOWNS.get(user.id, 0.0) < 5.0:
-        await msg.reply_text("⏳ Please wait a few seconds before challenging again.")
-        return
-    _USER_COOLDOWNS[user.id] = now
+        # Cooldown check (5s)
+        now = time.time()
+        if now - _USER_COOLDOWNS.get(user.id, 0.0) < 5.0:
+            await msg.reply_text("⏳ Please wait a few seconds before challenging again.")
+            return
+        _USER_COOLDOWNS[user.id] = now
 
-    # Check if challenger already has a pending challenge
-    from database import get_db
-    db = get_db()
-    existing_pending = await db.mini_cric_matches.find_one({
-        "challenger_id": user.id,
-        "status": "pending"
-    })
-    if existing_pending:
-        await msg.reply_text("⚠️ You already have a pending challenge! Wait for it to be accepted/declined, or type `/mini_cric cancel` to abort it.", parse_mode="Markdown")
-        return
+        # Check if challenger already has a pending challenge
+        from database import get_db
+        db = get_db()
+        existing_pending = await db.mini_cric_matches.find_one({
+            "challenger_id": user.id,
+            "status": "pending"
+        })
+        if existing_pending:
+            await msg.reply_text("⚠️ You already have a pending challenge! Wait for it to be accepted/declined, or type `/mini_cric cancel` to abort it.", parse_mode="Markdown")
+            return
 
-    # Check user active mini cric
-    if is_user_in_mini_cric(user.id):
-        await msg.reply_text("❌ You are already playing a Mini Cricket match! Finish it first.")
-        return
+        # Check user active mini cric
+        if is_user_in_mini_cric(user.id):
+            await msg.reply_text("❌ You are already playing a Mini Cricket match! Finish it first.")
+            return
 
-    # Cross-mode check: active draft matches
-    from database import get_user_active_matches_info
-    user_drafts = await get_user_active_matches_info(user.id)
-    if user_drafts:
-        await msg.reply_text("❌ You are currently in an active draft match. Finish it before playing Mini Cricket!")
-        return
+        # Cross-mode check: active draft matches
+        from database import get_user_active_matches_info
+        user_drafts = await get_user_active_matches_info(user.id)
+        if user_drafts:
+            await msg.reply_text("❌ You are currently in an active draft match. Finish it before playing Mini Cricket!")
+            return
 
-    # Parse overs argument
-    overs = 1
-    for a in args:
-        if a.isdigit():
-            val = int(a)
-            if 1 <= val <= 5:
-                overs = val
-            break
-
-    # Parse target opponent
-    target_user = None
-    if msg.reply_to_message and msg.reply_to_message.from_user:
-        target_user = msg.reply_to_message.from_user
-    elif msg.entities:
-        for ent in msg.entities:
-            if getattr(ent, "type", "") == "text_mention" and getattr(ent, "user", None):
-                target_user = ent.user
+        # Parse overs argument
+        overs = 1
+        for a in args:
+            if a.isdigit():
+                val = int(a)
+                if 1 <= val <= 5:
+                    overs = val
                 break
-    if not target_user:
-        await msg.reply_text(
-            f"🏏 *Tactical Mini-Cricket (1-Wicket Match)*\n\n"
-            f"Usage: `/mini_cric [1-5]` (reply to opponent or mention @username)\n"
-            f"Example: `/mini_cric 2` (in reply to your opponent)\n"
-            f"• Overs: *{overs}* | Rewards: *+{overs*10}🪙* / *+{overs*5}🪙*",
-            parse_mode="Markdown"
+
+        # Parse target opponent
+        target_user = None
+        if msg.reply_to_message and msg.reply_to_message.from_user:
+            target_user = msg.reply_to_message.from_user
+        elif getattr(msg, "entities", None):
+            for ent in msg.entities:
+                if getattr(ent, "type", "") == "text_mention" and getattr(ent, "user", None):
+                    target_user = ent.user
+                    break
+
+        if not target_user:
+            usage_html = (
+                f"🏏 <b>Tactical Mini-Cricket (1-Wicket Match)</b>\n\n"
+                f"Usage: <code>/mini_cric [1-5]</code> (in reply to opponent's message)\n"
+                f"Example: <code>/mini_cric 2</code> (replying to your opponent)\n"
+                f"• Overs: <b>{overs}</b> | Rewards: <b>+{overs*10}🪙</b> / <b>+{overs*5}🪙</b>"
+            )
+            try:
+                await msg.reply_text(usage_html, parse_mode="HTML")
+            except Exception:
+                await msg.reply_text(
+                    f"🏏 Tactical Mini-Cricket (1-Wicket Match)\n\n"
+                    f"Usage: /mini_cric [1-5] (in reply to opponent's message)\n"
+                    f"Example: /mini_cric 2 (replying to your opponent)\n"
+                    f"• Overs: {overs} | Rewards: +{overs*10}🪙 / +{overs*5}🪙",
+                    parse_mode=None
+                )
+            return
+
+        if target_user.is_bot or target_user.id == user.id:
+            await msg.reply_text("❌ You cannot challenge a bot or yourself.")
+            return
+
+        # Target active check
+        if is_user_in_mini_cric(target_user.id):
+            t_name = esc_html(target_user.first_name)
+            await msg.reply_text(f"❌ <b>{t_name}</b> is already in a Mini Cricket match.", parse_mode="HTML")
+            return
+
+        target_drafts = await get_user_active_matches_info(target_user.id)
+        if target_drafts:
+            t_name = esc_html(target_user.first_name)
+            await msg.reply_text(f"❌ <b>{t_name}</b> is currently playing a draft match.", parse_mode="HTML")
+            return
+
+        # Create challenge
+        match_id = str(uuid.uuid4())[:8]
+        match_doc = {
+            "match_id": match_id,
+            "chat_id": chat.id,
+            "challenger_id": user.id,
+            "challenger_name": user.first_name,
+            "opponent_id": target_user.id,
+            "opponent_name": target_user.first_name,
+            "overs": overs,
+            "total_balls": overs * 6,
+            "status": "pending",
+            "created_at": now,
+            "innings": 1,
+            "innings_1_score": 0,
+            "innings_1_wickets": 0,
+            "innings_1_balls": 0,
+            "innings_1_reel": [],
+            "innings_2_score": 0,
+            "innings_2_wickets": 0,
+            "innings_2_balls": 0,
+            "innings_2_reel": [],
+            "target": 0,
+            "mystery_used_over": {},
+            "end_requested_by": [],
+            "group_message_id": msg.message_id,
+        }
+
+        await _save_match(match_doc)
+
+        keyboard = InlineKeyboardMarkup([[
+            InlineKeyboardButton("✅ Accept Match", callback_data=f"mc_acc|{match_id}|{target_user.id}"),
+            InlineKeyboardButton("❌ Decline", callback_data=f"mc_dec|{match_id}|{target_user.id}")
+        ]])
+
+        c_name = esc_html(user.first_name)
+        t_name = esc_html(target_user.first_name)
+
+        challenge_text = (
+            f"🏏 <b>Mini-Cricket Challenge!</b> (1-Wicket Match)\n\n"
+            f"<b>{c_name}</b> challenges <b>{t_name}</b>!\n"
+            f"• Overs: <b>{overs}</b> ({overs*6} balls max)\n"
+            f"• Winner: <b>+{overs*10}🪙</b> | Loser: <b>+{overs*5}🪙</b>\n\n"
+            f"<b>{t_name}</b>, do you accept?"
         )
-        return
 
-    if target_user.is_bot or target_user.id == user.id:
-        await msg.reply_text("❌ You cannot challenge a bot or yourself.")
-        return
+        try:
+            sent_msg = await msg.reply_text(
+                challenge_text,
+                reply_markup=keyboard,
+                parse_mode="HTML"
+            )
+        except Exception as _e1:
+            logger.warning(f"HTML challenge send failed: {_e1}, trying plain text...")
+            sent_msg = await msg.reply_text(
+                f"🏏 Mini-Cricket Challenge! (1-Wicket Match)\n\n"
+                f"{user.first_name} challenges {target_user.first_name}!\n"
+                f"• Overs: {overs} ({overs*6} balls max)\n"
+                f"• Winner: +{overs*10}🪙 | Loser: +{overs*5}🪙\n\n"
+                f"{target_user.first_name}, do you accept?",
+                reply_markup=keyboard,
+                parse_mode=None
+            )
 
-    # Target active check
-    if is_user_in_mini_cric(target_user.id):
-        await msg.reply_text(f"❌ *{esc(target_user.first_name)}* is already in a Mini Cricket match.", parse_mode="Markdown")
-        return
+        match_doc["challenge_msg_id"] = sent_msg.message_id
+        await _save_match(match_doc)
 
-    target_drafts = await get_user_active_matches_info(target_user.id)
-    if target_drafts:
-        await msg.reply_text(f"❌ *{esc(target_user.first_name)}* is currently playing a draft match.", parse_mode="Markdown")
-        return
-
-    # Create challenge
-    match_id = str(uuid.uuid4())[:8]
-    match_doc = {
-        "match_id": match_id,
-        "chat_id": chat.id,
-        "challenger_id": user.id,
-        "challenger_name": user.first_name,
-        "opponent_id": target_user.id,
-        "opponent_name": target_user.first_name,
-        "overs": overs,
-        "total_balls": overs * 6,
-        "status": "pending",
-        "created_at": now,
-        "innings": 1,
-        "innings_1_score": 0,
-        "innings_1_wickets": 0,
-        "innings_1_balls": 0,
-        "innings_1_reel": [],
-        "innings_2_score": 0,
-        "innings_2_wickets": 0,
-        "innings_2_balls": 0,
-        "innings_2_reel": [],
-        "target": 0,
-        "mystery_used_over": {},
-        "end_requested_by": [],
-        "group_message_id": msg.message_id,
-    }
-
-    await _save_match(match_doc)
-
-    keyboard = InlineKeyboardMarkup([[
-        InlineKeyboardButton("✅ Accept Match", callback_data=f"mc_acc|{match_id}|{target_user.id}"),
-        InlineKeyboardButton("❌ Decline", callback_data=f"mc_dec|{match_id}|{target_user.id}")
-    ]])
-
-    sent_msg = await msg.reply_text(
-        f"🏏 *Mini-Cricket Challenge!* (1-Wicket Match)\n\n"
-        f"*{esc(user.first_name)}* challenges *{esc(target_user.first_name)}*!\n"
-        f"• Overs: *{overs}* ({overs*6} balls max)\n"
-        f"• Winner: *+{overs*10}🪙* | Loser: *+{overs*5}🪙*\n\n"
-        f"*{esc(target_user.first_name)}*, do you accept?",
-        reply_markup=keyboard,
-        parse_mode="Markdown"
-    )
-
-    match_doc["challenge_msg_id"] = sent_msg.message_id
-    await _save_match(match_doc)
+    except Exception as err:
+        logger.exception(f"Unhandled exception in handle_mini_cric: {err}")
+        try:
+            await update.effective_message.reply_text(f"⚠️ Error starting Mini-Cricket: {err}")
+        except Exception:
+            pass
 
 
 async def handle_mini_cric_cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
