@@ -88,9 +88,12 @@ async def handle_mini_cric(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if not msg or not user or not chat:
             return
 
+        logger.info(f"=== [MINI_CRIC] Triggered by {user.id} ({user.first_name}) in chat {chat.id} ({chat.type}) with args={context.args} ===")
+
         # Must be in group or supergroup
-        if chat.type == "private":
-            await msg.reply_text("🏏 Mini Cricket challenges must be sent in a *group chat*!\nAdd me to a group to play.", parse_mode="Markdown")
+        chat_type_str = str(chat.type).lower()
+        if "private" in chat_type_str:
+            await msg.reply_text("🏏 Mini Cricket challenges must be sent in a group chat!\nAdd me to a group to play.")
             return
 
         # Check cancel subcommand first (e.g. /mini_cric cancel)
@@ -99,10 +102,10 @@ async def handle_mini_cric(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await handle_mini_cric_cancel(update, context)
             return
 
-        # Cooldown check (5s)
+        # Cooldown check (3s)
         now = time.time()
-        if now - _USER_COOLDOWNS.get(user.id, 0.0) < 5.0:
-            await msg.reply_text("⏳ Please wait a few seconds before challenging again.")
+        if now - _USER_COOLDOWNS.get(user.id, 0.0) < 3.0:
+            await msg.reply_text("⏳ Please wait a moment before sending another command.")
             return
         _USER_COOLDOWNS[user.id] = now
 
@@ -142,13 +145,16 @@ async def handle_mini_cric(update: Update, context: ContextTypes.DEFAULT_TYPE):
         target_user = None
         if msg.reply_to_message and msg.reply_to_message.from_user:
             target_user = msg.reply_to_message.from_user
+            logger.info(f"=== [MINI_CRIC] Opponent from reply: {target_user.id} ({target_user.first_name}) ===")
         elif getattr(msg, "entities", None):
             for ent in msg.entities:
                 if getattr(ent, "type", "") == "text_mention" and getattr(ent, "user", None):
                     target_user = ent.user
+                    logger.info(f"=== [MINI_CRIC] Opponent from text_mention: {target_user.id} ({target_user.first_name}) ===")
                     break
 
         if not target_user:
+            logger.info("=== [MINI_CRIC] No opponent found; replying with usage instructions ===")
             usage_html = (
                 f"🏏 <b>Tactical Mini-Cricket (1-Wicket Match)</b>\n\n"
                 f"Usage: <code>/mini_cric [1-5]</code> (in reply to opponent's message)\n"
@@ -162,8 +168,7 @@ async def handle_mini_cric(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     f"🏏 Tactical Mini-Cricket (1-Wicket Match)\n\n"
                     f"Usage: /mini_cric [1-5] (in reply to opponent's message)\n"
                     f"Example: /mini_cric 2 (replying to your opponent)\n"
-                    f"• Overs: {overs} | Rewards: +{overs*10}🪙 / +{overs*5}🪙",
-                    parse_mode=None
+                    f"• Overs: {overs} | Rewards: +{overs*10}🪙 / +{overs*5}🪙"
                 )
             return
 
@@ -236,24 +241,24 @@ async def handle_mini_cric(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 parse_mode="HTML"
             )
         except Exception as _e1:
-            logger.warning(f"HTML challenge send failed: {_e1}, trying plain text...")
+            logger.warning(f"HTML challenge send failed: {_e1}, sending plain text...")
             sent_msg = await msg.reply_text(
                 f"🏏 Mini-Cricket Challenge! (1-Wicket Match)\n\n"
                 f"{user.first_name} challenges {target_user.first_name}!\n"
                 f"• Overs: {overs} ({overs*6} balls max)\n"
                 f"• Winner: +{overs*10}🪙 | Loser: +{overs*5}🪙\n\n"
                 f"{target_user.first_name}, do you accept?",
-                reply_markup=keyboard,
-                parse_mode=None
+                reply_markup=keyboard
             )
 
         match_doc["challenge_msg_id"] = sent_msg.message_id
         await _save_match(match_doc)
+        logger.info(f"=== [MINI_CRIC] Challenge created: match_id={match_id} ===")
 
     except Exception as err:
-        logger.exception(f"Unhandled exception in handle_mini_cric: {err}")
+        logger.error(f"=== [MINI_CRIC ERROR] Unhandled exception in handle_mini_cric: {err}", exc_info=True)
         try:
-            await update.effective_message.reply_text(f"⚠️ Error starting Mini-Cricket: {err}")
+            await update.effective_message.reply_text(f"⚠️ Mini-Cricket Error: {err}")
         except Exception:
             pass
 
@@ -285,13 +290,23 @@ async def handle_mini_cric_cancel(update: Update, context: ContextTypes.DEFAULT_
             await context.bot.edit_message_text(
                 chat_id=group_chat_id,
                 message_id=challenge_msg_id,
-                text=f"❌ *Challenge cancelled by {esc(user.first_name)}*.",
-                parse_mode="Markdown"
+                text=f"❌ <b>Challenge cancelled by {esc_html(user.first_name)}</b>.",
+                parse_mode="HTML"
             )
         except Exception:
-            pass
+            try:
+                await context.bot.edit_message_text(
+                    chat_id=group_chat_id,
+                    message_id=challenge_msg_id,
+                    text=f"❌ Challenge cancelled by {user.first_name}."
+                )
+            except Exception:
+                pass
 
-    await update.effective_message.reply_text(f"✅ *Your Mini Cricket challenge has been cancelled.*", parse_mode="Markdown")
+    try:
+        await update.effective_message.reply_text("✅ <b>Your Mini Cricket challenge has been cancelled.</b>", parse_mode="HTML")
+    except Exception:
+        await update.effective_message.reply_text("✅ Your Mini Cricket challenge has been cancelled.")
 
 
 # ── Challenge Accept / Decline Callbacks ───────────────────────────────────────
