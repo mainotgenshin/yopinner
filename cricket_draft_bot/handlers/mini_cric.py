@@ -16,6 +16,7 @@ import logging
 import random
 import time
 import html
+import re
 import uuid
 from typing import Dict, Optional, Tuple
 
@@ -30,6 +31,7 @@ from game.mini_cric_engine import (
     calculate_rewards,
     DELIVERIES,
     SHOTS,
+    WINNER_REWARDS,
 )
 
 logger = logging.getLogger(__name__)
@@ -155,11 +157,13 @@ async def handle_mini_cric(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         if not target_user:
             logger.info("=== [MINI_CRIC] No opponent found; replying with usage instructions ===")
+            win_reward = WINNER_REWARDS.get(overs, 3)
+            ov_label = f"{overs} Over" if overs == 1 else f"{overs} Overs"
             usage_html = (
                 f"<b>Tactical Mini-Cricket (1-Wicket Match)</b>\n\n"
                 f"Usage: <code>/mini_cric [1-5]</code> (in reply to opponent's message)\n"
                 f"Example: <code>/mini_cric 2</code> (replying to your opponent)\n"
-                f"• Overs: <b>{overs}</b> | Rewards: <b>+{overs*10}</b> / <b>+{overs*5} Card Coins</b>"
+                f"• Overs: <b>{ov_label}</b> | Winner: <b>+{win_reward}🪙</b> | Loser: <b>0🪙</b>"
             )
             try:
                 await msg.reply_text(usage_html, parse_mode="HTML")
@@ -168,7 +172,7 @@ async def handle_mini_cric(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     f"Tactical Mini-Cricket (1-Wicket Match)\n\n"
                     f"Usage: /mini_cric [1-5] (in reply to opponent's message)\n"
                     f"Example: /mini_cric 2 (replying to your opponent)\n"
-                    f"• Overs: {overs} | Rewards: +{overs*10} / +{overs*5} Card Coins"
+                    f"• Overs: {ov_label} | Winner: +{win_reward}🪙 | Loser: 0🪙"
                 )
             return
 
@@ -225,12 +229,14 @@ async def handle_mini_cric(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         c_name = esc_html(user.first_name)
         t_name = esc_html(target_user.first_name)
+        win_reward = WINNER_REWARDS.get(overs, 3)
+        ov_label = f"{overs} Over" if overs == 1 else f"{overs} Overs"
 
         challenge_text = (
             f"<b>Mini-Cricket Challenge!</b> (1-Wicket Match)\n\n"
             f"<b>{c_name}</b> challenges <b>{t_name}</b>!\n"
-            f"• Overs: <b>{overs}</b> ({overs*6} balls max)\n"
-            f"• Winner: <b>+{overs*10} Card Coins</b> | Loser: <b>+{overs*5} Card Coins</b>\n\n"
+            f"• Overs: <b>{ov_label}</b> ({overs*6} balls max)\n"
+            f"• Winner: <b>+{win_reward}🪙</b> | Loser: <b>0🪙</b>\n\n"
             f"<b>{t_name}</b>, do you accept?"
         )
 
@@ -245,8 +251,8 @@ async def handle_mini_cric(update: Update, context: ContextTypes.DEFAULT_TYPE):
             sent_msg = await msg.reply_text(
                 f"Mini-Cricket Challenge! (1-Wicket Match)\n\n"
                 f"{user.first_name} challenges {target_user.first_name}!\n"
-                f"• Overs: {overs} ({overs*6} balls max)\n"
-                f"• Winner: +{overs*10} Card Coins | Loser: +{overs*5} Card Coins\n\n"
+                f"• Overs: {ov_label} ({overs*6} balls max)\n"
+                f"• Winner: +{win_reward}🪙 | Loser: 0🪙\n\n"
                 f"{target_user.first_name}, do you accept?",
                 reply_markup=keyboard
             )
@@ -482,8 +488,9 @@ async def _send_toss_ui(context: ContextTypes.DEFAULT_TYPE, match: dict):
         InlineKeyboardButton("Tails", callback_data=f"mc_toss|{match_id}|{caller_id}|tails"),
     ]])
 
+    ov_label = f"{match['overs']} Over" if match['overs'] == 1 else f"{match['overs']} Overs"
     caller_text = (
-        f"<b>Toss Time!</b> (Mini-Cricket <b>{match['overs']} Over</b>)\n\n"
+        f"<b>Toss Time!</b> (Mini-Cricket <b>{ov_label}</b>)\n\n"
         f"Call the coin toss:"
     )
     match["caller_dm_msg_id"] = await _send_or_edit_dm(
@@ -492,7 +499,7 @@ async def _send_toss_ui(context: ContextTypes.DEFAULT_TYPE, match: dict):
 
     caller_name = match["challenger_name"] if caller_id == match["challenger_id"] else match["opponent_name"]
     waiting_text = (
-        f"<b>Toss Time!</b> (Mini-Cricket <b>{match['overs']} Over</b>)\n\n"
+        f"<b>Toss Time!</b> (Mini-Cricket <b>{ov_label}</b>)\n\n"
         f"<i>Waiting for <b>{esc_html(caller_name)}</b> to call the toss...</i>"
     )
     match["waiting_dm_msg_id"] = await _send_or_edit_dm(
@@ -666,15 +673,24 @@ async def cb_mc_decision(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 # ── Ball-by-Ball Gameplay Loop ────────────────────────────────────────────────
 
+def _format_reel_ball(b: str) -> str:
+    s = str(b)
+    if s == "4":
+        return "4️⃣"
+    if s == "6":
+        return "6️⃣"
+    if s.upper() == "W":
+        return "🔴"
+    return s
+
+
 def _build_over_reel_text(reel: list, over_num: int) -> str:
     start_idx = max(0, (over_num - 1) * 6)
     over_balls = reel[start_idx : start_idx + 6]
-    display = []
-    for b in over_balls:
-        display.append(str(b))
+    display = [_format_reel_ball(b) for b in over_balls]
     while len(display) < 6:
         display.append(".")
-    return "  ".join(display)
+    return " · ".join(display)
 
 
 def _build_bowler_keyboard(match: dict, over_num: int) -> InlineKeyboardMarkup:
@@ -740,12 +756,15 @@ async def _start_new_ball(context: ContextTypes.DEFAULT_TYPE, match: dict):
         needed = max(0, target - score)
         balls_left = max(0, total_balls - balls_bowled)
         rrr = (needed / (balls_left / 6.0)) if balls_left > 0 else 0.0
-        target_line = f"Target: <b>{target}</b> (Need <b>{needed} runs</b> from <b>{balls_left} balls</b> | RRR: <b>{rrr:.1f}</b>)\n"
+        run_term = "run" if needed == 1 else "runs"
+        ball_term = "ball" if balls_left == 1 else "balls"
+        target_line = f"Target: <b>{target}</b> (Need <b>{needed} {run_term}</b> from <b>{balls_left} {ball_term}</b> | RRR: <b>{rrr:.1f}</b>)\n"
 
     over_num = (balls_bowled // 6) + 1
     ball_in_over = (balls_bowled % 6) + 1
     reel_text = _build_over_reel_text(reel, over_num)
     ov_str = f"{balls_bowled // 6}.{balls_bowled % 6}"
+    ov_label = f"{overs} Over" if overs == 1 else f"{overs} Overs"
 
     # Names
     c_name = match["challenger_name"]
@@ -754,7 +773,7 @@ async def _start_new_ball(context: ContextTypes.DEFAULT_TYPE, match: dict):
     bowl_name = o_name if batter_id == match["challenger_id"] else c_name
 
     bowler_text = (
-        f"<b>Mini-Cricket ({overs} Ov) — Innings {innings}</b>\n"
+        f"<b>Mini-Cricket ({ov_label}) — Innings {innings}</b>\n"
         f"━━━━━━━━━━━━━━━━━━━━\n"
         f"Batting: <b>{esc_html(bat_name)}</b>\n"
         f"Score: <b>{score}/{wkts}</b> ({ov_str} ov)\n"
@@ -767,7 +786,7 @@ async def _start_new_ball(context: ContextTypes.DEFAULT_TYPE, match: dict):
     )
 
     batter_text = (
-        f"<b>Mini-Cricket ({overs} Ov) — Innings {innings}</b>\n"
+        f"<b>Mini-Cricket ({ov_label}) — Innings {innings}</b>\n"
         f"━━━━━━━━━━━━━━━━━━━━\n"
         f"Batting: <b>{esc_html(bat_name)}</b>\n"
         f"Score: <b>{score}/{wkts}</b> ({ov_str} ov)\n"
@@ -856,11 +875,14 @@ async def cb_mc_bowl(update: Update, context: ContextTypes.DEFAULT_TYPE):
             needed = max(0, target - score)
             balls_left = max(0, total_balls - balls_bowled)
             rrr = (needed / (balls_left / 6.0)) if balls_left > 0 else 0.0
-            target_line = f"Target: <b>{target}</b> (Need <b>{needed} runs</b> from <b>{balls_left} balls</b> | RRR: <b>{rrr:.1f}</b>)\n"
+            run_term = "run" if needed == 1 else "runs"
+            ball_term = "ball" if balls_left == 1 else "balls"
+            target_line = f"Target: <b>{target}</b> (Need <b>{needed} {run_term}</b> from <b>{balls_left} {ball_term}</b> | RRR: <b>{rrr:.1f}</b>)\n"
 
         over_num = (balls_bowled // 6) + 1
         reel_text = _build_over_reel_text(reel, over_num)
         ov_str = f"{balls_bowled // 6}.{balls_bowled % 6}"
+        ov_label = f"{overs} Over" if overs == 1 else f"{overs} Overs"
 
         c_name = match["challenger_name"]
         o_name = match["opponent_name"]
@@ -878,7 +900,7 @@ async def cb_mc_bowl(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         # Update bowler UI (locked in, retaining scoreboard)
         bowler_locked_text = (
-            f"<b>Mini-Cricket ({overs} Ov) — Innings {innings}</b>\n"
+            f"<b>Mini-Cricket ({ov_label}) — Innings {innings}</b>\n"
             f"━━━━━━━━━━━━━━━━━━━━\n"
             f"Batting: <b>{esc_html(bat_name)}</b>\n"
             f"Score: <b>{score}/{wkts}</b> ({ov_str} ov)\n"
@@ -896,7 +918,7 @@ async def cb_mc_bowl(update: Update, context: ContextTypes.DEFAULT_TYPE):
         batter_kb = _build_batter_keyboard(match)
         shown_del = "Mystery Ball" if is_mystery else delivery
         batter_prompt_text = (
-            f"<b>Mini-Cricket ({overs} Ov) — Innings {innings}</b>\n"
+            f"<b>Mini-Cricket ({ov_label}) — Innings {innings}</b>\n"
             f"━━━━━━━━━━━━━━━━━━━━\n"
             f"Batting: <b>{esc_html(bat_name)}</b>\n"
             f"Score: <b>{score}/{wkts}</b> ({ov_str} ov)\n"
@@ -1126,7 +1148,8 @@ async def _finalize_match(context: ContextTypes.DEFAULT_TYPE, match: dict, winne
         loser_id = match["batter_id"]
         w_name = c_name if winner_id == c_id else o_name
         margin = match["target"] - match["innings_2_score"] - 1
-        result_str_html = f"<b>{esc_html(w_name)} won by {margin} runs!</b>"
+        run_word = "run" if margin == 1 else "runs"
+        result_str_html = f"<b>{esc_html(w_name)} won by {margin} {run_word}!</b>"
 
     # Coin rewards
     from database import add_card_coins
@@ -1144,7 +1167,6 @@ async def _finalize_match(context: ContextTypes.DEFAULT_TYPE, match: dict, winne
 
     last_del = match.get("last_ball_delivery") or match.get("pending_delivery", "Ball")
     last_shot = match.get("last_ball_shot", "Shot")
-    last_comm = match.get("last_ball_commentary", "")
 
     # Decisive last ball over and outcome notation (e.g. W for wicket or runs on chase)
     balls_2 = match.get("innings_2_balls", 0)
@@ -1153,10 +1175,9 @@ async def _finalize_match(context: ContextTypes.DEFAULT_TYPE, match: dict, winne
     ball_sym = reel_2[-1] if reel_2 else ""
     sym_str = f"<b>{ball_sym}</b> · " if ball_sym else ""
 
-    last_ball_info = (
-        f"Last Ball ({final_ov} ov): {sym_str}{esc_html(last_del)} vs {esc_html(last_shot)}\n"
-        f"<i>{esc_html(last_comm)}</i>\n\n"
-    ) if last_comm else ""
+    # Rewards text for DM
+    c_coins = rewards.get(c_id, 0)
+    o_coins = rewards.get(o_id, 0)
 
     final_card = (
         f"━━━━━━━━━━━━━━━━━━━━\n"
@@ -1164,12 +1185,12 @@ async def _finalize_match(context: ContextTypes.DEFAULT_TYPE, match: dict, winne
         f"━━━━━━━━━━━━━━━━━━━━\n"
         f"<b>{esc_html(b1_name)}</b>: {s1}\n"
         f"<b>{esc_html(b2_name)}</b>: {s2}\n"
-        f"━━━━━━━━━━━━━━━━━━━━\n"
+        f"━━━━━━━━━━━━━━━━━━━━\n\n"
         f"{result_str_html}\n\n"
-        f"{last_ball_info}"
+        f"Last Ball ({final_ov} ov): {sym_str}{esc_html(last_del)} vs {esc_html(last_shot)}\n\n"
         f"Rewards:\n"
-        f"• <b>{esc_html(c_name)}</b>: +{rewards.get(c_id, 0)} Card Coins\n"
-        f"• <b>{esc_html(o_name)}</b>: +{rewards.get(o_id, 0)} Card Coins\n"
+        f"• <b>{esc_html(c_name)}</b>: +{c_coins}🪙\n"
+        f"• <b>{esc_html(o_name)}</b>: +{o_coins}🪙\n"
         f"━━━━━━━━━━━━━━━━━━━━"
     )
 
@@ -1181,13 +1202,19 @@ async def _finalize_match(context: ContextTypes.DEFAULT_TYPE, match: dict, winne
     await _send_or_edit_dm(context.bot, o_id, o_mid, final_card, reply_markup=None)
 
     # Post result announcement in group chat
+    ov_label = f"{match['overs']} Over" if match['overs'] == 1 else f"{match['overs']} Overs"
+    if is_draw:
+        reward_line = "Rewards: +1🪙 / +1🪙 Card Coins (Tie)"
+    else:
+        reward_line = f"Rewards: +{win_coins}🪙 / {lose_coins}🪙 Card Coins"
+
     try:
         group_summary = (
-            f"<b>Mini-Cricket Result ({match['overs']} Over)</b>\n"
+            f"<b>Mini-Cricket Result ({ov_label})</b>\n\n"
             f"<b>{esc_html(b1_name)}</b>: {s1} · <b>{esc_html(b2_name)}</b>: {s2}\n"
-            f"{result_str_html}\n"
+            f"{result_str_html}\n\n"
             f"Last Ball ({final_ov} ov): {sym_str}{esc_html(last_del)} vs {esc_html(last_shot)}\n"
-            f"Rewards: +{win_coins} / +{lose_coins} Card Coins"
+            f"{reward_line}"
         )
         await context.bot.send_message(chat_id=match["chat_id"], text=group_summary, parse_mode="HTML")
     except Exception as e:
