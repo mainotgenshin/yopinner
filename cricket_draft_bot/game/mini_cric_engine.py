@@ -217,14 +217,14 @@ def calculate_rewards(overs: int, winner_id: int, loser_id: int, is_draw: bool, 
     3 Overs: Winner +7, Loser 0
     4 Overs: Winner +9, Loser 0
     5 Overs: Winner +13, Loser 0
-    Tie: +1 each.
+    Tie: +7 each.
     If forfeit / abandon / /end: 0 coins to both.
     """
     if is_forfeit:
         return {winner_id: 0, loser_id: 0}
 
     if is_draw:
-        return {winner_id: 1, loser_id: 1}
+        return {winner_id: 7, loser_id: 7}
 
     win_coins = WINNER_REWARDS.get(overs, max(3, overs * 2))
     return {
