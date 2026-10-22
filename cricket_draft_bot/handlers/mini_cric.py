@@ -1218,12 +1218,17 @@ async def cb_mc_shot(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await _finalize_match(context, match, winner_role="batter")
             return
         elif match["innings_2_wickets"] >= 1:
-            # Wicket fell, bowler won!
-            await _finalize_match(context, match, winner_role="bowler")
+            # Wicket fell in 2nd innings
+            if new_score == target - 1:
+                # Scores level (e.g. 0/1 vs 0/1): It is a TIE / DRAW!
+                await _finalize_match(context, match, winner_role="tie")
+            else:
+                await _finalize_match(context, match, winner_role="bowler")
             return
         elif match["innings_2_balls"] >= total_balls:
             # Overs finished
             if new_score == target - 1:
+                # Scores level: It is a TIE / DRAW!
                 await _finalize_match(context, match, winner_role="tie")
             else:
                 await _finalize_match(context, match, winner_role="bowler")
@@ -1312,12 +1317,13 @@ async def _finalize_match(context: ContextTypes.DEFAULT_TYPE, match: dict, winne
     c_name = match["challenger_name"]
     o_name = match["opponent_name"]
 
-    is_draw = (winner_role == "tie")
+    # If scores are identical, it MUST be a tie regardless of role
+    is_draw = (winner_role == "tie" or match["innings_1_score"] == match["innings_2_score"])
     if is_draw:
         winner_id = c_id
         loser_id = o_id
         result_str_html = "<b>Match Tied!</b> Scores level."
-    elif winner_role == "batter":
+    elif winner_role == "batter" or match["innings_2_score"] >= match["target"]:
         winner_id = match["batter_id"]
         loser_id = match["bowler_id"]
         w_name = c_name if winner_id == c_id else o_name
@@ -1383,7 +1389,7 @@ async def _finalize_match(context: ContextTypes.DEFAULT_TYPE, match: dict, winne
     # Post result announcement in group chat
     ov_label = f"{match['overs']} Over" if match['overs'] == 1 else f"{match['overs']} Overs"
     if is_draw:
-        reward_line = "Rewards: +1🪙 / +1🪙 Card Coins (Tie)"
+        reward_line = f"Rewards: +{win_coins}🪙 / +{lose_coins}🪙 Card Coins (Tie)"
     else:
         reward_line = f"Rewards: +{win_coins}🪙 / {lose_coins}🪙 Card Coins"
 
