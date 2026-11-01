@@ -90,6 +90,10 @@ def calculate_slot_score(player: Player, role: str, mode: str) -> float:
         elif role_lower == "st/cf":
              if "st" in effective_roles_lower or "cf" in effective_roles_lower:
                  multiplier = PENALTY_MULTIPLIERS["NATURAL"]
+        elif (role_lower == "lw" and "lm" in effective_roles_lower) or (role_lower == "lm" and "lw" in effective_roles_lower):
+             multiplier = PENALTY_MULTIPLIERS["NATURAL"]
+        elif (role_lower == "rw" and "rm" in effective_roles_lower) or (role_lower == "rm" and "rw" in effective_roles_lower):
+             multiplier = PENALTY_MULTIPLIERS["NATURAL"]
         elif role_lower == "cf" and "st" in effective_roles_lower: 
              multiplier = PENALTY_MULTIPLIERS["PARTIAL"]
         elif role_lower == "st" and "cf" in effective_roles_lower:
