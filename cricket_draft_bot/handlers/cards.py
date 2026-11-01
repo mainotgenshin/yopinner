@@ -44,7 +44,7 @@ def _check_card_cooldown(user_id: int, action: str, cooldown_secs: float = 2.0) 
     return True
 
 # ── Display helpers ───────────────────────────────────────────────────────────
-RARITY_EMOJI = {"common": "⚪", "rare": "🔵", "epic": "🟣", "legend": "🟡"}
+RARITY_EMOJI = {"common": "⚪", "rare": "🔵", "epic": "🟣", "legend": "🟡", "mythical": "✨"}
 PACK_EMOJI   = {"basic": "🟦", "premium": "🟣", "elite": "🟡"}
 SPORT_EMOJI  = {"cricket": "🏏", "football": "⚽", "wwe": "🤼", "kabaddi": "🤸"}
 SPORT_LABEL  = {"cricket": "Cricket", "football": "FIFA", "wwe": "WWE Men", "kabaddi": "PKL"}
@@ -100,8 +100,8 @@ async def _get_raw_inv(user_id: int) -> dict:
 
 def _sort_cards(cards: list, criteria: str = "rarity", order: str = "desc") -> list:
     """Sort a card list by criteria and order ('asc' or 'desc')."""
-    rarity_desc = {"legend": 0, "epic": 1, "rare": 2, "common": 3}
-    rarity_asc  = {"common": 0, "rare": 1, "epic": 2, "legend": 3}
+    rarity_desc = {"mythical": 0, "legend": 1, "epic": 2, "rare": 3, "common": 4}
+    rarity_asc  = {"common": 0, "rare": 1, "epic": 2, "legend": 3, "mythical": 4}
 
     criteria = (criteria or "rarity").lower()
     order = (order or "desc").lower()
@@ -127,14 +127,7 @@ def _sort_cards(cards: list, criteria: str = "rarity", order: str = "desc") -> l
 # ─────────────────────────────────────────────────────────────────────────────
 async def handle_pack(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
-    if update.effective_chat.type != "private":
-        kb = InlineKeyboardMarkup([[InlineKeyboardButton(
-            "📬 Open in DM", url=f"https://t.me/{context.bot.username}?start=pack"
-        )]])
-        await update.effective_message.reply_text(
-            "📦 Please use /pack in my DM to keep the group clean!",
-            reply_markup=kb
-        )
+    if update.effective_chat and update.effective_chat.type != "private":
         return
     keyboard = InlineKeyboardMarkup([[
         InlineKeyboardButton("🏏 Cricket", callback_data=f"pack_sport|{user.id}|cricket"),
@@ -248,14 +241,7 @@ async def cb_pack_back(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # ─────────────────────────────────────────────────────────────────────────────
 async def handle_inventory(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
-    if update.effective_chat.type != "private":
-        kb = InlineKeyboardMarkup([[InlineKeyboardButton(
-            "📬 Open in DM", url=f"https://t.me/{context.bot.username}?start=inventory"
-        )]])
-        await update.effective_message.reply_text(
-            "📦 Please use /inventory in my DM to keep the group clean!",
-            reply_markup=kb
-        )
+    if update.effective_chat and update.effective_chat.type != "private":
         return
     from database import get_card_coins
     balance = await get_card_coins(user.id)
@@ -695,6 +681,16 @@ async def _get_collections_text(owner_id: int) -> str:
                 lines.append(f"  {RARITY_EMOJI.get(r, '⚪')} {r.title()}: <b>{owned_r}/{tot_r}</b>")
         lines.append(f"  Total: <b>{fmt_owned}/{tot_fmt} cards</b>")
 
+    from database import get_all_editions
+    all_editions = await get_all_editions()
+    tot_editions = len(all_editions)
+    owned_ed_ids = {c.get("edition_id") for c in all_cards if c.get("rarity") == "mythical" or c.get("edition_id")}
+    owned_ed_ids.discard(None)
+    user_editions = len(owned_ed_ids)
+
+    lines.append(f"\n✨ <b>Special Editions</b>")
+    lines.append(f"  Owned: <b>{user_editions} / {tot_editions}</b>")
+
     grand_unique = len(all_cards)
     lines.append(f"\n━━━━━━━━━━━━━━━━━━")
     lines.append(f"🃏 Grand Total: <b>{grand_unique}/{cat_grand} cards</b>")
@@ -863,13 +859,14 @@ async def handle_viewcard(update: Update, context: ContextTypes.DEFAULT_TYPE):
             pass
     else:
         # Multiple formats — ask which one
-        buttons = [
-            [InlineKeyboardButton(
-                f"{FORMAT_LABEL.get(c['format'], c['format'].upper())} — {RARITY_EMOJI.get(c['rarity'], '⚪')} OVR {c['ovr']}",
-                callback_data=f"vc_fmt|{user.id}|{c['player_id']}|{c['format']}"
-            )]
-            for c in player_cards
-        ]
+        buttons = []
+        for c in player_cards:
+            ed_id = c.get("edition_id") or "base"
+            if c.get("rarity") == "mythical" or c.get("edition"):
+                lbl = f"✨ {c.get('edition', 'Special Edition').title()} — OVR {c.get('ovr', 90)}"
+            else:
+                lbl = f"{FORMAT_LABEL.get(c['format'], c['format'].upper())} — {RARITY_EMOJI.get(c['rarity'], '⚪')} OVR {c['ovr']}"
+            buttons.append([InlineKeyboardButton(lbl, callback_data=f"vc_fmt|{user.id}|{c['player_id']}|{c['format']}|{ed_id}")])
         try:
             await update.effective_message.reply_text(
                 f"Which *{esc(player_name)}* card do you want to view?",
@@ -902,13 +899,14 @@ async def cb_vc_name(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if len(player_cards) == 1:
         await _show_card_detail(query, int(owner_id), player_cards[0], edit=True, bot_username=bot_username)
     else:
-        buttons = [
-            [InlineKeyboardButton(
-                f"{FORMAT_LABEL.get(c['format'], c['format'].upper())} — {RARITY_EMOJI.get(c['rarity'], '⚪')} OVR {c['ovr']}",
-                callback_data=f"vc_fmt|{owner_id}|{c['player_id']}|{c['format']}"
-            )]
-            for c in player_cards
-        ]
+        buttons = []
+        for c in player_cards:
+            ed_id = c.get("edition_id") or "base"
+            if c.get("rarity") == "mythical" or c.get("edition"):
+                lbl = f"✨ {c.get('edition', 'Special Edition').title()} — OVR {c.get('ovr', 90)}"
+            else:
+                lbl = f"{FORMAT_LABEL.get(c['format'], c['format'].upper())} — {RARITY_EMOJI.get(c['rarity'], '⚪')} OVR {c['ovr']}"
+            buttons.append([InlineKeyboardButton(lbl, callback_data=f"vc_fmt|{owner_id}|{c['player_id']}|{c['format']}|{ed_id}")])
         player_name = player_cards[0]["name"]
         await query.edit_message_text(
             f"Which *{esc(player_name)}* card do you want to view?",
@@ -919,7 +917,11 @@ async def cb_vc_name(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def cb_vc_fmt(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
-    _, owner_id, player_id, fmt = query.data.split("|")
+    parts = query.data.split("|")
+    owner_id = parts[1]
+    player_id = parts[2]
+    fmt = parts[3]
+    ed_id = parts[4] if len(parts) >= 5 else "base"
     if str(query.from_user.id) != owner_id:
         await query.answer("⛔ Not your menu.", show_alert=True); return
     chat = update.effective_chat
@@ -931,7 +933,12 @@ async def cb_vc_fmt(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await query.answer()
     from database import get_user_cards, get_player
     cards = await get_user_cards(int(owner_id))
-    card = next((c for c in cards if c["player_id"] == player_id and c["format"] == fmt), None)
+    if ed_id != "base":
+        card = next((c for c in cards if c["player_id"] == player_id and c.get("edition_id") == ed_id), None)
+    else:
+        card = next((c for c in cards if c["player_id"] == player_id and c["format"] == fmt and not c.get("edition_id")), None)
+        if not card:
+            card = next((c for c in cards if c["player_id"] == player_id and c["format"] == fmt), None)
     if not card:
         try:
             await query.edit_message_caption("❌ Card not found in your collection.")
@@ -949,22 +956,27 @@ async def _show_card_detail(msg_or_query, owner_id: int, card: dict, edit: bool,
     from database import validate_fav_card
     # validate_fav_card auto-clears stale fav if card was traded/sold
     fav = await validate_fav_card(owner_id)
-    is_fav = fav and fav.get("player_id") == card["player_id"] and fav.get("format") == card["format"]
-    r_emoji = RARITY_EMOJI.get(card["rarity"], "⚪")
+    card_ed_id = card.get("edition_id") or "base"
+    is_fav = fav and fav.get("player_id") == card["player_id"] and fav.get("format") == card["format"] and fav.get("edition_id", "base") == card_ed_id
+    is_mythical = (card.get("rarity") == "mythical" or bool(card.get("edition_id")))
+    r_emoji = "✨" if is_mythical else RARITY_EMOJI.get(card["rarity"], "⚪")
     f_label = FORMAT_LABEL.get(card["format"], card["format"].upper())
     SELL_VALUES = {"common": 25, "rare": 75, "epic": 200, "legend": 600}
     sell_val = SELL_VALUES.get(card["rarity"], 25)
     is_last_copy = card["quantity"] <= 1
     fav_label = "💔 Remove Fav" if is_fav else "❤️ Set as Fav"
-    fav_cb = f"vc_unfav|{owner_id}|{card['player_id']}|{card['format']}" if is_fav else f"vc_fav|{owner_id}|{card['player_id']}|{card['format']}"
+    fav_cb = f"vc_unfav|{owner_id}|{card['player_id']}|{card['format']}|{card_ed_id}" if is_fav else f"vc_fav|{owner_id}|{card['player_id']}|{card['format']}|{card_ed_id}"
     fav_warning = ""
     fav_warning_html = ""
     if is_fav and is_last_copy:
         fav_warning = "\n\n⭐ *Fav Card* — Remove fav to sell or trade this card."
         fav_warning_html = "\n\n⭐ <b>Fav Card</b> — Remove fav to sell or trade this card."
+    ed_str = f"🏆 Edition: *{esc(card['edition'])}*\n" if card.get("edition") else ""
+    title_ico = "✨" if is_mythical else "🃏"
     text = (
-        f"🃏 *{esc(card['name'])}*\n"
+        f"{title_ico} *{esc(card['name'])}*\n"
         f"━━━━━━━━━━━━━━━━━━\n"
+        f"{ed_str}"
         f"📋 Format: *{f_label}*\n"
         f"{r_emoji} Rarity: *{card['rarity'].title()}*\n"
         f"⭐ OVR: *{card['ovr']}*\n"
@@ -977,10 +989,10 @@ async def _show_card_detail(msg_or_query, owner_id: int, card: dict, edit: bool,
     is_dm = (chat.type == "private") if chat else False
 
     if is_dm:
-        kb = InlineKeyboardMarkup([
-            [InlineKeyboardButton(fav_label, callback_data=fav_cb)],
-            [InlineKeyboardButton(f"💰 Sell for {sell_val}🪙", callback_data=f"vc_sell|{owner_id}|{card['player_id']}|{card['format']}|{sell_val}")],
-        ])
+        kb_rows = [[InlineKeyboardButton(fav_label, callback_data=fav_cb)]]
+        if not is_mythical:
+            kb_rows.append([InlineKeyboardButton(f"💰 Sell for {sell_val}🪙", callback_data=f"vc_sell|{owner_id}|{card['player_id']}|{card['format']}|{sell_val}")])
+        kb = InlineKeyboardMarkup(kb_rows)
     else:
         if not bot_username:
             try:
@@ -1002,9 +1014,11 @@ async def _show_card_detail(msg_or_query, owner_id: int, card: dict, edit: bool,
     import html
     name_html = html.escape(card.get("name", "Card"))
     # Build HTML-compatible text (href requires HTML parse mode)
+    ed_str_html = f"🏆 Edition: <b>{html.escape(str(card['edition']))}</b>\n" if card.get("edition") else ""
     text_html = (
-        f"🃏 <b>{name_html}</b>\n"
+        f"{title_ico} <b>{name_html}</b>\n"
         f"━━━━━━━━━━━━━━━━━━\n"
+        f"{ed_str_html}"
         f"📋 Format: <b>{f_label}</b>\n"
         f"{r_emoji} Rarity: <b>{card['rarity'].title()}</b>\n"
         f"⭐ OVR: <b>{card['ovr']}</b>\n"
@@ -1052,16 +1066,16 @@ async def _show_card_detail(msg_or_query, owner_id: int, card: dict, edit: bool,
                     href_text, reply_markup=kb, parse_mode="HTML",
                     disable_web_page_preview=False
                 )
+                return
             except Exception:
-                await msg_or_query.reply_text(text, reply_markup=kb, parse_mode="Markdown")
-
+                pass
         elif image:
             try:
                 await msg_or_query.reply_photo(photo=image, caption=text, reply_markup=kb, parse_mode="Markdown")
+                return
             except Exception:
-                await msg_or_query.reply_text(text, reply_markup=kb, parse_mode="Markdown")
-        else:
-            await msg_or_query.reply_text(text, reply_markup=kb, parse_mode="Markdown")
+                pass
+        await msg_or_query.reply_text(text, reply_markup=kb, parse_mode="Markdown")
 
 
 async def handle_viewcard_deeplink(update: Update, context: ContextTypes.DEFAULT_TYPE, payload: str):
@@ -1094,7 +1108,11 @@ async def cb_vc_fav(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_chat and update.effective_chat.type != "private":
         await query.answer("📬 Please manage cards in DM!", show_alert=True)
         return
-    _, owner_id, player_id, fmt = query.data.split("|")
+    parts = query.data.split("|")
+    owner_id = parts[1]
+    player_id = parts[2]
+    fmt = parts[3]
+    ed_id = parts[4] if len(parts) >= 5 else "base"
     if str(query.from_user.id) != owner_id:
         await query.answer("⛔ Not your menu.", show_alert=True); return
     lock = _get_lock(int(owner_id))
@@ -1103,11 +1121,15 @@ async def cb_vc_fav(update: Update, context: ContextTypes.DEFAULT_TYPE):
     async with lock:
         from database import set_fav_card, get_user_cards
         cards = await get_user_cards(int(owner_id))
-        card = next((c for c in cards if c["player_id"] == player_id and c["format"] == fmt), None)
+        if ed_id != "base":
+            card = next((c for c in cards if c["player_id"] == player_id and c.get("edition_id") == ed_id), None)
+        else:
+            card = next((c for c in cards if c["player_id"] == player_id and c["format"] == fmt and not c.get("edition_id")), None)
+            if not card:
+                card = next((c for c in cards if c["player_id"] == player_id and c["format"] == fmt), None)
         if not card or card["quantity"] < 1:
-            # Card was traded/sold after this menu was opened
             await query.answer("❌ You no longer own this card.", show_alert=True); return
-        await set_fav_card(int(owner_id), player_id, fmt)
+        await set_fav_card(int(owner_id), player_id, fmt, None if ed_id == "base" else ed_id)
         await query.answer(f"❤️ {card['name']} ({FORMAT_LABEL.get(fmt, fmt)}) set as favorite!", show_alert=True)
         bot_username = context.bot.username if context and context.bot else ""
         await _show_card_detail(query, int(owner_id), card, edit=True, bot_username=bot_username)
@@ -1117,7 +1139,11 @@ async def cb_vc_unfav(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_chat and update.effective_chat.type != "private":
         await query.answer("📬 Please manage cards in DM!", show_alert=True)
         return
-    _, owner_id, player_id, fmt = query.data.split("|")
+    parts = query.data.split("|")
+    owner_id = parts[1]
+    player_id = parts[2]
+    fmt = parts[3]
+    ed_id = parts[4] if len(parts) >= 5 else "base"
     if str(query.from_user.id) != owner_id:
         await query.answer("⛔ Not your menu.", show_alert=True); return
     lock = _get_lock(int(owner_id))
@@ -1127,7 +1153,12 @@ async def cb_vc_unfav(update: Update, context: ContextTypes.DEFAULT_TYPE):
         from database import clear_fav_card, get_user_cards
         await clear_fav_card(int(owner_id))
         cards = await get_user_cards(int(owner_id))
-        card = next((c for c in cards if c["player_id"] == player_id and c["format"] == fmt), None)
+        if ed_id != "base":
+            card = next((c for c in cards if c["player_id"] == player_id and c.get("edition_id") == ed_id), None)
+        else:
+            card = next((c for c in cards if c["player_id"] == player_id and c["format"] == fmt and not c.get("edition_id")), None)
+            if not card:
+                card = next((c for c in cards if c["player_id"] == player_id and c["format"] == fmt), None)
         await query.answer("💔 Removed from favorites.", show_alert=True)
         if card:
             bot_username = context.bot.username if context and context.bot else ""
@@ -1151,6 +1182,9 @@ async def cb_vc_sell(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await query.answer(); await query.edit_message_caption(caption="❌ Card not found."); return
         else:
             await query.answer(); await query.edit_message_text("❌ Card not found."); return
+    if card.get("rarity") == "mythical" or card.get("edition_id"):
+        await query.answer("✨ Special Edition cards cannot be sold!", show_alert=True)
+        return
     # Check fav BEFORE answering (query can only be answered once)
     fav = await get_fav_card(int(owner_id))
     is_fav = fav and fav.get("player_id") == player_id and fav.get("format") == fmt
@@ -1292,13 +1326,15 @@ async def handle_trade_card(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if their_trade:
         await msg.reply_text(f"❌ {esc(target.first_name)} already has an active trade.")
         return
-    # Check target has cards
+    # Check target has cards (excluding Mythical/Edition cards)
     target_cards = await get_user_cards(target.id)
+    target_cards = [c for c in target_cards if c.get("rarity") != "mythical" and not c.get("edition_id")]
     if not target_cards:
         await msg.reply_text(f"❌ {esc(target.first_name)} has no cards to trade.")
         return
-    # Show initiator's cards to pick from
+    # Show initiator's cards to pick from (excluding Mythical/Edition cards)
     my_cards = await get_user_cards(user.id)
+    my_cards = [c for c in my_cards if c.get("rarity") != "mythical" and not c.get("edition_id")]
     if not my_cards:
         await msg.reply_text("❌ You have no cards to offer in a trade.")
         return
@@ -1358,6 +1394,7 @@ async def cb_tr_page(update: Update, context: ContextTypes.DEFAULT_TYPE):
     db = get_db()
     target_id_int = int(target_id)
     cards = await get_user_cards(int(initiator_id))
+    cards = [c for c in cards if c.get("rarity") != "mythical" and not c.get("edition_id")]
     crit, order = await get_user_sort(int(initiator_id))
     cards = _sort_cards(cards, crit, order)
     await _show_trade_picker(query, int(initiator_id), target_id_int, f"User {target_id}", cards, int(page_str), edit=True)
@@ -1385,6 +1422,9 @@ async def cb_tr_offer(update: Update, context: ContextTypes.DEFAULT_TYPE):
         offered = next((c for c in cards if c["player_id"] == player_id and c["format"] == fmt), None)
         if not offered:
             await query.answer("❌ Card not in your collection.", show_alert=True); return
+        if offered.get("rarity") == "mythical" or offered.get("edition_id"):
+            await query.answer("✨ Special Edition cards cannot be traded.", show_alert=True)
+            return
         # Fav protection — check BEFORE answering
         fav = await get_fav_card(int(initiator_id))
         is_fav = fav and fav.get("player_id") == player_id and fav.get("format") == fmt
@@ -1397,7 +1437,7 @@ async def cb_tr_offer(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.answer()  # safe to answer now
         # Check target has cards of same rarity
         target_cards = await get_user_cards(int(target_id))
-        matching_rarity = [c for c in target_cards if c["rarity"] == offered["rarity"]]
+        matching_rarity = [c for c in target_cards if c["rarity"] == offered["rarity"] and c.get("rarity") != "mythical" and not c.get("edition_id")]
         if not matching_rarity:
             await query.edit_message_text(
                 f"❌ The other user has no *{offered['rarity'].title()}* cards to trade with yours.",
@@ -1488,11 +1528,11 @@ async def cb_tr_tpage(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not trade or trade["status"] != "awaiting_target_pick":
         await query.answer("❌ Trade expired or cancelled.", show_alert=True); return
     if time.time() - trade["created_at"] > 300:
-        from database import cancel_trade
-        await cancel_trade(trade_id)
+        from database import get_db
+        await get_db().active_trades.delete_one({"trade_id": trade_id})
         await query.answer("❌ Trade expired (5 min timeout).", show_alert=True); return
     target_cards = await get_user_cards(int(target_id))
-    matching_rarity = [c for c in target_cards if c["rarity"] == trade["offered_rarity"]]
+    matching_rarity = [c for c in target_cards if c["rarity"] == trade["offered_rarity"] and c.get("rarity") != "mythical" and not c.get("edition_id")]
     crit, order = await get_user_sort(int(target_id))
     matching_rarity = _sort_cards(matching_rarity, crit, order)
     r_emoji = RARITY_EMOJI.get(trade["offered_rarity"], "⚪")
@@ -1534,6 +1574,9 @@ async def cb_tr_pick(update: Update, context: ContextTypes.DEFAULT_TYPE):
         their_card = next((c for c in target_cards if c["player_id"] == player_id and c["format"] == fmt), None)
         if not their_card:
             await query.answer("❌ You no longer have that card.", show_alert=True); return
+        if their_card.get("rarity") == "mythical" or their_card.get("edition_id"):
+            await query.answer("✨ Special Edition cards cannot be traded.", show_alert=True)
+            return
         # Fav protection — check BEFORE answering silently
         fav = await get_fav_card(int(target_id))
         is_fav = fav and fav.get("player_id") == player_id and fav.get("format") == fmt
@@ -1614,8 +1657,13 @@ async def cb_tr_confirm(update: Update, context: ContextTypes.DEFAULT_TYPE):
         init_has = next((c for c in init_cards if c["player_id"] == off_pid and c["format"] == off_fmt), None)
         tgt_has  = next((c for c in tgt_cards  if c["player_id"] == req_pid and c["format"] == req_fmt), None)
         if not init_has or not tgt_has:
-            await update_trade(trade_id, {"status": "cancelled"})
+            from database import get_db
+            await get_db().active_trades.delete_one({"trade_id": trade_id})
             await query.edit_message_text("❌ Trade cancelled: one party no longer has the card."); return
+        if init_has.get("rarity") == "mythical" or init_has.get("edition_id") or tgt_has.get("rarity") == "mythical" or tgt_has.get("edition_id"):
+            from database import get_db
+            await get_db().active_trades.delete_one({"trade_id": trade_id})
+            await query.edit_message_text("❌ Trade cancelled: Special Edition cards cannot be traded."); return
         # Execute trade
         await asyncio.gather(
             remove_card_from_user(init_id, off_pid, off_fmt),
@@ -1629,7 +1677,7 @@ async def cb_tr_confirm(update: Update, context: ContextTypes.DEFAULT_TYPE):
             increment_quest_progress(init_id, "cards_traded", 1),
             increment_quest_progress(tgt_id,  "cards_traded", 1),
         )
-        await update_trade(trade_id, {"status": "completed"})
+        await db.active_trades.delete_one({"trade_id": trade_id})
         off_fl = FORMAT_LABEL.get(off_fmt, off_fmt)
         req_fl = FORMAT_LABEL.get(req_fmt, req_fmt)
         await query.edit_message_text(
@@ -1675,14 +1723,7 @@ async def cb_tr_cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # ─────────────────────────────────────────────────────────────────────────────
 async def handle_quest(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
-    if update.effective_chat.type != "private":
-        kb = InlineKeyboardMarkup([[InlineKeyboardButton(
-            "📬 Open in DM", url=f"https://t.me/{context.bot.username}?start=quest"
-        )]])
-        await update.effective_message.reply_text(
-            "📋 Please use /quest in my DM to keep the group clean!",
-            reply_markup=kb
-        )
+    if update.effective_chat and update.effective_chat.type != "private":
         return
     from database import get_daily_quests, QUEST_DEFINITIONS
     quests = await get_daily_quests(user.id)
@@ -1818,15 +1859,6 @@ async def handle_multi_sell(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not user:
         return
     if update.effective_chat and update.effective_chat.type != "private":
-        bot_username = context.bot.username if context and context.bot else ""
-        kb = InlineKeyboardMarkup([[InlineKeyboardButton("📬 Open in DM", url=f"https://t.me/{bot_username}?start=multi_sell")]]) if bot_username else None
-        try:
-            await update.effective_message.reply_text(
-                "💰 Please use /multi_sell in my DM to manage and sell your cards!",
-                reply_markup=kb
-            )
-        except Exception:
-            pass
         return
     if not _check_card_cooldown(user.id, "multi_sell", 3.0):
         return
@@ -1892,6 +1924,9 @@ async def handle_multi_sell(update: Update, context: ContextTypes.DEFAULT_TYPE):
             skipped_missing += 1
             continue
         card = all_cards[pos]
+        if card.get("rarity") == "mythical" or card.get("edition_id"):
+            skipped_missing += 1
+            continue
         pid, fmt = card["player_id"], card["format"]
         # Protect favorite card if last copy
         if (pid, fmt) == fav_key and card.get("quantity", 1) <= 1:
@@ -2088,3 +2123,442 @@ async def cb_msell_cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "❌ *Multi-Sell Cancelled*\n━━━━━━━━━━━━━━━━━━\nNo cards were sold.",
         parse_mode="Markdown"
     )
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# Special Edition Offer System (/offer) — DM Only
+# ═══════════════════════════════════════════════════════════════════════════
+
+async def handle_offer(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """
+    /offer — View and claim active Special Edition offer (DM Only).
+    """
+    user = update.effective_user
+    if not user:
+        return
+    if update.effective_chat and update.effective_chat.type != "private":
+        return  # Silent ignore in groups
+
+    from database import get_active_offer, get_user_cards, validate_fav_card
+    import time
+    offer = await get_active_offer()
+    now = time.time()
+    if not offer or now >= offer.get("expires_at", 0):
+        await update.effective_message.reply_text("ℹ️ No offer currently available.")
+        return
+
+    claimed_users = offer.get("claimed_users", [])
+    already_claimed = user.id in claimed_users
+
+    name = offer.get("player_name", "Unknown")
+    edition = offer.get("edition", "Special Edition")
+    ovr = offer.get("ovr", 90)
+    fmt = offer.get("format", "odi").upper()
+    req_rarity = offer.get("submit_rarity", "legend").lower()
+    req_count = offer.get("submit_count", 20)
+    image_url = offer.get("image_url", "")
+    rem_secs = max(0, int(offer.get("expires_at", 0) - now))
+    rem_days = rem_secs // 86400
+    rem_hours = (rem_secs % 86400) // 3600
+
+    r_emoji = RARITY_EMOJI.get(req_rarity, "🟡")
+
+    import html
+    name_html = html.escape(str(name))
+    edition_html = html.escape(str(edition))
+
+    if already_claimed:
+        msg = (
+            f"✨ *Special Edition: {esc(name)} ({esc(edition)})*\n"
+            f"━━━━━━━━━━━━━━━━━━\n"
+            f"📋 Format: *{fmt}* | ⭐ OVR: *{ovr}*\n"
+            f"💎 Rarity: ✨ *Mythical*\n\n"
+            f"✅ *You have already claimed this Special Edition card!*\n"
+            f"━━━━━━━━━━━━━━━━━━"
+        )
+        msg_html = (
+            f"✨ <b>Special Edition: {name_html} ({edition_html})</b>\n"
+            f"━━━━━━━━━━━━━━━━━━\n"
+            f"📋 Format: <b>{fmt}</b> | ⭐ OVR: <b>{ovr}</b>\n"
+            f"💎 Rarity: ✨ <b>Mythical</b>\n\n"
+            f"✅ <b>You have already claimed this Special Edition card!</b>\n"
+            f"━━━━━━━━━━━━━━━━━━"
+        )
+        if image_url and image_url.startswith("http"):
+            href_text = f'<a href="{image_url}">&#8205;</a>' + msg_html
+            try:
+                await update.effective_message.reply_text(
+                    href_text, parse_mode="HTML", disable_web_page_preview=False
+                )
+                return
+            except Exception:
+                pass
+        await update.effective_message.reply_text(msg, parse_mode="Markdown")
+        return
+
+    # Calculate user's eligible cards
+    all_cards = await get_user_cards(user.id)
+    fav = await validate_fav_card(user.id)
+    total_eligible = 0
+    for c in all_cards:
+        if c.get("rarity") != req_rarity or c.get("edition_id"):
+            continue
+        qty = c.get("quantity", 1)
+        if fav and c.get("player_id") == fav.get("player_id") and c.get("format") == fav.get("format"):
+            qty -= 1
+        if qty > 0:
+            total_eligible += qty
+
+    has_enough = (total_eligible >= req_count)
+
+    msg = (
+        f"✨ *Special Edition Offer: {esc(name)} ({esc(edition)})*\n"
+        f"━━━━━━━━━━━━━━━━━━\n"
+        f"📋 Format: *{fmt}* | ⭐ OVR: *{ovr}*\n"
+        f"💎 Rarity: ✨ *Mythical*\n\n"
+        f"📥 *Requirement:* Submit *{req_count} {req_rarity.title()}* cards\n"
+        f"📊 *Your Progress:* *{total_eligible}/{req_count}* {r_emoji} {req_rarity.title()} Cards\n"
+        f"⏳ *Time Remaining:* {rem_days}d {rem_hours}h\n"
+        f"━━━━━━━━━━━━━━━━━━\n"
+        f"_(Cards from any sport qualify. Duplicates are consumed first; your favorite card is safe.)_"
+    )
+
+    if has_enough:
+        kb = InlineKeyboardMarkup([[
+            InlineKeyboardButton("🎁 Claim Edition Card", callback_data=f"offer_claim|{user.id}")
+        ]])
+    else:
+        kb = InlineKeyboardMarkup([[
+            InlineKeyboardButton(f"❌ Need {req_count - total_eligible} more {req_rarity.title()}s", callback_data="offer_insuf")
+        ]])
+
+    msg_html = (
+        f"✨ <b>Special Edition Offer: {name_html} ({edition_html})</b>\n"
+        f"━━━━━━━━━━━━━━━━━━\n"
+        f"📋 Format: <b>{fmt}</b> | ⭐ OVR: <b>{ovr}</b>\n"
+        f"💎 Rarity: ✨ <b>Mythical</b>\n\n"
+        f"📥 <b>Requirement:</b> Submit <b>{req_count} {req_rarity.title()}</b> cards\n"
+        f"📊 <b>Your Progress:</b> <b>{total_eligible}/{req_count}</b> {r_emoji} {req_rarity.title()} Cards\n"
+        f"⏳ <b>Time Remaining:</b> {rem_days}d {rem_hours}h\n"
+        f"━━━━━━━━━━━━━━━━━━\n"
+        f"<i>(Cards from any sport qualify. Duplicates are consumed first; your favorite card is safe.)</i>"
+    )
+
+    if image_url and image_url.startswith("http"):
+        href_text = f'<a href="{image_url}">&#8205;</a>' + msg_html
+        try:
+            await update.effective_message.reply_text(
+                href_text, reply_markup=kb, parse_mode="HTML",
+                disable_web_page_preview=False
+            )
+            return
+        except Exception:
+            pass
+
+    await update.effective_message.reply_text(msg, reply_markup=kb, parse_mode="Markdown")
+
+
+async def cb_offer_insuf(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer("❌ You don't have enough cards to claim this offer yet. Open more packs or trade!", show_alert=True)
+
+
+async def cb_offer_claim(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Step 1 of claim: Show confirmation popup with Confirm and Cancel buttons."""
+    query = update.callback_query
+    parts = query.data.split("|")
+    owner_id = parts[1]
+    user_id = query.from_user.id
+    if str(user_id) != owner_id:
+        await query.answer("⛔ Not your menu.", show_alert=True)
+        return
+
+    from database import get_active_offer
+    import time
+    offer = await get_active_offer()
+    if not offer or time.time() >= offer.get("expires_at", 0):
+        await query.answer("❌ This offer has expired.", show_alert=True)
+        return
+
+    req_rarity = offer.get("submit_rarity", "legend").title()
+    req_count = offer.get("submit_count", 20)
+    name = offer.get("player_name", "")
+    edition = offer.get("edition", "")
+
+    confirm_text = (
+        f"⚠️ *Confirm Card Exchange*\n\n"
+        f"Are you sure you want to sacrifice *{req_count} {req_rarity}* cards to claim ✨ *{esc(name)} ({esc(edition)})*?\n\n"
+        f"🛡️ *Safeguards:*\n"
+        f"• Your favorite card is strictly protected.\n"
+        f"• Duplicate copies are consumed first before unique singles.\n\n"
+        f"This action is permanent and cannot be undone."
+    )
+
+    kb = InlineKeyboardMarkup([
+        [InlineKeyboardButton("✅ Confirm Exchange", callback_data=f"offer_confirm|{user_id}")],
+        [InlineKeyboardButton("❌ Cancel", callback_data=f"offer_cancel|{user_id}")]
+    ])
+
+    if query.message and query.message.photo:
+        await query.edit_message_caption(caption=confirm_text, reply_markup=kb, parse_mode="Markdown")
+    else:
+        await query.edit_message_text(text=confirm_text, reply_markup=kb, parse_mode="Markdown")
+
+
+async def cb_offer_cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Cancel offer exchange confirmation."""
+    query = update.callback_query
+    parts = query.data.split("|")
+    owner_id = parts[1]
+    if str(query.from_user.id) != owner_id:
+        await query.answer("⛔ Not your menu.", show_alert=True)
+        return
+    await query.answer("Exchange cancelled.")
+    if query.message and query.message.photo:
+        await query.edit_message_caption(caption="❌ Exchange cancelled. Your cards were not modified.")
+    else:
+        await query.edit_message_text("❌ Exchange cancelled. Your cards were not modified.")
+
+
+async def cb_offer_confirm(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Step 2 of claim: Atomic execution with anti-spam lock."""
+    query = update.callback_query
+    parts = query.data.split("|")
+    owner_id = parts[1]
+    user_id = query.from_user.id
+    if str(user_id) != owner_id:
+        await query.answer("⛔ Not your menu.", show_alert=True)
+        return
+
+    # Anti-spam cooldown check
+    from database import try_acquire_action_cooldown, get_active_offer, get_user_cards, validate_fav_card, remove_card_from_user, add_edition_card_to_user, get_db
+    import time
+    if not await try_acquire_action_cooldown(user_id, "offer_claim", cooldown_seconds=5):
+        await query.answer("⏳ Processing, please wait...", show_alert=False)
+        return
+
+    lock = _get_lock(user_id)
+    if lock.locked():
+        await query.answer("⏳ Processing your request...", show_alert=False)
+        return
+
+    async with lock:
+        await query.answer()
+        offer = await get_active_offer()
+        if not offer or time.time() >= offer.get("expires_at", 0):
+            await query.edit_message_text("❌ This offer has expired.")
+            return
+
+        claimed_users = offer.get("claimed_users", [])
+        if user_id in claimed_users:
+            await query.edit_message_text("✅ You have already claimed this Special Edition card!")
+            return
+
+        req_rarity = offer.get("submit_rarity", "legend").lower()
+        req_count = offer.get("submit_count", 20)
+
+        all_cards = await get_user_cards(user_id)
+        fav = await validate_fav_card(user_id)
+
+        # Select cards to sacrifice (duplicates first, protecting fav)
+        eligible = []
+        for c in all_cards:
+            if c.get("rarity") != req_rarity or c.get("edition_id"):
+                continue
+            qty = c.get("quantity", 1)
+            if fav and c.get("player_id") == fav.get("player_id") and c.get("format") == fav.get("format"):
+                qty -= 1
+            if qty > 0:
+                eligible.append({
+                    "player_id": c["player_id"],
+                    "format": c["format"],
+                    "name": c.get("name", ""),
+                    "available": qty,
+                })
+
+        total_avail = sum(e["available"] for e in eligible)
+        if total_avail < req_count:
+            if query.message and query.message.photo:
+                await query.edit_message_caption(caption=f"❌ You no longer have {req_count} {req_rarity.title()} cards available.")
+            else:
+                await query.edit_message_text(f"❌ You no longer have {req_count} {req_rarity.title()} cards available.")
+            return
+
+        # Phase 1: Deduct duplicates down to 1
+        to_consume = []
+        remaining = req_count
+        eligible.sort(key=lambda x: x["available"], reverse=True)
+
+        for e in eligible:
+            if remaining <= 0:
+                break
+            if e["available"] > 1:
+                dupes = e["available"] - 1
+                take = min(dupes, remaining)
+                to_consume.append({"player_id": e["player_id"], "format": e["format"], "count": take})
+                e["available"] -= take
+                remaining -= take
+
+        # Phase 2: Deduct singles if needed
+        if remaining > 0:
+            for e in eligible:
+                if remaining <= 0:
+                    break
+                if e["available"] > 0:
+                    take = min(e["available"], remaining)
+                    found = next((tc for tc in to_consume if tc["player_id"] == e["player_id"] and tc["format"] == e["format"]), None)
+                    if found:
+                        found["count"] += take
+                    else:
+                        to_consume.append({"player_id": e["player_id"], "format": e["format"], "count": take})
+                    e["available"] -= take
+                    remaining -= take
+
+        # Execute deductions
+        for tc in to_consume:
+            for _ in range(tc["count"]):
+                await remove_card_from_user(user_id, tc["player_id"], tc["format"])
+
+        # Grant Special Edition card
+        edition_id = offer["edition_id"]
+        success, grant_msg = await add_edition_card_to_user(user_id, edition_id)
+
+        # Mark user in claimed_users
+        db = get_db()
+        await db.system_config.update_one(
+            {"key": "active_offer"},
+            {"$addToSet": {"claimed_users": user_id}}
+        )
+
+        name = offer.get("player_name", "")
+        edition = offer.get("edition", "")
+        success_text = (
+            f"🎉 *CONGRATULATIONS!* 🎉\n\n"
+            f"You successfully sacrificed *{req_count} {req_rarity.title()}* cards and claimed:\n"
+            f"✨ *{esc(name)} ({esc(edition)})*!\n\n"
+            f"⭐ Rarity: ✨ *Mythical*\n"
+            f"🏆 OVR: *{offer.get('ovr', 90)}*\n\n"
+            f"Check out your new mythical card in `/mycards` or `/viewcard {name}`!"
+        )
+
+        if query.message and query.message.photo:
+            await query.edit_message_caption(caption=success_text, parse_mode="Markdown")
+        else:
+            await query.edit_message_text(text=success_text, parse_mode="Markdown")
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# Referral & Growth System (/share, /referrals)
+# ═══════════════════════════════════════════════════════════════════════════
+
+async def handle_share(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """
+    /share and /referrals — View personal referral link, stats, and milestone ladder.
+    """
+    user = update.effective_user
+    if not user:
+        return
+    bot_username = getattr(context.bot, "username", "") or ""
+    if not bot_username:
+        try:
+            bot_info = await context.bot.get_me()
+            bot_username = bot_info.username
+        except Exception:
+            pass
+
+    ref_link = f"https://t.me/{bot_username}?start=ref_{user.id}"
+    from database import get_user_referral_stats
+    stats = await get_user_referral_stats(user.id)
+
+    total_inv = stats["total_invited"]
+    qualified = stats["total_qualified"]
+    coins = stats["coins_earned"]
+    pos = stats["pos_in_cycle"]
+    next_m = stats["next_milestone"]
+    reward_desc = stats["reward_desc"]
+
+    text = (
+        f"👥 *Player Referral Program*\n"
+        f"━━━━━━━━━━━━━━━━━━\n"
+        f"Invite your friends to the bot and earn Card Coins & exclusive packs!\n\n"
+        f"🔗 *Your Referral Link:*\n"
+        f"`{ref_link}`\n\n"
+        f"📊 *Your Stats:*\n"
+        f"• Friends Joined: *{total_inv}*\n"
+        f"• Qualified Friends (Level 2+): *{qualified}*\n"
+        f"• Card Coins Earned: *{coins:,} 🪙*\n\n"
+        f"🎯 *Next Milestone:* *{pos}/{next_m}* Qualified Friends\n"
+        f"🎁 *Reward:* {reward_desc}\n\n"
+        f"🏆 *Milestone Rewards Ladder:*\n"
+        f"• 3 Friends ➔ 300 🪙 + 1 Premium Pack\n"
+        f"• 7 Friends ➔ 750 🪙 + 1 Elite Pack\n"
+        f"• 15 Friends ➔ 2,000 🪙 + 2 Elite Packs\n"
+        f"_(Loops infinitely every 15 friends!)*\n"
+        f"━━━━━━━━━━━━━━━━━━"
+    )
+
+    import urllib.parse
+    share_msg = f"Join me on Cricket Bot, draft your dream team, and claim your welcome bonus!"
+    share_url = f"https://t.me/share/url?url={urllib.parse.quote(ref_link)}&text={urllib.parse.quote(share_msg)}"
+
+    kb = InlineKeyboardMarkup([
+        [InlineKeyboardButton("📤 Share to Friends", url=share_url)],
+        [InlineKeyboardButton("🔄 Refresh Stats", callback_data=f"ref_refresh|{user.id}")]
+    ])
+
+    await update.effective_message.reply_text(text, reply_markup=kb, parse_mode="Markdown")
+
+
+async def cb_ref_refresh(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    parts = query.data.split("|")
+    owner_id = parts[1]
+    if str(query.from_user.id) != owner_id:
+        await query.answer("⛔ Not your menu.", show_alert=True)
+        return
+    await query.answer("Stats updated!")
+    bot_username = getattr(context.bot, "username", "") or ""
+    ref_link = f"https://t.me/{bot_username}?start=ref_{owner_id}"
+    from database import get_user_referral_stats
+    stats = await get_user_referral_stats(int(owner_id))
+
+    total_inv = stats["total_invited"]
+    qualified = stats["total_qualified"]
+    coins = stats["coins_earned"]
+    pos = stats["pos_in_cycle"]
+    next_m = stats["next_milestone"]
+    reward_desc = stats["reward_desc"]
+
+    text = (
+        f"👥 *Player Referral Program*\n"
+        f"━━━━━━━━━━━━━━━━━━\n"
+        f"Invite your friends to the bot and earn Card Coins & exclusive packs!\n\n"
+        f"🔗 *Your Referral Link:*\n"
+        f"`{ref_link}`\n\n"
+        f"📊 *Your Stats:*\n"
+        f"• Friends Joined: *{total_inv}*\n"
+        f"• Qualified Friends (Level 2+): *{qualified}*\n"
+        f"• Card Coins Earned: *{coins:,} 🪙*\n\n"
+        f"🎯 *Next Milestone:* *{pos}/{next_m}* Qualified Friends\n"
+        f"🎁 *Reward:* {reward_desc}\n\n"
+        f"🏆 *Milestone Rewards Ladder:*\n"
+        f"• 3 Friends ➔ 300 🪙 + 1 Premium Pack\n"
+        f"• 7 Friends ➔ 750 🪙 + 1 Elite Pack\n"
+        f"• 15 Friends ➔ 2,000 🪙 + 2 Elite Packs\n"
+        f"_(Loops infinitely every 15 friends!)*\n"
+        f"━━━━━━━━━━━━━━━━━━"
+    )
+
+    import urllib.parse
+    share_msg = f"Join me on Cricket Bot, draft your dream team, and claim your welcome bonus!"
+    share_url = f"https://t.me/share/url?url={urllib.parse.quote(ref_link)}&text={urllib.parse.quote(share_msg)}"
+
+    kb = InlineKeyboardMarkup([
+        [InlineKeyboardButton("📤 Share to Friends", url=share_url)],
+        [InlineKeyboardButton("🔄 Refresh Stats", callback_data=f"ref_refresh|{owner_id}")]
+    ])
+
+    try:
+        await query.edit_message_text(text, reply_markup=kb, parse_mode="Markdown")
+    except Exception:
+        pass
