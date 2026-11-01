@@ -1755,7 +1755,10 @@ async def handle_quest(update: Update, context: ContextTypes.DEFAULT_TYPE):
         kb = InlineKeyboardMarkup([[InlineKeyboardButton(
             "🎁 Claim Rewards", callback_data=f"quest_claim|{user.id}"
         )]])
-    await update.effective_message.reply_text(text, reply_markup=kb, parse_mode="Markdown")
+    try:
+        await update.effective_message.reply_text(text, reply_markup=kb, parse_mode="Markdown")
+    except Exception:
+        await update.effective_message.reply_text(text, reply_markup=kb)
 
 async def cb_quest_claim(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -2493,7 +2496,7 @@ async def handle_share(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"• 3 Friends ➔ 300 🪙 + 1 Premium Pack\n"
         f"• 7 Friends ➔ 750 🪙 + 1 Elite Pack\n"
         f"• 15 Friends ➔ 2,000 🪙 + 2 Elite Packs\n"
-        f"_(Loops infinitely every 15 friends!)*\n"
+        f"_(Loops infinitely every 15 friends!)_\n"
         f"━━━━━━━━━━━━━━━━━━"
     )
 
@@ -2545,7 +2548,7 @@ async def cb_ref_refresh(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"• 3 Friends ➔ 300 🪙 + 1 Premium Pack\n"
         f"• 7 Friends ➔ 750 🪙 + 1 Elite Pack\n"
         f"• 15 Friends ➔ 2,000 🪙 + 2 Elite Packs\n"
-        f"_(Loops infinitely every 15 friends!)*\n"
+        f"_(Loops infinitely every 15 friends!)_\n"
         f"━━━━━━━━━━━━━━━━━━"
     )
 
@@ -2561,4 +2564,7 @@ async def cb_ref_refresh(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         await query.edit_message_text(text, reply_markup=kb, parse_mode="Markdown")
     except Exception:
-        pass
+        try:
+            await query.edit_message_text(text, reply_markup=kb)
+        except Exception:
+            pass
