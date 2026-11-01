@@ -67,9 +67,118 @@ _RECOGNIZED_COMMANDS = {
     "update_imagepkl", "updateimagepkl", "addplayer", "add_player", "remove_player",
     "broadcast", "banner", "add_card", "update_card", "gift", "gift_pack", "add_packall",
     "bban", "unbban", "botstatus", "add_achievement", "rem_achievement", "map_api",
-    "mini_cric", "minicric", "mini_cric_cancel", "minicric_cancel", "end", "refresh", "mc_refresh", "mini_cric_refresh", "minicric_refresh",
+    "mini_cric", "minicric", "mini_cric_cancel", "minicric_cancel", "end", "refresh", "mc_refresh", "mini_cric_refresh", "minicric_refresh", "enable", "disable", "offer", "share", "referrals", "create", "drop", "editionlist", "addplayercard", "takeplayercard", "add_offer", "remove_offer", "add_rolefifa",
     "challengeintl", "removeplayer"
 }
+
+
+# ── Draft-Only Mode & Moderator Controls ─────────────────────────────────────
+_DRAFT_ONLY_CHATS: set = set()
+
+async def global_draft_only_filter(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """
+    Enforces draft_only mode for groups where it is enabled.
+    In such groups, only challenges, mini cricket, and trades work.
+    All other commands are silently ignored (0 API calls).
+    """
+    chat = update.effective_chat
+    if not chat or chat.type == "private":
+        return
+    if chat.id not in _DRAFT_ONLY_CHATS:
+        return
+    msg = update.effective_message
+    if not msg or not msg.text or not msg.text.startswith('/'):
+        return
+    cmd = msg.text.split()[0].lstrip('/').split('@')[0].lower()
+    ALLOWED_DRAFT_ONLY = {
+        'c', 'challenge', 'challengeipl', 'challengeodi', 'challengeintl',
+        'challengetest', 'challengefifa', 'challengewwe', 'challengepkl',
+        'challenge_ipl', 'challenge_odi', 'challenge_intl', 'challenge_test',
+        'challenge_fifa', 'challenge_wwe', 'challenge_pkl',
+        'draft',
+        'mini_cric', 'minicric', 'mini_cric_cancel', 'minicric_cancel',
+        'mini_cric_refresh', 'minicric_refresh', 'refresh', 'end',
+        'trade_card',
+        'enable', 'disable', 'enable_draft_only', 'disable_draft_only'
+    }
+    if cmd in ALLOWED_DRAFT_ONLY:
+        return
+    user = update.effective_user
+    if user:
+        from utils.permissions import can_manage_bot
+        if await can_manage_bot(user.id):
+            return
+    raise ApplicationHandlerStop
+
+async def is_group_admin_or_bot_mod(update: Update, context: ContextTypes.DEFAULT_TYPE) -> bool:
+    chat = update.effective_chat
+    user = update.effective_user
+    if not chat or not user or chat.type == "private":
+        return False
+    from utils.permissions import can_manage_bot
+    if await can_manage_bot(user.id):
+        return True
+    try:
+        member = await context.bot.get_chat_member(chat_id=chat.id, user_id=user.id)
+        return member.status in ("administrator", "creator")
+    except Exception:
+        return False
+
+async def enable_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    args = context.args or []
+    sub = args[0].lower() if args else ""
+    if sub in ("draft_only", "draftonly"):
+        if update.effective_chat.type == "private":
+            await update.effective_message.reply_text("ℹ️ Draft-only mode can only be enabled inside groups.")
+            return
+        if not await is_group_admin_or_bot_mod(update, context):
+            return
+        chat_id = update.effective_chat.id
+        _DRAFT_ONLY_CHATS.add(chat_id)
+        from database import get_db
+        await get_db().chats.update_one({"chat_id": chat_id}, {"$set": {"draft_only": True}}, upsert=True)
+        await update.effective_message.reply_text(
+            "✅ *Draft-only mode ENABLED.*\n\n"
+            "In this group, only match challenges, mini cricket, and trades will work. "
+            "All other commands work in bot DM.",
+            parse_mode="Markdown"
+        )
+    elif sub == "ipl":
+        from utils.permissions import check_admin
+        if not await check_admin(update): return
+        from handlers.admin import enable_ipl_command
+        await enable_ipl_command(update, context)
+    else:
+        from utils.permissions import can_manage_bot
+        if await can_manage_bot(update.effective_user.id):
+            await update.effective_message.reply_text("Usage:\n`/enable draft_only`\n`/enable ipl`", parse_mode="Markdown")
+
+async def disable_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    args = context.args or []
+    sub = args[0].lower() if args else ""
+    if sub in ("draft_only", "draftonly"):
+        if update.effective_chat.type == "private":
+            await update.effective_message.reply_text("ℹ️ Draft-only mode can only be toggled inside groups.")
+            return
+        if not await is_group_admin_or_bot_mod(update, context):
+            return
+        chat_id = update.effective_chat.id
+        _DRAFT_ONLY_CHATS.discard(chat_id)
+        from database import get_db
+        await get_db().chats.update_one({"chat_id": chat_id}, {"$set": {"draft_only": False}}, upsert=True)
+        await update.effective_message.reply_text(
+            "⛔ *Draft-only mode DISABLED.*\nAll commands are now active in this group.",
+            parse_mode="Markdown"
+        )
+    elif sub == "ipl":
+        from utils.permissions import check_admin
+        if not await check_admin(update): return
+        from handlers.admin import disable_ipl_command
+        await disable_ipl_command(update, context)
+    else:
+        from utils.permissions import can_manage_bot
+        if await can_manage_bot(update.effective_user.id):
+            await update.effective_message.reply_text("Usage:\n`/disable draft_only`\n`/disable ipl`", parse_mode="Markdown")
 
 async def global_anti_stale_filter(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Drops foreign bot commands and replayed commands from before bot restart (older than 30s)."""
@@ -140,10 +249,14 @@ def wrap_admin_logging(handler_func, action_name):
     logger = logging.getLogger(__name__)
 
     async def logged_handler(update, context):
-        if update.effective_user:
-            from database import is_user_banned
-            if await is_user_banned(update.effective_user.id):
-                return
+        if not update.effective_user:
+            return
+        from database import is_user_banned
+        if await is_user_banned(update.effective_user.id):
+            return
+        from utils.permissions import can_manage_bot
+        if not await can_manage_bot(update.effective_user.id):
+            return  # Silent drop for non-admins (0 API calls)
         res = await handler_func(update, context)
 
         
@@ -193,6 +306,23 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if chat.type != "private":
         await save_chat(chat.id)
 
+    # Handle referral deep-link (/start ref_<user_id>)
+    if chat.type == "private" and context.args and context.args[0].startswith("ref_"):
+        try:
+            ref_id_str = context.args[0].replace("ref_", "").strip()
+            referrer_id = int(ref_id_str)
+            from database import register_referral
+            awarded = await register_referral(update.effective_user.id, referrer_id)
+            if awarded:
+                await update.effective_message.reply_text(
+                    "🎁 *Welcome to Cricket Bot!*\n\n"
+                    "You joined via an invite from your friend and received *+50 Card Coins*! 🪙\n"
+                    "Complete matches and reach Level 2 to unlock even more rewards!",
+                    parse_mode="Markdown"
+                )
+        except Exception:
+            pass
+
     # Handle deep-link for Swap (DM only)
     if chat.type == "private" and context.args and context.args[0].startswith("swap_"):
         from handlers.swap import handle_swap_dm_start
@@ -206,6 +336,14 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if deep_arg == "pack":
             from handlers.cards import handle_pack
             await handle_pack(update, context)
+            return
+        elif deep_arg == "offer":
+            from handlers.cards import handle_offer
+            await handle_offer(update, context)
+            return
+        elif deep_arg in ("share", "referrals"):
+            from handlers.cards import handle_share
+            await handle_share(update, context)
             return
         elif deep_arg == "inventory":
             from handlers.cards import handle_inventory
@@ -369,6 +507,16 @@ async def post_init(application):
         await warmup_card_pools()
     except Exception as _we:
         logging.getLogger(__name__).warning(f"Initial card pool warmup error: {_we}")
+
+    global _DRAFT_ONLY_CHATS
+    try:
+        db = get_db()
+        cursor = db.chats.find({"draft_only": True}, {"chat_id": 1})
+        docs = await cursor.to_list(10000)
+        _DRAFT_ONLY_CHATS = set(d["chat_id"] for d in docs)
+        logging.getLogger(__name__).info(f"Loaded {len(_DRAFT_ONLY_CHATS)} draft-only chats into cache.")
+    except Exception as _de:
+        logging.getLogger(__name__).warning(f"Error loading draft_only chats: {_de}")
 
     # Startup recovery: clean up stuck matches and restart timers
     await _startup_recovery(application.bot)
@@ -856,10 +1004,13 @@ if __name__ == '__main__':
     )
 
     # Handlers
-    application.add_handler(TypeHandler(Update, global_anti_stale_filter), group=-2)
-    application.add_handler(TypeHandler(Update, global_ban_filter), group=-1)
+    application.add_handler(TypeHandler(Update, global_anti_stale_filter), group=-3)
+    application.add_handler(TypeHandler(Update, global_ban_filter), group=-2)
+    application.add_handler(TypeHandler(Update, global_draft_only_filter), group=-1)
     application.add_handler(CommandHandler('start', start))
     application.add_handler(CommandHandler('help', help_command))
+    application.add_handler(CommandHandler('enable', enable_command))
+    application.add_handler(CommandHandler('disable', disable_command))
 
     # Mini-Cricket Commands (Registered with start/help)
     from handlers.mini_cric import (
@@ -959,6 +1110,7 @@ if __name__ == '__main__':
 
     from handlers.admin import handle_broadcast, handle_broadcast_callback, handle_banner
     application.add_handler(CommandHandler('broadcast', wrap_admin_logging(handle_broadcast, "Send Broadcast Message")))
+    application.add_handler(CommandHandler('bc', wrap_admin_logging(handle_broadcast, "Send Broadcast Message")))
     application.add_handler(CallbackQueryHandler(handle_broadcast_callback, pattern=r"^bc_"))
     application.add_handler(CommandHandler('banner', wrap_admin_logging(handle_banner, "Modify Banner overrides")))
 
@@ -1032,6 +1184,15 @@ if __name__ == '__main__':
         cb_msell_ok, cb_msell_cancel,
     )
     # Commands
+    from handlers.cards import (
+        handle_offer, handle_share, cb_offer_claim, cb_offer_confirm, cb_offer_cancel,
+        cb_offer_insuf, cb_ref_refresh
+    )
+    from handlers.admin import (
+        handle_create_edition, handle_drop_edition, handle_editionlist,
+        handle_addplayercard, handle_takeplayercard, handle_add_offer,
+        handle_remove_offer, add_role_fifa_command, rem_role_fifa_command
+    )
     application.add_handler(CommandHandler('pack',       handle_pack))
     application.add_handler(CommandHandler('inventory',  handle_inventory))
     application.add_handler(CommandHandler('mycards',    handle_mycards))
@@ -1040,6 +1201,19 @@ if __name__ == '__main__':
     application.add_handler(CommandHandler('quest',      handle_quest))
     application.add_handler(CommandHandler('ggive',      handle_ggive))
     application.add_handler(CommandHandler('multi_sell', handle_multi_sell))
+    application.add_handler(CommandHandler('offer',      handle_offer))
+    application.add_handler(CommandHandler('share',      handle_share))
+    application.add_handler(CommandHandler('referrals',  handle_share))
+    application.add_handler(CommandHandler('create',     wrap_admin_logging(handle_create_edition, "Create Special Edition")))
+    application.add_handler(CommandHandler('drop',       wrap_admin_logging(handle_drop_edition, "Drop Special Edition")))
+    application.add_handler(CommandHandler('editionlist', handle_editionlist))
+    application.add_handler(CommandHandler('addplayercard', wrap_admin_logging(handle_addplayercard, "Add Player Edition Card")))
+    application.add_handler(CommandHandler('takeplayercard', wrap_admin_logging(handle_takeplayercard, "Take Player Edition Card")))
+    application.add_handler(CommandHandler('add_offer', wrap_admin_logging(handle_add_offer, "Add Special Edition Offer")))
+    application.add_handler(CommandHandler('remove_offer', wrap_admin_logging(handle_remove_offer, "Remove Special Edition Offer")))
+    application.add_handler(CommandHandler('add_rolefifa', wrap_admin_logging(add_role_fifa_command, "Add FIFA Role")))
+    application.add_handler(CommandHandler('rem_rolefifa', wrap_admin_logging(rem_role_fifa_command, "Remove FIFA Role")))
+    application.add_handler(CommandHandler('remove_rolefifa', wrap_admin_logging(rem_role_fifa_command, "Remove FIFA Role")))
 
     # Coin Flip Bet
     application.add_handler(CommandHandler('bbet', handle_bbet))
@@ -1052,8 +1226,7 @@ if __name__ == '__main__':
     # ── Sort & Collections ───────────────────────────────────────────────────
     from handlers.cards import handle_sort, handle_collections
     application.add_handler(CommandHandler('sort', handle_sort))
-    application.add_handler(CommandHandler('collections', handle_collections))
-    application.add_handler(CommandHandler('collection',  handle_collections))
+    # /collections removed as requested — accessible via /mycards Collections button
 
     # Standings / Leaderboard
     from handlers.standings import handle_standings, handle_standings_callback
@@ -1096,6 +1269,11 @@ if __name__ == '__main__':
     application.add_handler(CallbackQueryHandler(cb_quest_claim,  pattern=r"^quest_claim\|"))
     application.add_handler(CallbackQueryHandler(cb_msell_ok,     pattern=r"^msell_ok\|"))
     application.add_handler(CallbackQueryHandler(cb_msell_cancel, pattern=r"^msell_cancel\|"))
+    application.add_handler(CallbackQueryHandler(cb_offer_claim,   pattern=r"^offer_claim\|"))
+    application.add_handler(CallbackQueryHandler(cb_offer_confirm, pattern=r"^offer_confirm\|"))
+    application.add_handler(CallbackQueryHandler(cb_offer_cancel,  pattern=r"^offer_cancel\|"))
+    application.add_handler(CallbackQueryHandler(cb_offer_insuf,   pattern=r"^offer_insuf$"))
+    application.add_handler(CallbackQueryHandler(cb_ref_refresh,   pattern=r"^ref_refresh\|"))
 
     # Mini-Cricket Commands & Callbacks
     from handlers.mini_cric import (
