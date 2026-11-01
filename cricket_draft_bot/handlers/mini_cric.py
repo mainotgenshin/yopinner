@@ -306,7 +306,8 @@ async def handle_mini_cric_cancel(update: Update, context: ContextTypes.DEFAULT_
         return
 
     match["status"] = "cancelled"
-    await _save_match(match)
+    from database import get_db
+    await get_db().mini_cric_matches.delete_one({"match_id": match["match_id"]})
 
     challenge_msg_id = match.get("challenge_msg_id")
     group_chat_id = match.get("chat_id")
@@ -659,7 +660,8 @@ async def cb_mc_decline(update: Update, context: ContextTypes.DEFAULT_TYPE):
     match = await _get_match(match_id)
     if match and match["status"] == "pending":
         match["status"] = "declined"
-        await _save_match(match)
+        from database import get_db
+        await get_db().mini_cric_matches.delete_one({"match_id": match["match_id"]})
         try:
             await query.edit_message_text(f"<b>{esc_html(query.from_user.first_name)} declined the challenge.</b>", parse_mode="HTML")
         except Exception:
@@ -1405,7 +1407,8 @@ async def _finalize_match(context: ContextTypes.DEFAULT_TYPE, match: dict, winne
     except Exception as e:
         logger.warning(f"Could not send group result announcement: {e}")
 
-    await _save_match(match)
+    from database import get_db
+    await get_db().mini_cric_matches.delete_one({"match_id": match["match_id"]})
 
 
 # ── AFK 5-Min Timer & Mutual /end Handling ────────────────────────────────────
@@ -1445,7 +1448,8 @@ def _reset_turn_timer(context: ContextTypes.DEFAULT_TYPE, match_id: str, active_
 
             await _send_or_edit_dm(context.bot, c_id, c_mid, msg, reply_markup=None)
             await _send_or_edit_dm(context.bot, o_id, o_mid, msg, reply_markup=None)
-            await _save_match(match)
+            from database import get_db
+            await get_db().mini_cric_matches.delete_one({"match_id": match["match_id"]})
 
     _ACTIVE_TIMERS[match_id] = asyncio.create_task(_timer_coro())
 
@@ -1494,7 +1498,8 @@ async def handle_mini_cric_end(update: Update, context: ContextTypes.DEFAULT_TYP
 
             await _send_or_edit_dm(context.bot, c_id, c_mid, abort_msg, reply_markup=None)
             await _send_or_edit_dm(context.bot, o_id, o_mid, abort_msg, reply_markup=None)
-            await _save_match(match)
+            from database import get_db
+            await get_db().mini_cric_matches.delete_one({"match_id": match["match_id"]})
         else:
             try:
                 await update.effective_message.reply_text(
