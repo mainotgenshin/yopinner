@@ -287,6 +287,16 @@ async def add_player_fifa(update: Update, context: ContextTypes.DEFAULT_TYPE):
             pos_map = {k: v for k, v in fifa_stats.items() if k in ["ST", "CF", "LW", "RW", "CAM", "CM", "CDM", "LB", "RB", "CB"]}
             sorted_pos = sorted(pos_map.items(), key=lambda item: item[1], reverse=True)
             best_positions = [x[0] for x in sorted_pos[:3]]
+
+        # Zero out non-best positions for clean consistency
+        allowed_pos = set(best_positions)
+        for bp in best_positions:
+            if bp in {"LM", "RM", "LWB", "RWB"}:
+                mapped = {"LM": "LW", "RM": "RW", "LWB": "LB", "RWB": "RB"}[bp]
+                allowed_pos.add(mapped)
+        for pos_key in ["ST", "CF", "LW", "RW", "CAM", "CM", "CDM", "LB", "RB", "CB", "GK"]:
+            if pos_key not in allowed_pos:
+                fifa_stats[pos_key] = 0
         
         
         # ID Generation
@@ -2542,16 +2552,45 @@ _BROADCAST_ACTIVE = False
 _PENDING_BROADCASTS: dict = {}  # bc_id -> {text, admin_id, created_at, total_chats}
 
 async def handle_broadcast(update, context):
-    """/broadcast message — shows preview and requires confirmation."""
+    """/broadcast message — shows preview and requires confirmation. Supports optional image URL banner via href."""
     if not await check_admin(update): return
     global _BROADCAST_ACTIVE
     if _BROADCAST_ACTIVE:
         await update.message.reply_text("⚠️ A broadcast is currently in progress. Please wait for it to finish.")
         return
 
-    msg = update.message.text.replace("/broadcast", "").strip()
-    if not msg:
-        await update.message.reply_text("Usage: /broadcast [message]")
+    raw_input = (update.message.text or update.message.caption or "").strip()
+    msg = ""
+    for prefix in ("/broadcast", "/bc"):
+        if raw_input.startswith(prefix):
+            msg = raw_input[len(prefix):].strip()
+            break
+
+    # Extract image URL if provided as first token or image=...
+    image_url = None
+    raw_text = msg
+    first_token = msg.split()[0] if msg.split() else ""
+    if first_token.lower().startswith("image=") or first_token.lower().startswith("img="):
+        image_url = first_token.split("=", 1)[1].strip()
+        raw_text = msg[len(first_token):].strip()
+    elif first_token.startswith("http://") or first_token.startswith("https://"):
+        image_url = first_token
+        raw_text = msg[len(first_token):].strip()
+
+    # Also check if replying to a message with a URL
+    if not image_url and update.message.reply_to_message and update.message.reply_to_message.text:
+        reply_txt = update.message.reply_to_message.text.strip()
+        if reply_txt.startswith("http://") or reply_txt.startswith("https://"):
+            image_url = reply_txt.split()[0]
+
+    if not raw_text and not image_url:
+        await update.message.reply_text(
+            "📢 <b>Broadcast Usage:</b>\n\n"
+            "• Text only:\n<code>/broadcast Your message here</code>\n\n"
+            "• With image banner (href preview):\n<code>/broadcast https://example.com/banner.jpg Your message here</code>\n"
+            "or: <code>/broadcast img=https://example.com/banner.jpg Your message here</code>",
+            parse_mode="HTML"
+        )
         return
 
     from database import get_all_chats
@@ -2564,7 +2603,8 @@ async def handle_broadcast(update, context):
     from telegram import InlineKeyboardButton, InlineKeyboardMarkup
     bc_id = f"bc_{uuid.uuid4().hex[:8]}"
     _PENDING_BROADCASTS[bc_id] = {
-        "text": msg,
+        "text": raw_text,
+        "image_url": image_url,
         "admin_id": update.effective_user.id,
         "created_at": time.time(),
         "total_chats": len(chats)
@@ -2576,12 +2616,16 @@ async def handle_broadcast(update, context):
         if _PENDING_BROADCASTS[k]["created_at"] < cutoff:
             _PENDING_BROADCASTS.pop(k, None)
 
-    html_preview = re.sub(r"\*\*(.*?)\*\*", r"<b>\1</b>", msg)
+    html_preview = re.sub(r"\*\*(.*?)\*\*", r"<b>\1</b>", raw_text) if raw_text else "<i>(Image banner only)</i>"
+    href_tag = f'<a href="{image_url}">&#8205;</a>' if image_url else ""
+    img_line = f"🖼️ <b>Image Banner:</b> Included (href preview)\n" if image_url else ""
     preview_box = (
+        f"{href_tag}"
         f"📢 <b>Broadcast Preview</b>\n"
         f"━━━━━━━━━━━━━━━━━━\n"
         f"{html_preview}\n"
         f"━━━━━━━━━━━━━━━━━━\n\n"
+        f"{img_line}"
         f"🎯 <b>Target:</b> {len(chats)} active chats\n\n"
         f"Are you sure you want to broadcast this message?"
     )
@@ -2591,7 +2635,7 @@ async def handle_broadcast(update, context):
         InlineKeyboardButton("❌ Cancel",       callback_data=f"bc_no|{bc_id}")
     ]])
 
-    await update.message.reply_text(preview_box, reply_markup=kb, parse_mode="HTML")
+    await update.message.reply_text(preview_box, reply_markup=kb, parse_mode="HTML", disable_web_page_preview=False)
 
 
 async def handle_broadcast_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -2647,7 +2691,8 @@ async def handle_broadcast_callback(update: Update, context: ContextTypes.DEFAUL
 
         from database import get_all_chats, get_db
         chats = await get_all_chats()
-        msg_text = bc_data["text"]
+        msg_text = bc_data.get("text", "")
+        image_url = bc_data.get("image_url")
 
         try:
             await query.edit_message_text(f"📢 <b>Broadcasting to {len(chats)} chats...</b>", parse_mode="HTML")
@@ -2660,12 +2705,21 @@ async def handle_broadcast_callback(update: Update, context: ContextTypes.DEFAUL
         async def _run_broadcast():
             global _BROADCAST_ACTIVE
             success = failed = 0
-            html = re.sub(r"\*\*(.*?)\*\*", r"<b>\1</b>", msg_text)
-            text_out = f"📢 <b>Announcement</b>\n\n{html}"
+            html = re.sub(r"\*\*(.*?)\*\*", r"<b>\1</b>", msg_text) if msg_text else ""
+            href_tag = f'<a href="{image_url}">&#8205;</a>' if image_url else ""
+            if html:
+                text_out = f"{href_tag}📢 <b>Announcement</b>\n\n{html}"
+            else:
+                text_out = f"{href_tag}📢 <b>Announcement</b>"
             try:
                 for chat_id in chats:
                     try:
-                        await context.bot.send_message(chat_id=chat_id, text=text_out, parse_mode="HTML")
+                        await context.bot.send_message(
+                            chat_id=chat_id,
+                            text=text_out,
+                            parse_mode="HTML",
+                            disable_web_page_preview=False
+                        )
                         success += 1
                         await asyncio.sleep(0.5)
                     except Forbidden:
@@ -2765,7 +2819,6 @@ async def handle_update_card(update: Update, context: ContextTypes.DEFAULT_TYPE)
     user = update.effective_user
     from database import is_admin
     if not await is_admin(user.id):
-        await update.effective_message.reply_text("⛔ Admin only.")
         return
     args = context.args
     if not args:
@@ -2853,7 +2906,6 @@ async def handle_add_card(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
     from database import is_admin
     if not await is_admin(user.id):
-        await update.effective_message.reply_text("⛔ Admin only.")
         return
     args = context.args
     if not args:
@@ -2941,7 +2993,6 @@ async def handle_gift_coins(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
     from database import is_admin
     if not await is_admin(user.id):
-        await update.effective_message.reply_text("⛔ Admin only.")
         return
     args = context.args
     if len(args) < 2:
@@ -2974,7 +3025,6 @@ async def handle_gift_pack(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
     from database import is_admin
     if not await is_admin(user.id):
-        await update.effective_message.reply_text("⛔ Admin only.")
         return
     args = context.args
     if len(args) < 2:
@@ -3023,7 +3073,6 @@ async def handle_add_packall(update: Update, context: ContextTypes.DEFAULT_TYPE)
     user = update.effective_user
     from database import is_admin
     if not await is_admin(user.id):
-        await update.effective_message.reply_text("⛔ Admin only.")
         return
     args = context.args
     if not args:
@@ -3061,7 +3110,6 @@ async def handle_ban_command(update: Update, context: ContextTypes.DEFAULT_TYPE)
     user = update.effective_user
     from database import is_admin
     if not await is_admin(user.id):
-        await update.effective_message.reply_text("⛔ Admin only.")
         return
     args = context.args
     if not args:
@@ -3090,7 +3138,6 @@ async def handle_unban_command(update: Update, context: ContextTypes.DEFAULT_TYP
     user = update.effective_user
     from database import is_admin
     if not await is_admin(user.id):
-        await update.effective_message.reply_text("⛔ Admin only.")
         return
     args = context.args
     if not args:
@@ -3301,7 +3348,6 @@ async def handle_botstatus(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
     from database import is_admin
     if not await is_admin(user.id):
-        await update.effective_message.reply_text("⛔ Mods only.")
         return
 
     import time, asyncio
@@ -3397,7 +3443,6 @@ async def handle_add_achievement(update: Update, context: ContextTypes.DEFAULT_T
     user = update.effective_user
     from database import is_admin
     if not await is_admin(user.id):
-        await update.effective_message.reply_text("⛔ Mods only.")
         return
 
     args = context.args
@@ -3445,7 +3490,6 @@ async def handle_rem_achievement(update: Update, context: ContextTypes.DEFAULT_T
     user = update.effective_user
     from database import is_admin
     if not await is_admin(user.id):
-        await update.effective_message.reply_text("⛔ Mods only.")
         return
 
     args = context.args
@@ -3513,3 +3557,389 @@ async def cb_admin_card(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"✅ Added to card catalog:\n*{player['name']}* ({fmt.upper()})\nOVR: {ovr} | {RARITY_EMOJI.get(rarity, '')} {rarity.title()}",
             parse_mode='Markdown'
         )
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# Special Edition (✨ Mythical) Commands
+# ═══════════════════════════════════════════════════════════════════════════
+
+async def handle_create_edition(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """
+    /create name=Gautam Gambhir edition=2011 world cup ovr=92 rarity=mythical format=odi image=URL
+    Creates a new Special Edition card in db.edition_cards.
+    """
+    if not await check_admin(update): return
+    raw = update.message.text
+    import re
+    text = re.sub(r'^\s*/create\s*', '', raw, flags=re.I).strip()
+    if not text:
+        await update.message.reply_text(
+            "**Usage:**\n`/create name=Gautam Gambhir edition=2011 world cup ovr=92 rarity=mythical format=odi image=URL`",
+            parse_mode="Markdown"
+        )
+        return
+
+    text_clean = re.sub(r'\s*=\s*', '=', text) + ' '
+    first_eq = text_clean.find('=')
+    if first_eq != -1:
+        prefix = text_clean[:first_eq].strip().split()
+        if len(prefix) > 1:
+            name_part = " ".join(prefix[:-1])
+            key_part = prefix[-1]
+            rest_part = text_clean[first_eq:]
+            text_clean = f"name={name_part} {key_part}{rest_part}"
+
+    pattern = r'(name|edition|ovr|rarity|format|image|player_id)\s*=\s*(.*?)(?=\s+(?:name|edition|ovr|rarity|format|image|player_id)\s*=|$) '[:-1]
+    matches = re.finditer(pattern, text_clean, re.I | re.DOTALL)
+    parsed = {m.group(1).lower(): m.group(2).strip() for m in matches}
+
+    name = parsed.get("name")
+    edition = parsed.get("edition")
+    if not name or not edition:
+        await update.message.reply_text("❌ Missing required fields: `name` and `edition` are required.", parse_mode="Markdown")
+        return
+
+    try:
+        ovr = int(parsed.get("ovr", 90))
+    except ValueError:
+        ovr = 90
+
+    fmt = parsed.get("format", "odi").lower()
+    image_url = parsed.get("image", "")
+
+    from database import add_edition_card, search_players_by_name
+    player_id = parsed.get("player_id")
+    if not player_id:
+        p_matches = await search_players_by_name(name)
+        if p_matches:
+            player_id = p_matches[0]["player_id"]
+        else:
+            player_id = re.sub(r'[^a-zA-Z0-9_]+', '_', name.upper()).strip('_')
+
+    slug = f"{name}_{edition}".lower()
+    edition_id = re.sub(r'[^a-z0-9_]+', '_', slug).strip('_')
+
+    card_data = {
+        "edition_id": edition_id,
+        "player_id": player_id,
+        "player_name": name,
+        "edition": edition,
+        "ovr": ovr,
+        "rarity": "mythical",
+        "format": fmt,
+        "image_url": image_url,
+    }
+    await add_edition_card(card_data)
+
+    preview_text = (
+        f"✨ *Special Edition Card Created!*\n\n"
+        f"👤 *Player:* {name}\n"
+        f"🏆 *Edition:* {edition}\n"
+        f"🆔 *Edition ID:* `{edition_id}`\n"
+        f"⚡ *Format:* {fmt.upper()} | *OVR:* {ovr} | *Rarity:* ✨ Mythical\n"
+        f"🖼️ *Image:* {image_url or '_None_'}"
+    )
+    await update.message.reply_text(preview_text, parse_mode="Markdown")
+
+
+async def handle_drop_edition(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """
+    /drop <edition_id> or /drop name=... edition=...
+    Deletes an edition card definition from db.edition_cards.
+    """
+    if not await check_admin(update): return
+    raw = update.message.text.replace("/drop", "").strip()
+    if not raw:
+        await update.message.reply_text("Usage:\n`/drop <edition_id>`\n`/drop Gautam Gambhir edition=2011 world cup`", parse_mode="Markdown")
+        return
+
+    edition_id = raw.strip()
+    import re
+    if "edition=" in raw.lower() or " " in raw:
+        clean = re.sub(r'\s*=\s*', '=', raw)
+        parts = re.split(r'\bedition=', clean, flags=re.I)
+        if len(parts) > 1:
+            name = parts[0].strip()
+            ed = parts[1].strip()
+            edition_id = re.sub(r'[^a-z0-9_]+', '_', f"{name}_{ed}".lower()).strip('_')
+
+    from database import delete_edition_card, get_edition_card
+    card = await get_edition_card(edition_id)
+    if not card:
+        await update.message.reply_text(f"❌ Edition card `{edition_id}` not found in catalog.", parse_mode="Markdown")
+        return
+
+    await delete_edition_card(edition_id)
+    await update.message.reply_text(f"🗑 Special Edition card deleted:\n✨ *{card.get('player_name')}* ({card.get('edition')}) [`{edition_id}`]", parse_mode="Markdown")
+
+
+async def handle_editionlist(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """
+    /editionlist — View all special edition cards.
+    """
+    if not await check_admin(update): return
+    from database import get_all_editions
+    editions = await get_all_editions()
+    if not editions:
+        await update.message.reply_text("ℹ️ No Special Edition cards in catalog yet. Use `/create` to create one.", parse_mode="Markdown")
+        return
+
+    lines = [f"✨ *Special Edition Catalog* ({len(editions)} cards)\n━━━━━━━━━━━━━━━━━━"]
+    for i, ed in enumerate(editions, 1):
+        lines.append(
+            f"{i}. ✨ *{esc(ed.get('player_name', 'Unknown'))}* — _{esc(ed.get('edition', ''))}_\n"
+            f"   Format: `{ed.get('format', 'odi').upper()}` | OVR: `{ed.get('ovr', 90)}`\n"
+            f"   ID: <code>{ed.get('edition_id')}</code>\n"
+        )
+    await update.effective_message.reply_text("\n".join(lines), parse_mode="HTML")
+
+
+async def handle_addplayercard(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """
+    /addplayercard <user_id> <edition_id>
+    Grants a special edition card to a specific user (max 1 copy).
+    """
+    if not await check_admin(update): return
+    args = context.args or []
+    if len(args) < 2:
+        await update.message.reply_text("Usage:\n`/addplayercard <user_id> <edition_id>`", parse_mode="Markdown")
+        return
+
+    try:
+        target_id = int(args[0])
+    except ValueError:
+        await update.message.reply_text("❌ Invalid user ID.")
+        return
+
+    edition_id = args[1].strip()
+    from database import add_edition_card_to_user
+    success, msg = await add_edition_card_to_user(target_id, edition_id)
+    if success:
+        await update.message.reply_text(f"✅ {msg}\nGiven to User: `{target_id}`", parse_mode="Markdown")
+    else:
+        await update.message.reply_text(f"⚠️ {msg}", parse_mode="Markdown")
+
+
+async def handle_takeplayercard(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """
+    /takeplayercard <user_id> <edition_id>
+    Removes a special edition card from a specific user.
+    """
+    if not await check_admin(update): return
+    args = context.args or []
+    if len(args) < 2:
+        await update.message.reply_text("Usage:\n`/takeplayercard <user_id> <edition_id>`", parse_mode="Markdown")
+        return
+
+    try:
+        target_id = int(args[0])
+    except ValueError:
+        await update.message.reply_text("❌ Invalid user ID.")
+        return
+
+    edition_id = args[1].strip()
+    from database import remove_edition_card_from_user
+    success = await remove_edition_card_from_user(target_id, edition_id)
+    if success:
+        await update.message.reply_text(f"✅ Removed Special Edition card `{edition_id}` from user `{target_id}`.", parse_mode="Markdown")
+    else:
+        await update.message.reply_text(f"⚠️ User `{target_id}` does not own Special Edition card `{edition_id}`.", parse_mode="Markdown")
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# Special Edition Offer System Commands (Admin)
+# ═══════════════════════════════════════════════════════════════════════════
+
+async def handle_add_offer(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """
+    /add_offer <Name> Edition = <Edition> submit=<Rarity> count=<Count> duration=<Days>
+    Example:
+    /add_offer Gautam Gambhir Edition = 2011 world cup submit=legend count=20 duration =7
+    """
+    if not await check_admin(update): return
+    raw = update.message.text.replace("/add_offer", "").strip()
+    if not raw:
+        await update.message.reply_text(
+            "**Usage:**\n`/add_offer <Name> Edition = <Edition> submit=<Rarity> count=<Count> duration=<Days>`\n\n"
+            "**Example:**\n`/add_offer Gautam Gambhir Edition = 2011 world cup submit=legend count=20 duration =7`",
+            parse_mode="Markdown"
+        )
+        return
+
+    import re, time
+    text_clean = re.sub(r'\s*=\s*', '=', raw)
+
+    name_match = re.search(r'\bname=([^\s=]+(?: [^\s=]+)*?)(?=\s+\w+=|$)', text_clean, re.I)
+    edition_match = re.search(r'\bedition=([^\s=]+(?: [^\s=]+)*?)(?=\s+\w+=|$)', text_clean, re.I)
+    submit_match = re.search(r'\bsubmit=(\w+)', text_clean, re.I)
+    count_match = re.search(r'\bcount=(\d+)', text_clean, re.I)
+    duration_match = re.search(r'\bduration=(\d+)', text_clean, re.I)
+
+    if name_match:
+        name = name_match.group(1).strip()
+    else:
+        before_ed = re.split(r'\bedition=', text_clean, flags=re.I)
+        name = before_ed[0].strip() if len(before_ed) > 1 else ""
+
+    edition = edition_match.group(1).strip() if edition_match else ""
+    submit_rarity = submit_match.group(1).lower() if submit_match else "legend"
+    submit_count = int(count_match.group(1)) if count_match else 20
+    duration_days = int(duration_match.group(1)) if duration_match else 7
+
+    if not name or not edition:
+        await update.message.reply_text("❌ Missing name or edition. Please specify both.", parse_mode="Markdown")
+        return
+
+    from database import get_edition_card, get_all_editions, get_active_offer, set_active_offer
+    slug = re.sub(r'[^a-z0-9_]+', '_', f"{name}_{edition}".lower()).strip('_')
+    ed_card = await get_edition_card(slug)
+    if not ed_card:
+        all_eds = await get_all_editions()
+        ed_card = next(
+            (e for e in all_eds if e.get("player_name", "").lower() == name.lower() and e.get("edition", "").lower() == edition.lower()),
+            None
+        )
+
+    if not ed_card:
+        await update.message.reply_text(
+            f"❌ Special Edition card *{name}* ({edition}) not found in catalog!\n"
+            f"Please create it first using `/create` before adding an offer.",
+            parse_mode="Markdown"
+        )
+        return
+
+    cur_offer = await get_active_offer()
+    if cur_offer and time.time() < cur_offer.get("expires_at", 0):
+        await update.message.reply_text(
+            f"⚠️ An offer is already active:\n"
+            f"✨ *{cur_offer.get('player_name')}* ({cur_offer.get('edition')})\n\n"
+            f"Only 1 offer is allowed at a time. Please remove it first using `/remove_offer`.",
+            parse_mode="Markdown"
+        )
+        return
+
+    offer_data = {
+        "edition_id": ed_card["edition_id"],
+        "player_id": ed_card.get("player_id"),
+        "player_name": ed_card["player_name"],
+        "edition": ed_card["edition"],
+        "format": ed_card.get("format", "odi"),
+        "ovr": ed_card.get("ovr", 90),
+        "image_url": ed_card.get("image_url", ""),
+        "submit_rarity": submit_rarity,
+        "submit_count": submit_count,
+        "duration_days": duration_days,
+        "created_at": time.time(),
+        "expires_at": time.time() + (duration_days * 86400),
+        "claimed_users": []
+    }
+    await set_active_offer(offer_data)
+
+    msg = (
+        f"🎉 *Special Edition Offer Activated!*\n\n"
+        f"✨ *Reward Card:* {ed_card['player_name']} ({ed_card['edition']})\n"
+        f"⚡ *Format:* {ed_card.get('format', 'odi').upper()} | *OVR:* {ed_card.get('ovr', 90)}\n"
+        f"📥 *Requirement:* Submit {submit_count} {submit_rarity.title()} cards\n"
+        f"⏳ *Duration:* {duration_days} days\n\n"
+        f"Users can now claim this offer in bot PM via `/offer`!"
+    )
+    await update.message.reply_text(msg, parse_mode="Markdown")
+
+
+async def handle_remove_offer(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """
+    /remove_offer — Removes the current active Special Edition offer.
+    """
+    if not await check_admin(update): return
+    from database import get_active_offer, remove_active_offer
+    cur = await get_active_offer()
+    if not cur:
+        await update.message.reply_text("ℹ️ No active offer to remove.")
+        return
+    await remove_active_offer()
+    await update.message.reply_text(f"🗑 Current offer for ✨ *{cur.get('player_name')}* ({cur.get('edition')}) has been removed.", parse_mode="Markdown")
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# /add_rolefifa <Name> <Position>
+# ═══════════════════════════════════════════════════════════════════════════
+
+async def add_role_fifa_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """/add_rolefifa <Name> <Position>"""
+    if not await check_admin(update): return
+    text = update.message.text
+    for prefix in ("/add_rolefifa", "/addrolefifa"):
+        if text.startswith(prefix):
+            text = text[len(prefix):].strip()
+            break
+    if not text:
+        await update.message.reply_text("Usage: `/add_rolefifa Name Position`\nPositions: GK, CB, LB, RB, CDM, CM, CAM, LM, RM, LW, RW, CF, ST", parse_mode="Markdown")
+        return
+    parts = text.rsplit(" ", 1)
+    if len(parts) < 2:
+        await update.message.reply_text("Usage: `/add_rolefifa Name Position`", parse_mode="Markdown")
+        return
+    name, pos_input = parts[0].strip(), parts[1].strip().upper()
+    from config import POSITIONS_FIFA
+    valid_positions = set(p.upper() for p in POSITIONS_FIFA)
+    if pos_input not in valid_positions:
+        await update.message.reply_text(f"❌ Invalid FIFA position: `{pos_input}`\nValid: {', '.join(sorted(valid_positions))}", parse_mode="Markdown")
+        return
+    from database import search_players_by_name, save_player
+    results = await search_players_by_name(name, sport_filter="football")
+    if not results:
+        results = await search_players_by_name(name)
+    if not results:
+        await update.message.reply_text(f"❌ Player not found: {name}")
+        return
+    p = results[0]
+    current = p.get("positions", [])
+    if pos_input in [c.upper() for c in current]:
+        await update.message.reply_text(f"⚠️ *{p['name']}* already has position *{pos_input}*.", parse_mode="Markdown")
+        return
+    current.append(pos_input)
+    p["positions"] = current
+    await save_player(p)
+    await update.message.reply_text(f"✅ Added *{pos_input}* to *{esc(p['name'])}*.\nUpdated positions: {', '.join(current)}", parse_mode="Markdown")
+
+
+async def rem_role_fifa_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """/rem_rolefifa <Name> <Position>"""
+    if not await check_admin(update): return
+    text = update.message.text
+    for prefix in ("/rem_rolefifa", "/remove_rolefifa", "/remrolefifa", "/removerolefifa"):
+        if text.startswith(prefix):
+            text = text[len(prefix):].strip()
+            break
+    if not text:
+        await update.message.reply_text("Usage: `/rem_rolefifa Name Position`\nPositions: GK, CB, LB, RB, CDM, CM, CAM, LM, RM, LW, RW, CF, ST", parse_mode="Markdown")
+        return
+    parts = text.rsplit(" ", 1)
+    if len(parts) < 2:
+        await update.message.reply_text("Usage: `/rem_rolefifa Name Position`", parse_mode="Markdown")
+        return
+    name, pos_input = parts[0].strip(), parts[1].strip().upper()
+    from config import POSITIONS_FIFA
+    valid_positions = set(p.upper() for p in POSITIONS_FIFA)
+    if pos_input not in valid_positions:
+        await update.message.reply_text(f"❌ Invalid FIFA position: `{pos_input}`\nValid: {', '.join(sorted(valid_positions))}", parse_mode="Markdown")
+        return
+    from database import search_players_by_name, save_player
+    results = await search_players_by_name(name, sport_filter="football")
+    if not results:
+        results = await search_players_by_name(name)
+    if not results:
+        await update.message.reply_text(f"❌ Player not found: {name}")
+        return
+    p = results[0]
+    current = p.get("positions", [])
+    found = next((pos for pos in current if pos.upper() == pos_input), None)
+    if not found:
+        curr_str = ', '.join(current) if current else 'None'
+        await update.message.reply_text(f"⚠️ *{p['name']}* does not have position *{pos_input}*.\nCurrent positions: {curr_str}", parse_mode="Markdown")
+        return
+    current.remove(found)
+    p["positions"] = current
+    await save_player(p)
+    curr_str = ', '.join(current) if current else 'None'
+    await update.message.reply_text(f"✅ Removed *{found}* from *{esc(p['name'])}*.\nUpdated positions: {curr_str}", parse_mode="Markdown")
