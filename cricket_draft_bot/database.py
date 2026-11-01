@@ -11,6 +11,7 @@ from pymongo import ASCENDING, DESCENDING
 from config import MONGO_URI
 from urllib.parse import urlparse
 import datetime
+import time
 import re
 
 logger = logging.getLogger(__name__)
@@ -120,8 +121,9 @@ def evict_player_cache(player_id: Optional[str] = None):
         logger.info("Player cache cleared manually.")
 
 def clear_player_cache():
-    """Manually clear the player cache."""
+    """Manually clear the player cache and card pool caches."""
     evict_player_cache(None)
+    _invalidate_card_pool_cache()
 
 async def save_player(player_data: Dict[str, Any]):
     db = get_db()
@@ -423,7 +425,7 @@ async def update_user_stats(user_id: int, name: str, result: str,
     import time as _t
     db = get_db()
 
-    now = _t.time()
+    now = time.time()
     is_win = result == "W"
 
     # --- Fetch current doc to check reset timestamps ---
@@ -738,6 +740,19 @@ async def get_user_cards(user_id: int, sport_filter: str = None) -> list:
         fmt = card.get("format", "")
         p = players_by_id.get(pid)
         if not p:
+            if card.get("rarity") == "mythical" or card.get("edition_id"):
+                result.append({
+                    "user_id":   user_id,
+                    "player_id": pid,
+                    "format":    fmt,
+                    "quantity":  card.get("quantity", 1),
+                    "name":      card.get("name", "Special Edition"),
+                    "rarity":    "mythical",
+                    "ovr":       card.get("ovr", 90),
+                    "image":     card.get("image", ""),
+                    "edition":   card.get("edition", "Special Edition"),
+                    "edition_id": card.get("edition_id"),
+                })
             continue
 
         # Determine canonical sport for this card from format first, then player doc
@@ -777,19 +792,32 @@ async def get_user_cards(user_id: int, sport_filter: str = None) -> list:
 
         cards_dict = p.get("cards") if isinstance(p.get("cards"), dict) else {}
         card_data = cards_dict.get(fmt, {}) if isinstance(cards_dict.get(fmt), dict) else {}
-        rarity = card_data.get("rarity") or p.get("rarity") or "common"
-        ovr = card_data.get("ovr") or p.get("ovr") or 70
-        image = _get_card_image(p, fmt)
-        result.append({
+        is_edition = (card.get("rarity") == "mythical" or bool(card.get("edition_id")) or bool(card.get("edition")))
+        if is_edition:
+            rarity = "mythical"
+            ovr = card.get("ovr") or card_data.get("ovr") or p.get("ovr") or 90
+            image = card.get("image") or card.get("image_url") or _get_card_image(p, fmt)
+            name = card.get("name") or p.get("name", "Unknown")
+        else:
+            rarity = card_data.get("rarity") or p.get("rarity") or "common"
+            ovr = card_data.get("ovr") or p.get("ovr") or 70
+            image = _get_card_image(p, fmt)
+            name = p.get("name", "Unknown")
+
+        entry = {
             "user_id":   user_id,
             "player_id": pid,
             "format":    fmt,
             "quantity":  card.get("quantity", 1),
-            "name":      p.get("name", "Unknown"),
+            "name":      name,
             "rarity":    rarity,
             "ovr":       ovr,
             "image":     image,
-        })
+        }
+        if is_edition:
+            entry["edition"] = card.get("edition", "Special Edition")
+            entry["edition_id"] = card.get("edition_id")
+        result.append(entry)
     return result
 
 def _get_card_image(player_doc: dict, fmt: str) -> Optional[str]:
@@ -913,11 +941,14 @@ async def get_fav_card(user_id: int) -> Optional[dict]:
     doc = await db.users.find_one({"user_id": user_id}, {"fav_card": 1})
     return doc.get("fav_card") if doc else None
 
-async def set_fav_card(user_id: int, player_id: str, fmt: str) -> None:
+async def set_fav_card(user_id: int, player_id: str, fmt: str, edition_id: str = None) -> None:
     db = get_db()
+    fav_data = {"player_id": player_id, "format": fmt}
+    if edition_id:
+        fav_data["edition_id"] = edition_id
     await db.users.update_one(
         {"user_id": user_id},
-        {"$set": {"fav_card": {"player_id": player_id, "format": fmt}}},
+        {"$set": {"fav_card": fav_data}},
         upsert=True
     )
 
@@ -1210,15 +1241,27 @@ async def draw_pack_cards(pack_type: str, sport: str, count: int = 3) -> list:
     """
     Draw `count` cards from the pool for given pack_type and sport.
     Returns list of card dicts. Empty list if pool is empty.
+    Diminishing multi-legend probability: in Elite packs, pulling a second or third
+    legend in a single pack is drastically reduced (4% for 2nd, 1% for 3rd).
     """
     pool = await _build_card_pool(sport)
     if not pool:
         return []
 
     drawn = []
-    odds = PACK_ODDS[pack_type]
+    base_odds = PACK_ODDS[pack_type]
+    legends_drawn = 0
 
     for _ in range(count):
+        odds = dict(base_odds)
+        if pack_type == "elite" and legends_drawn >= 1:
+            if legends_drawn == 1:
+                legend_drop = 26  # drops from 30% to 4% for 2nd legend
+            else:
+                legend_drop = 29  # drops from 30% to 1% for 3rd legend
+            odds["legend"] = max(1, odds.get("legend", 30) - legend_drop)
+            odds["epic"] = odds.get("epic", 55) + legend_drop
+
         # Roll rarity
         roll = random.randint(1, 100)
         cumulative = 0
@@ -1228,6 +1271,9 @@ async def draw_pack_cards(pack_type: str, sport: str, count: int = 3) -> list:
             if roll <= cumulative:
                 rarity = r
                 break
+
+        if rarity == "legend":
+            legends_drawn += 1
 
         # Pick random card of that rarity
         rarity_pool = [c for c in pool if c["rarity"] == rarity]
@@ -1272,7 +1318,7 @@ async def get_user_active_trade(user_id: int) -> Optional[dict]:
     """
     import time as _t
     db = get_db()
-    cutoff = _t.time() - 300  # 5 minutes
+    cutoff = time.time() - 300  # 5 minutes
     doc = await db.active_trades.find_one({
         "$or": [{"initiator_id": user_id}, {"target_id": user_id}],
         "status": {"$in": ["awaiting_target_pick", "awaiting_confirmation", "completing"]},
@@ -1353,10 +1399,15 @@ async def validate_fav_card(user_id: int) -> Optional[dict]:
     if not fav:
         return None
     db = get_db()
-    owned = await db.user_cards.find_one(
-        {"user_id": user_id, "player_id": fav["player_id"],
-         "format": fav["format"], "quantity": {"$gt": 0}}
-    )
+    owned_query = {
+        "user_id": user_id,
+        "player_id": fav["player_id"],
+        "format": fav["format"],
+        "quantity": {"$gt": 0}
+    }
+    if fav.get("edition_id"):
+        owned_query["edition_id"] = fav["edition_id"]
+    owned = await db.user_cards.find_one(owned_query)
     if not owned:
         await clear_fav_card(user_id)
         return None
@@ -1493,6 +1544,12 @@ async def update_ranked_and_exp(
         },
         upsert=True
     )
+
+    if new_lvl >= 2:
+        try:
+            await check_and_reward_referral(user_id)
+        except Exception:
+            pass
 
     return {
         "user_id": user_id,
@@ -1722,12 +1779,12 @@ async def ban_user(user_id: int, reason: str = "Banned by admin") -> bool:
     import time as _t
     await db.banned_users.update_one(
         {"user_id": user_id},
-        {"$set": {"user_id": user_id, "banned_at": _t.time(), "reason": reason}},
+        {"$set": {"user_id": user_id, "banned_at": time.time(), "reason": reason}},
         upsert=True
     )
     await db.users.update_one(
         {"user_id": user_id},
-        {"$set": {"banned": True, "banned_at": _t.time(), "ban_reason": reason}}
+        {"$set": {"banned": True, "banned_at": time.time(), "ban_reason": reason}}
     )
     _banned_users_cache.add(user_id)
     return True
@@ -2024,3 +2081,231 @@ async def save_user_card_sort(user_id: int, crit: str, order: str) -> None:
 
 
 
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# Special Edition (✨ Mythical) Cards & Catalog
+# ═══════════════════════════════════════════════════════════════════════════
+
+async def add_edition_card(data: dict) -> str:
+    """Adds or updates a special edition card definition in db.edition_cards."""
+    db = get_db()
+    edition_id = data.get("edition_id")
+    if not edition_id:
+        import re
+        slug = f"{data.get('player_name', '')}_{data.get('edition', '')}".lower()
+        edition_id = re.sub(r'[^a-z0-9_]+', '_', slug).strip('_')
+        data["edition_id"] = edition_id
+    data["rarity"] = "mythical"
+    data.setdefault("created_at", time.time())
+    await db.edition_cards.update_one(
+        {"edition_id": edition_id},
+        {"$set": data},
+        upsert=True
+    )
+    return edition_id
+
+async def delete_edition_card(edition_id: str) -> bool:
+    """Deletes an edition card definition from db.edition_cards."""
+    db = get_db()
+    res = await db.edition_cards.delete_one({"edition_id": edition_id})
+    return res.deleted_count > 0
+
+async def get_edition_card(edition_id: str) -> Optional[dict]:
+    db = get_db()
+    doc = await db.edition_cards.find_one({"edition_id": edition_id})
+    if doc:
+        doc.pop("_id", None)
+    return doc
+
+async def get_all_editions() -> list:
+    db = get_db()
+    cursor = db.edition_cards.find({})
+    docs = await cursor.to_list(1000)
+    for d in docs:
+        d.pop("_id", None)
+    return docs
+
+async def add_edition_card_to_user(user_id: int, edition_id: str) -> tuple[bool, str]:
+    """
+    Grants an edition card to a user.
+    Enforces rule: maximum 1 copy of this specific edition card per user.
+    """
+    db = get_db()
+    ed = await get_edition_card(edition_id)
+    if not ed:
+        return False, f"Edition card '{edition_id}' does not exist."
+    # Check if user already owns this specific edition card
+    existing = await db.user_cards.find_one({"user_id": user_id, "edition_id": edition_id})
+    if existing and existing.get("quantity", 0) > 0:
+        return False, f"User already owns ✨ {ed['player_name']} ({ed['edition']}). Max 1 copy allowed."
+    
+    card_doc = {
+        "user_id": user_id,
+        "player_id": ed.get("player_id", ed["edition_id"]),
+        "format": ed.get("format", "odi"),
+        "quantity": 1,
+        "edition_id": edition_id,
+        "edition": ed.get("edition", "Special Edition"),
+        "ovr": ed.get("ovr", 90),
+        "rarity": "mythical",
+        "name": ed.get("player_name", "Unknown"),
+        "image": ed.get("image_url", ""),
+        "acquired_at": time.time()
+    }
+    await db.user_cards.update_one(
+        {"user_id": user_id, "edition_id": edition_id},
+        {"$set": card_doc},
+        upsert=True
+    )
+    return True, f"Successfully granted ✨ {ed['player_name']} ({ed['edition']})!"
+
+async def remove_edition_card_from_user(user_id: int, edition_id: str) -> bool:
+    """Removes an edition card from user."""
+    db = get_db()
+    res = await db.user_cards.delete_one({"user_id": user_id, "edition_id": edition_id})
+    return res.deleted_count > 0
+
+async def get_active_offer() -> Optional[dict]:
+    """Gets the currently active Special Edition offer from system_config."""
+    db = get_db()
+    doc = await db.system_config.find_one({"key": "active_offer"})
+    if doc:
+        doc.pop("_id", None)
+    return doc
+
+async def set_active_offer(offer_data: dict) -> None:
+    db = get_db()
+    offer_data["key"] = "active_offer"
+    await db.system_config.update_one(
+        {"key": "active_offer"},
+        {"$set": offer_data},
+        upsert=True
+    )
+
+async def remove_active_offer() -> bool:
+    db = get_db()
+    res = await db.system_config.delete_one({"key": "active_offer"})
+    return res.deleted_count > 0
+
+# ═══════════════════════════════════════════════════════════════════════════
+# Referral & Growth System
+# ═══════════════════════════════════════════════════════════════════════════
+
+async def register_referral(new_user_id: int, referrer_id: int) -> bool:
+    """
+    Registers a new user as invited by referrer_id.
+    Ensures:
+    - User cannot invite themselves.
+    - Only brand-new users (level 1, <= 50 EXP) can be referred.
+    - A user can only be referred once.
+    Awards welcome bonus to new user (+50 Card Coins).
+    Returns True if referral successfully registered.
+    """
+    if new_user_id == referrer_id:
+        return False
+    db = get_db()
+    user = await db.users.find_one({"user_id": new_user_id})
+    if user and user.get("referred_by"):
+        return False
+    if user and (user.get("level", 1) > 1 or user.get("current_exp", 0) > 50):
+        return False
+        
+    await db.users.update_one(
+        {"user_id": new_user_id},
+        {
+            "$set": {
+                "referred_by": referrer_id,
+                "referral_qualified": False,
+                "referred_at": time.time()
+            },
+            "$inc": {"card_coins": 50}
+        },
+        upsert=True
+    )
+    return True
+
+async def check_and_reward_referral(user_id: int) -> bool:
+    """
+    Checks if a user qualified for their referrer's reward (reached Level 2).
+    If qualified:
+    - Marks referral_qualified = True
+    - Awards referrer +150 Card Coins
+    - Checks milestone ladder (3, 7, 15 qualified invites with looping rewards)
+    """
+    db = get_db()
+    user = await db.users.find_one({"user_id": user_id}, {"referred_by": 1, "referral_qualified": 1, "level": 1})
+    if not user or not user.get("referred_by") or user.get("referral_qualified"):
+        return False
+    if user.get("level", 1) < 2:
+        return False
+        
+    referrer_id = user["referred_by"]
+    updated = await db.users.find_one_and_update(
+        {"user_id": user_id, "referral_qualified": False},
+        {"$set": {"referral_qualified": True, "qualified_at": time.time()}}
+    )
+    if not updated:
+        return False
+        
+    # Award referrer base reward (+150 Card Coins)
+    await db.users.update_one(
+        {"user_id": referrer_id},
+        {"$inc": {"card_coins": 150, "referral_coins_earned": 150}}
+    )
+    
+    # Calculate total qualified referrals
+    qualified_count = await db.users.count_documents({"referred_by": referrer_id, "referral_qualified": True})
+    pos_in_cycle = ((qualified_count - 1) % 15) + 1
+    
+    bonus_coins = 0
+    pack_reward = None
+    pack_qty = 1
+    if pos_in_cycle == 3:
+        bonus_coins = 300
+        pack_reward = "premium_cricket"
+    elif pos_in_cycle == 7:
+        bonus_coins = 750
+        pack_reward = "elite_cricket"
+    elif pos_in_cycle == 15:
+        bonus_coins = 2000
+        pack_reward = "elite_cricket"
+        pack_qty = 2
+        
+    if bonus_coins > 0:
+        await db.users.update_one(
+            {"user_id": referrer_id},
+            {"$inc": {"card_coins": bonus_coins, "referral_coins_earned": bonus_coins}}
+        )
+    if pack_reward:
+        await add_pack(referrer_id, pack_reward, quantity=pack_qty)
+        
+    return True
+
+async def get_user_referral_stats(user_id: int) -> dict:
+    """Returns referral stats for a user."""
+    db = get_db()
+    user = await db.users.find_one({"user_id": user_id}, {"referral_coins_earned": 1}) or {}
+    total_invited = await db.users.count_documents({"referred_by": user_id})
+    total_qualified = await db.users.count_documents({"referred_by": user_id, "referral_qualified": True})
+    coins_earned = user.get("referral_coins_earned", total_qualified * 150)
+    
+    pos_in_cycle = total_qualified % 15
+    if pos_in_cycle < 3:
+        next_milestone = 3
+        reward_desc = "300 Coins + 1 Premium Pack"
+    elif pos_in_cycle < 7:
+        next_milestone = 7
+        reward_desc = "750 Coins + 1 Elite Pack"
+    else:
+        next_milestone = 15
+        reward_desc = "2,000 Coins + 2 Elite Packs"
+        
+    return {
+        "total_invited": total_invited,
+        "total_qualified": total_qualified,
+        "coins_earned": coins_earned,
+        "pos_in_cycle": pos_in_cycle,
+        "next_milestone": next_milestone,
+        "reward_desc": reward_desc
+    }
