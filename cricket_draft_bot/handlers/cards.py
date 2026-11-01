@@ -861,12 +861,14 @@ async def handle_viewcard(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # Multiple formats — ask which one
         buttons = []
         for c in player_cards:
-            ed_id = c.get("edition_id") or "base"
-            if c.get("rarity") == "mythical" or c.get("edition"):
+            ed_id = c.get("edition_id")
+            if ed_id:
                 lbl = f"✨ {c.get('edition', 'Special Edition').title()} — OVR {c.get('ovr', 90)}"
+                cb_data = f"vc_fmt|ed|{ed_id}"
             else:
                 lbl = f"{FORMAT_LABEL.get(c['format'], c['format'].upper())} — {RARITY_EMOJI.get(c['rarity'], '⚪')} OVR {c['ovr']}"
-            buttons.append([InlineKeyboardButton(lbl, callback_data=f"vc_fmt|{user.id}|{c['player_id']}|{c['format']}|{ed_id}")])
+                cb_data = f"vc_fmt|{c['player_id']}|{c['format']}"
+            buttons.append([InlineKeyboardButton(lbl, callback_data=cb_data)])
         try:
             await update.effective_message.reply_text(
                 f"Which *{esc(player_name)}* card do you want to view?",
@@ -901,12 +903,14 @@ async def cb_vc_name(update: Update, context: ContextTypes.DEFAULT_TYPE):
     else:
         buttons = []
         for c in player_cards:
-            ed_id = c.get("edition_id") or "base"
-            if c.get("rarity") == "mythical" or c.get("edition"):
+            ed_id = c.get("edition_id")
+            if ed_id:
                 lbl = f"✨ {c.get('edition', 'Special Edition').title()} — OVR {c.get('ovr', 90)}"
+                cb_data = f"vc_fmt|ed|{ed_id}"
             else:
                 lbl = f"{FORMAT_LABEL.get(c['format'], c['format'].upper())} — {RARITY_EMOJI.get(c['rarity'], '⚪')} OVR {c['ovr']}"
-            buttons.append([InlineKeyboardButton(lbl, callback_data=f"vc_fmt|{owner_id}|{c['player_id']}|{c['format']}|{ed_id}")])
+                cb_data = f"vc_fmt|{c['player_id']}|{c['format']}"
+            buttons.append([InlineKeyboardButton(lbl, callback_data=cb_data)])
         player_name = player_cards[0]["name"]
         await query.edit_message_text(
             f"Which *{esc(player_name)}* card do you want to view?",
@@ -918,27 +922,40 @@ async def cb_vc_name(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def cb_vc_fmt(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     parts = query.data.split("|")
-    owner_id = parts[1]
-    player_id = parts[2]
-    fmt = parts[3]
-    ed_id = parts[4] if len(parts) >= 5 else "base"
-    if str(query.from_user.id) != owner_id:
-        await query.answer("⛔ Not your menu.", show_alert=True); return
+    user_id = query.from_user.id
     chat = update.effective_chat
     is_dm = (chat.type == "private") if chat else False
     cd = 0.3 if is_dm else 1.2
-    if not _check_card_cooldown(query.from_user.id, "vc_fmt", cd):
+    if not _check_card_cooldown(user_id, "vc_fmt", cd):
         await query.answer("⏳ Please wait a moment.", show_alert=False)
         return
     await query.answer()
-    from database import get_user_cards, get_player
-    cards = await get_user_cards(int(owner_id))
+
+    if parts[1] == "ed":
+        ed_id = parts[2]
+        player_id = None
+        fmt = None
+    elif len(parts) == 3:
+        ed_id = "base"
+        player_id = parts[1]
+        fmt = parts[2]
+    else:
+        owner_id = parts[1]
+        if str(user_id) != owner_id:
+            await query.answer("⛔ Not your menu.", show_alert=True); return
+        player_id = parts[2]
+        fmt = parts[3]
+        ed_id = parts[4] if len(parts) >= 5 else "base"
+
+    from database import get_user_cards
+    cards = await get_user_cards(user_id)
     if ed_id != "base":
-        card = next((c for c in cards if c["player_id"] == player_id and c.get("edition_id") == ed_id), None)
+        card = next((c for c in cards if c.get("edition_id") == ed_id), None)
     else:
         card = next((c for c in cards if c["player_id"] == player_id and c["format"] == fmt and not c.get("edition_id")), None)
         if not card:
             card = next((c for c in cards if c["player_id"] == player_id and c["format"] == fmt), None)
+
     if not card:
         try:
             await query.edit_message_caption("❌ Card not found in your collection.")
@@ -950,22 +967,28 @@ async def cb_vc_fmt(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     bot_username = context.bot.username if context and context.bot else ""
-    await _show_card_detail(query, int(owner_id), card, edit=True, bot_username=bot_username)
+    await _show_card_detail(query, user_id, card, edit=True, bot_username=bot_username)
 
 async def _show_card_detail(msg_or_query, owner_id: int, card: dict, edit: bool, bot_username: str = ""):
     from database import validate_fav_card
     # validate_fav_card auto-clears stale fav if card was traded/sold
     fav = await validate_fav_card(owner_id)
-    card_ed_id = card.get("edition_id") or "base"
-    is_fav = fav and fav.get("player_id") == card["player_id"] and fav.get("format") == card["format"] and fav.get("edition_id", "base") == card_ed_id
-    is_mythical = (card.get("rarity") == "mythical" or bool(card.get("edition_id")))
+    card_ed_id = card.get("edition_id")
+    is_fav = fav and fav.get("player_id") == card["player_id"] and fav.get("format") == card["format"] and fav.get("edition_id") == card_ed_id
+    is_mythical = (card.get("rarity") == "mythical" or bool(card_ed_id))
     r_emoji = "✨" if is_mythical else RARITY_EMOJI.get(card["rarity"], "⚪")
     f_label = FORMAT_LABEL.get(card["format"], card["format"].upper())
     SELL_VALUES = {"common": 25, "rare": 75, "epic": 200, "legend": 600}
     sell_val = SELL_VALUES.get(card["rarity"], 25)
     is_last_copy = card["quantity"] <= 1
     fav_label = "💔 Remove Fav" if is_fav else "❤️ Set as Fav"
-    fav_cb = f"vc_unfav|{owner_id}|{card['player_id']}|{card['format']}|{card_ed_id}" if is_fav else f"vc_fav|{owner_id}|{card['player_id']}|{card['format']}|{card_ed_id}"
+
+    # Ultra-compact callback data guaranteed < 45 bytes (strictly within Telegram 64-byte limit)
+    if card_ed_id:
+        fav_cb = f"vc_unfav|ed|{card_ed_id}" if is_fav else f"vc_fav|ed|{card_ed_id}"
+    else:
+        fav_cb = f"vc_unfav|{card['player_id']}|{card['format']}" if is_fav else f"vc_fav|{card['player_id']}|{card['format']}"
+
     fav_warning = ""
     fav_warning_html = ""
     if is_fav and is_last_copy:
@@ -991,7 +1014,7 @@ async def _show_card_detail(msg_or_query, owner_id: int, card: dict, edit: bool,
     if is_dm:
         kb_rows = [[InlineKeyboardButton(fav_label, callback_data=fav_cb)]]
         if not is_mythical:
-            kb_rows.append([InlineKeyboardButton(f"💰 Sell for {sell_val}🪙", callback_data=f"vc_sell|{owner_id}|{card['player_id']}|{card['format']}|{sell_val}")])
+            kb_rows.append([InlineKeyboardButton(f"💰 Sell for {sell_val}🪙", callback_data=f"vc_sell|{card['player_id']}|{card['format']}|{sell_val}")])
         kb = InlineKeyboardMarkup(kb_rows)
     else:
         if not bot_username:
@@ -1001,8 +1024,12 @@ async def _show_card_detail(msg_or_query, owner_id: int, card: dict, edit: bool,
             except Exception:
                 pass
         if bot_username:
+            if card_ed_id:
+                start_param = f"vc_ed_{card_ed_id}"
+            else:
+                start_param = f"vc_{card['player_id']}_{card['format']}"
             kb = InlineKeyboardMarkup([[
-                InlineKeyboardButton("📬 Manage in DM", url=f"https://t.me/{bot_username}?start=vc_{card['player_id']}_{card['format']}")
+                InlineKeyboardButton("📬 Manage in DM", url=f"https://t.me/{bot_username}?start={start_param}")
             ]])
         else:
             kb = None
@@ -1079,26 +1106,35 @@ async def _show_card_detail(msg_or_query, owner_id: int, card: dict, edit: bool,
 
 
 async def handle_viewcard_deeplink(update: Update, context: ContextTypes.DEFAULT_TYPE, payload: str):
-    """Deep link: /start vc_<player_id>_<format> from group chat to manage card in DM."""
+    """Deep link: /start vc_<player_id>_<format> or vc_ed_<edition_id> from group chat to manage card in DM."""
     user = update.effective_user
     if not user or not payload:
         return
-    parts = payload.rsplit("_", 1)
-    if len(parts) != 2:
-        await update.effective_message.reply_text("❌ Invalid card link.")
-        return
-    player_id, fmt = parts[0], parts[1].lower()
     from database import get_user_cards, get_player
     cards = await get_user_cards(user.id)
-    card = next((c for c in cards if c["player_id"] == player_id and c["format"] == fmt), None)
-    if not card or card.get("quantity", 0) < 1:
-        p = await get_player(player_id)
-        p_name = html.escape(p.get("name", "this card")) if p else "this card"
-        await update.effective_message.reply_text(
-            f"❌ You don't own <b>{p_name}</b> ({FORMAT_LABEL.get(fmt, fmt.upper())}) in your collection!",
-            parse_mode="HTML"
-        )
-        return
+    if payload.startswith("ed_"):
+        edition_id = payload[3:]
+        card = next((c for c in cards if c.get("edition_id") == edition_id), None)
+        if not card or card.get("quantity", 0) < 1:
+            await update.effective_message.reply_text("❌ You don't own this Special Edition card in your collection!")
+            return
+    else:
+        parts = payload.rsplit("_", 1)
+        if len(parts) != 2:
+            await update.effective_message.reply_text("❌ Invalid card link.")
+            return
+        player_id, fmt = parts[0], parts[1].lower()
+        card = next((c for c in cards if c["player_id"] == player_id and c["format"] == fmt and not c.get("edition_id")), None)
+        if not card:
+            card = next((c for c in cards if c["player_id"] == player_id and c["format"] == fmt), None)
+        if not card or card.get("quantity", 0) < 1:
+            p = await get_player(player_id)
+            p_name = html.escape(p.get("name", "this card")) if p else "this card"
+            await update.effective_message.reply_text(
+                f"❌ You don't own <b>{p_name}</b> ({FORMAT_LABEL.get(fmt, fmt.upper())}) in your collection!",
+                parse_mode="HTML"
+            )
+            return
     bot_username = context.bot.username if context and context.bot else ""
     await _show_card_detail(update.effective_message, user.id, card, edit=False, bot_username=bot_username)
 
@@ -1109,30 +1145,43 @@ async def cb_vc_fav(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.answer("📬 Please manage cards in DM!", show_alert=True)
         return
     parts = query.data.split("|")
-    owner_id = parts[1]
-    player_id = parts[2]
-    fmt = parts[3]
-    ed_id = parts[4] if len(parts) >= 5 else "base"
-    if str(query.from_user.id) != owner_id:
-        await query.answer("⛔ Not your menu.", show_alert=True); return
-    lock = _get_lock(int(owner_id))
+    user_id = query.from_user.id
+
+    if parts[1] == "ed":
+        ed_id = parts[2]
+        player_id = None
+        fmt = None
+    elif len(parts) == 3:
+        ed_id = "base"
+        player_id = parts[1]
+        fmt = parts[2]
+    else:
+        owner_id = parts[1]
+        if str(user_id) != owner_id:
+            await query.answer("⛔ Not your menu.", show_alert=True); return
+        player_id = parts[2]
+        fmt = parts[3]
+        ed_id = parts[4] if len(parts) >= 5 else "base"
+
+    lock = _get_lock(user_id)
     if lock.locked():
         await query.answer("⏳ Please wait a moment...", show_alert=False); return
     async with lock:
         from database import set_fav_card, get_user_cards
-        cards = await get_user_cards(int(owner_id))
+        cards = await get_user_cards(user_id)
         if ed_id != "base":
-            card = next((c for c in cards if c["player_id"] == player_id and c.get("edition_id") == ed_id), None)
+            card = next((c for c in cards if c.get("edition_id") == ed_id), None)
         else:
             card = next((c for c in cards if c["player_id"] == player_id and c["format"] == fmt and not c.get("edition_id")), None)
             if not card:
                 card = next((c for c in cards if c["player_id"] == player_id and c["format"] == fmt), None)
         if not card or card["quantity"] < 1:
             await query.answer("❌ You no longer own this card.", show_alert=True); return
-        await set_fav_card(int(owner_id), player_id, fmt, None if ed_id == "base" else ed_id)
-        await query.answer(f"❤️ {card['name']} ({FORMAT_LABEL.get(fmt, fmt)}) set as favorite!", show_alert=True)
+        await set_fav_card(user_id, card["player_id"], card["format"], None if ed_id == "base" else ed_id)
+        f_label = FORMAT_LABEL.get(card["format"], card["format"].upper())
+        await query.answer(f"❤️ {card['name']} ({f_label}) set as favorite!", show_alert=True)
         bot_username = context.bot.username if context and context.bot else ""
-        await _show_card_detail(query, int(owner_id), card, edit=True, bot_username=bot_username)
+        await _show_card_detail(query, user_id, card, edit=True, bot_username=bot_username)
 
 async def cb_vc_unfav(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -1140,21 +1189,33 @@ async def cb_vc_unfav(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.answer("📬 Please manage cards in DM!", show_alert=True)
         return
     parts = query.data.split("|")
-    owner_id = parts[1]
-    player_id = parts[2]
-    fmt = parts[3]
-    ed_id = parts[4] if len(parts) >= 5 else "base"
-    if str(query.from_user.id) != owner_id:
-        await query.answer("⛔ Not your menu.", show_alert=True); return
-    lock = _get_lock(int(owner_id))
+    user_id = query.from_user.id
+
+    if parts[1] == "ed":
+        ed_id = parts[2]
+        player_id = None
+        fmt = None
+    elif len(parts) == 3:
+        ed_id = "base"
+        player_id = parts[1]
+        fmt = parts[2]
+    else:
+        owner_id = parts[1]
+        if str(user_id) != owner_id:
+            await query.answer("⛔ Not your menu.", show_alert=True); return
+        player_id = parts[2]
+        fmt = parts[3]
+        ed_id = parts[4] if len(parts) >= 5 else "base"
+
+    lock = _get_lock(user_id)
     if lock.locked():
         await query.answer("⏳ Please wait a moment...", show_alert=False); return
     async with lock:
         from database import clear_fav_card, get_user_cards
-        await clear_fav_card(int(owner_id))
-        cards = await get_user_cards(int(owner_id))
+        await clear_fav_card(user_id)
+        cards = await get_user_cards(user_id)
         if ed_id != "base":
-            card = next((c for c in cards if c["player_id"] == player_id and c.get("edition_id") == ed_id), None)
+            card = next((c for c in cards if c.get("edition_id") == ed_id), None)
         else:
             card = next((c for c in cards if c["player_id"] == player_id and c["format"] == fmt and not c.get("edition_id")), None)
             if not card:
@@ -1162,7 +1223,7 @@ async def cb_vc_unfav(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.answer("💔 Removed from favorites.", show_alert=True)
         if card:
             bot_username = context.bot.username if context and context.bot else ""
-            await _show_card_detail(query, int(owner_id), card, edit=True, bot_username=bot_username)
+            await _show_card_detail(query, user_id, card, edit=True, bot_username=bot_username)
 
 async def cb_vc_sell(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Show sell confirmation."""
@@ -1171,12 +1232,19 @@ async def cb_vc_sell(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.answer("📬 Please manage and sell cards in DM!", show_alert=True)
         return
     parts = query.data.split("|")
-    _, owner_id, player_id, fmt, sell_val_str = parts
-    if str(query.from_user.id) != owner_id:
-        await query.answer("⛔ Not your menu.", show_alert=True); return
+    user_id = query.from_user.id
+    if len(parts) == 4:
+        _, player_id, fmt, sell_val_str = parts
+    else:
+        _, owner_id, player_id, fmt, sell_val_str = parts
+        if str(user_id) != owner_id:
+            await query.answer("⛔ Not your menu.", show_alert=True); return
+
     from database import get_user_cards, get_fav_card
-    cards = await get_user_cards(int(owner_id))
-    card = next((c for c in cards if c["player_id"] == player_id and c["format"] == fmt), None)
+    cards = await get_user_cards(user_id)
+    card = next((c for c in cards if c["player_id"] == player_id and c["format"] == fmt and not c.get("edition_id")), None)
+    if not card:
+        card = next((c for c in cards if c["player_id"] == player_id and c["format"] == fmt), None)
     if not card:
         if query.message and query.message.photo:
             await query.answer(); await query.edit_message_caption(caption="❌ Card not found."); return
@@ -1186,7 +1254,7 @@ async def cb_vc_sell(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.answer("✨ Special Edition cards cannot be sold!", show_alert=True)
         return
     # Check fav BEFORE answering (query can only be answered once)
-    fav = await get_fav_card(int(owner_id))
+    fav = await get_fav_card(user_id)
     is_fav = fav and fav.get("player_id") == player_id and fav.get("format") == fmt
     if is_fav and card["quantity"] <= 1:
         await query.answer(
@@ -1205,8 +1273,8 @@ async def cb_vc_sell(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"━━━━━━━━━━━━━━━━━━"
     )
     kb = InlineKeyboardMarkup([[
-        InlineKeyboardButton("✅ Confirm Sell", callback_data=f"vc_sell_ok|{owner_id}|{player_id}|{fmt}|{sell_val_str}"),
-        InlineKeyboardButton("❌ Cancel",       callback_data=f"vc_fmt|{owner_id}|{player_id}|{fmt}"),
+        InlineKeyboardButton("✅ Confirm Sell", callback_data=f"vc_sell_ok|{player_id}|{fmt}|{sell_val_str}"),
+        InlineKeyboardButton("❌ Cancel",       callback_data=f"vc_fmt|{player_id}|{fmt}"),
     ]])
     # Handle photo messages (viewcard sends photo+caption)
     if query.message and query.message.photo:
@@ -1223,10 +1291,13 @@ async def cb_vc_sell_ok(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.answer("📬 Please manage and sell cards in DM!", show_alert=True)
         return
     parts = query.data.split("|")
-    _, owner_id, player_id, fmt, sell_val_str = parts
     user_id = query.from_user.id
-    if str(user_id) != owner_id:
-        await query.answer("⛔ Not your menu.", show_alert=True); return
+    if len(parts) == 4:
+        _, player_id, fmt, sell_val_str = parts
+    else:
+        _, owner_id, player_id, fmt, sell_val_str = parts
+        if str(user_id) != owner_id:
+            await query.answer("⛔ Not your menu.", show_alert=True); return
 
     msg_id = query.message.message_id if query.message else None
     sell_key = f"{user_id}_{msg_id}"
@@ -2456,11 +2527,14 @@ async def cb_offer_confirm(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def handle_share(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """
-    /share and /referrals — View personal referral link, stats, and milestone ladder.
+    /share and /referrals — View personal referral link, stats, and milestone ladder (DM Only).
     """
     user = update.effective_user
     if not user:
         return
+    if update.effective_chat and update.effective_chat.type != "private":
+        return  # Silent ignore in groups
+
     bot_username = getattr(context.bot, "username", "") or ""
     if not bot_username:
         try:
@@ -2514,6 +2588,9 @@ async def handle_share(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def cb_ref_refresh(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
+    if update.effective_chat and update.effective_chat.type != "private":
+        await query.answer("📬 Please check referrals in DM!", show_alert=True)
+        return
     parts = query.data.split("|")
     owner_id = parts[1]
     if str(query.from_user.id) != owner_id:
