@@ -17,27 +17,25 @@ async def can_manage_bot(user_id: int) -> bool:
 
 async def check_admin(update: Update) -> bool:
     """
-    Helper to check permission and reply if denied.
+    Helper to check permission.
     Returns True if allowed, False if denied.
+    Silent ignore: does not send any message if denied, saving API quota and preventing lag.
     """
     if not update.effective_user:
         return False
     user_id = update.effective_user.id
     if not await can_manage_bot(user_id):
-        if update.effective_message:
-            await update.effective_message.reply_text("⛔ You do not have permission to use this command.")
         return False
     return True
 
 async def check_owner(update: Update) -> bool:
     """
     Helper to strictly check owner permission.
+    Silent ignore: does not send any message if denied, saving API quota and preventing lag.
     """
     if not update.effective_user:
         return False
     user_id = update.effective_user.id
     if not is_owner(user_id):
-        if update.effective_message:
-            await update.effective_message.reply_text("⛔ This command is restricted to Bot Owners.")
         return False
     return True
