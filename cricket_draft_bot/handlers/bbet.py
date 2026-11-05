@@ -6,7 +6,7 @@ Rules:
   - 10 attempts per user per day (resets at midnight UTC)
   - Win: double the bet (net +amount). Lose: lose the bet.
 """
-import random
+import secrets
 import logging
 from datetime import datetime, timezone
 from telegram import Update
@@ -141,7 +141,7 @@ async def handle_bbet(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
             return
 
-        result   = random.choice(["head", "tail"])
+        result   = secrets.choice(["head", "tail"])
         won      = (result == choice)
         delta    = +amount if won else -amount
         new_count = count_today + 1
