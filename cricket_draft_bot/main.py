@@ -65,7 +65,7 @@ _RECOGNIZED_COMMANDS = {
     "add_playerfifa", "addplayerfifa", "removeplayerfifa", "add_playerwwe", "addplayerwwe",
     "remove_playerwwe", "removeplayerwwe", "update_imagewwe", "add_playerpkl", "rem_playerpkl",
     "update_imagepkl", "updateimagepkl", "addplayer", "add_player", "remove_player",
-    "broadcast", "banner", "add_card", "update_card", "gift", "gift_pack", "add_packall",
+    "broadcast", "banner", "add_card", "update_card", "remove_card", "rem_card", "gift", "gift_pack", "add_packall",
     "bban", "unbban", "botstatus", "add_achievement", "rem_achievement", "map_api",
     "mini_cric", "minicric", "mini_cric_cancel", "minicric_cancel", "end", "refresh", "mc_refresh", "mini_cric_refresh", "minicric_refresh", "enable", "disable", "offer", "share", "referrals", "create", "drop", "editionlist", "addplayercard", "takeplayercard", "add_offer", "remove_offer", "add_rolefifa",
     "challengeintl", "removeplayer"
@@ -1115,9 +1115,11 @@ if __name__ == '__main__':
     application.add_handler(CommandHandler('banner', wrap_admin_logging(handle_banner, "Modify Banner overrides")))
 
     # Card Catalog Admin commands
-    from handlers.admin import handle_add_card, handle_update_card, handle_gift_coins, handle_gift_pack, handle_add_packall, handle_ban_command, handle_unban_command
+    from handlers.admin import handle_add_card, handle_update_card, handle_remove_card, handle_gift_coins, handle_gift_pack, handle_add_packall, handle_ban_command, handle_unban_command
     application.add_handler(CommandHandler('add_card',    wrap_admin_logging(handle_add_card,    "Add Card to Catalog")))
     application.add_handler(CommandHandler('update_card', wrap_admin_logging(handle_update_card, "Update Card OVR/Rarity")))
+    application.add_handler(CommandHandler('remove_card', wrap_admin_logging(handle_remove_card, "Remove Card from Catalog & Inventories")))
+    application.add_handler(CommandHandler('rem_card',    wrap_admin_logging(handle_remove_card, "Remove Card from Catalog & Inventories")))
     application.add_handler(CommandHandler('gift',        wrap_admin_logging(handle_gift_coins,  "Gift Card Coins")))
     application.add_handler(CommandHandler('gift_pack',   wrap_admin_logging(handle_gift_pack,   "Gift Pack to User")))
     application.add_handler(CommandHandler('add_packall', wrap_admin_logging(handle_add_packall, "Gift Pack to All Users")))
@@ -1277,13 +1279,14 @@ if __name__ == '__main__':
 
     # Mini-Cricket Commands & Callbacks
     from handlers.mini_cric import (
-        cb_mc_accept, cb_mc_decline, cb_mc_toss, cb_mc_decision,
+        cb_mc_accept, cb_mc_decline, cb_mc_cancel, cb_mc_toss, cb_mc_decision,
         cb_mc_bowl, cb_mc_shot
     )
     from handlers.admin import cb_admin_card
 
     application.add_handler(CallbackQueryHandler(cb_mc_accept,   pattern=r"^mc_acc\|"))
     application.add_handler(CallbackQueryHandler(cb_mc_decline,  pattern=r"^mc_dec\|"))
+    application.add_handler(CallbackQueryHandler(cb_mc_cancel,   pattern=r"^mc_can\|"))
     application.add_handler(CallbackQueryHandler(cb_mc_toss,     pattern=r"^mc_toss\|"))
     application.add_handler(CallbackQueryHandler(cb_mc_decision, pattern=r"^mc_decide\|"))
     application.add_handler(CallbackQueryHandler(cb_mc_bowl,     pattern=r"^mc_bowl\|"))
