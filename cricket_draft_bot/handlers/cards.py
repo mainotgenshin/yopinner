@@ -82,6 +82,11 @@ def get_sort_label(criteria: str, order: str) -> str:
     elif criteria == "name":
         desc = "A ➔ Z" if order == "asc" else "Z ➔ A"
         return f"🔤 Name ({desc})"
+    elif criteria in ("ipl", "odi", "test", "fifa", "wwe", "pkl"):
+        f_name = {"ipl": "IPL", "odi": "ODI", "test": "Test", "fifa": "FIFA", "wwe": "WWE", "pkl": "PKL"}.get(criteria, criteria.upper())
+        return f"🏷️ {f_name} First"
+    elif criteria == "format":
+        return "📂 Grouped by Format"
     return f"{criteria.title()} ({order.upper()})"
 
 def esc(t): return escape_markdown(str(t), version=1)
@@ -102,6 +107,7 @@ def _sort_cards(cards: list, criteria: str = "rarity", order: str = "desc") -> l
     """Sort a card list by criteria and order ('asc' or 'desc')."""
     rarity_desc = {"mythical": 0, "legend": 1, "epic": 2, "rare": 3, "common": 4}
     rarity_asc  = {"common": 0, "rare": 1, "epic": 2, "legend": 3, "mythical": 4}
+    format_order = {"ipl": 0, "odi": 1, "test": 2, "fifa": 3, "wwe": 4, "pkl": 5}
 
     criteria = (criteria or "rarity").lower()
     order = (order or "desc").lower()
@@ -120,6 +126,28 @@ def _sort_cards(cards: list, criteria: str = "rarity", order: str = "desc") -> l
     elif criteria == "name":
         rev = (order == "desc")
         return sorted(cards, key=lambda c: c.get("name", "").lower(), reverse=rev)
+    elif criteria in ("ipl", "odi", "test", "fifa", "wwe", "pkl"):
+        r_map = rarity_asc if order == "asc" else rarity_desc
+        return sorted(
+            cards,
+            key=lambda c: (
+                0 if str(c.get("format", "")).lower() == criteria else 1,
+                r_map.get(str(c.get("rarity", "common")).lower(), 9),
+                -int(c.get("ovr", 0) or 0),
+                c.get("name", "").lower()
+            )
+        )
+    elif criteria == "format":
+        r_map = rarity_asc if order == "asc" else rarity_desc
+        return sorted(
+            cards,
+            key=lambda c: (
+                format_order.get(str(c.get("format", "")).lower(), 99),
+                r_map.get(str(c.get("rarity", "common")).lower(), 9),
+                -int(c.get("ovr", 0) or 0),
+                c.get("name", "").lower()
+            )
+        )
     return sorted(cards, key=lambda c: (rarity_desc.get(str(c.get("rarity", "common")).lower(), 9), c.get("name", "").lower()))
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -574,10 +602,16 @@ async def handle_sort(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
     args = [a.lower() for a in (context.args or [])]
 
-    crit_keys = {"rarity", "ovr", "dupe", "duplicate", "dupes", "name", "alphabetical"}
+    crit_keys = {
+        "rarity", "ovr", "dupe", "duplicate", "dupes", "name", "alphabetical",
+        "ipl", "odi", "test", "fifa", "wwe", "pkl", "kabaddi", "format", "formats"
+    }
     dir_keys  = {"asc", "ascending", "des", "desc", "descending"}
 
-    crit_alias = {"duplicate": "dupe", "dupes": "dupe", "alphabetical": "name"}
+    crit_alias = {
+        "duplicate": "dupe", "dupes": "dupe", "alphabetical": "name",
+        "kabaddi": "pkl", "formats": "format"
+    }
     dir_alias  = {"ascending": "asc", "des": "desc", "descending": "desc"}
 
     cur_crit, cur_order = await get_user_sort(user.id)
@@ -587,13 +621,21 @@ async def handle_sort(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.effective_message.reply_text(
             f"📊 <b>Card Sorting Options</b>\n\n"
             f"Current: <b>{cur_label}</b>\n\n"
-            f"<b>Criteria:</b>\n"
+            f"<b>General Criteria:</b>\n"
             f"• <code>/sort rarity</code> — Legend ➔ Common (default)\n"
             f"• <code>/sort rarity asc</code> — Common ➔ Legend\n"
             f"• <code>/sort ovr</code> — Highest OVR first\n"
             f"• <code>/sort ovr asc</code> — Lowest OVR first\n"
             f"• <code>/sort dupe</code> — Most duplicates first\n"
             f"• <code>/sort name</code> — A ➔ Z\n\n"
+            f"<b>Format Criteria:</b>\n"
+            f"• <code>/sort format</code> — Group by format (IPL ➔ ODI ➔ Test ➔ FIFA ➔ WWE ➔ PKL)\n"
+            f"• <code>/sort ipl</code> — IPL cards priority on top\n"
+            f"• <code>/sort odi</code> — ODI cards priority on top\n"
+            f"• <code>/sort test</code> — Test cards priority on top\n"
+            f"• <code>/sort fifa</code> — FIFA cards priority on top\n"
+            f"• <code>/sort wwe</code> — WWE cards priority on top\n"
+            f"• <code>/sort pkl</code> — PKL cards priority on top\n\n"
             f"<b>Direction Only:</b>\n"
             f"• <code>/sort asc</code> — Ascending order\n"
             f"• <code>/sort des</code> — Descending order\n\n"
@@ -613,7 +655,7 @@ async def handle_sort(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if not new_crit and not new_dir:
         await update.effective_message.reply_text(
-            "❌ Unknown sort option.\nUse <code>/sort rarity</code>, <code>/sort ovr</code>, <code>/sort dupe</code>, <code>/sort name</code>, <code>/sort asc</code>, or <code>/sort des</code>.",
+            "❌ Unknown sort option.\nUse <code>/sort rarity</code>, <code>/sort ovr</code>, <code>/sort dupe</code>, <code>/sort name</code>, <code>/sort format</code>, or specific formats: <code>ipl</code>, <code>odi</code>, <code>test</code>, <code>fifa</code>, <code>wwe</code>, <code>pkl</code>.",
             parse_mode="HTML"
         )
         return
@@ -2138,6 +2180,9 @@ async def cb_msell_ok(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 skipped_missing += 1
                 continue
             card = all_cards[pos]
+            if card.get("rarity") == "mythical" or card.get("edition_id"):
+                skipped_missing += 1
+                continue
             pid, fmt = card["player_id"], card["format"]
             # Skip fav card if last copy
             if (pid, fmt) == fav_key and card.get("quantity", 1) <= 1:
@@ -2490,12 +2535,35 @@ async def cb_offer_confirm(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         # Execute deductions
         for tc in to_consume:
-            for _ in range(tc["count"]):
-                await remove_card_from_user(user_id, tc["player_id"], tc["format"])
+            await remove_card_from_user(user_id, tc["player_id"], tc["format"], quantity=tc["count"])
 
-        # Grant Special Edition card
+        # Grant Special Edition card with atomic rollback safety
         edition_id = offer["edition_id"]
-        success, grant_msg = await add_edition_card_to_user(user_id, edition_id)
+        try:
+            success, grant_msg = await add_edition_card_to_user(user_id, edition_id)
+            if not success:
+                # Rollback deducted cards
+                for tc in to_consume:
+                    await add_card_to_user(user_id, tc["player_id"], tc["format"], quantity=tc["count"])
+                err_msg = f"❌ Failed to claim card: {grant_msg}\n\nYour sacrificed cards have been restored to your inventory."
+                if query.message and query.message.photo:
+                    await query.edit_message_caption(caption=err_msg)
+                else:
+                    await query.edit_message_text(text=err_msg)
+                return
+        except Exception as _grant_err:
+            logger.error(f"Failed to grant edition card to user {user_id}: {_grant_err}", exc_info=True)
+            for tc in to_consume:
+                try:
+                    await add_card_to_user(user_id, tc["player_id"], tc["format"], quantity=tc["count"])
+                except Exception:
+                    pass
+            err_msg = "❌ An unexpected error occurred while claiming. Your sacrificed cards have been restored to your inventory."
+            if query.message and query.message.photo:
+                await query.edit_message_caption(caption=err_msg)
+            else:
+                await query.edit_message_text(text=err_msg)
+            return
 
         # Mark user in claimed_users
         db = get_db()
