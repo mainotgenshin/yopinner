@@ -88,9 +88,17 @@ async def init_db():
         await db.chats.create_index([("chat_id", ASCENDING)], unique=True)
         
         # ── Card System Indexes ───────────────────────────────────────────────
+        try:
+            uc_indexes = await db.user_cards.index_information()
+            if "user_id_1_player_id_1_format_1" in uc_indexes:
+                await db.user_cards.drop_index("user_id_1_player_id_1_format_1")
+        except Exception as _idx_err:
+            logger.warning(f"user_cards index migration: {_idx_err}")
+
         await db.user_cards.create_index(
-            [("user_id", ASCENDING), ("player_id", ASCENDING), ("format", ASCENDING)],
-            unique=True
+            [("user_id", ASCENDING), ("player_id", ASCENDING), ("format", ASCENDING), ("edition_id", ASCENDING)],
+            unique=True,
+            name="user_id_1_player_id_1_format_1_edition_id_1"
         )
         await db.user_cards.create_index([("user_id", ASCENDING)])
         await db.active_trades.create_index([("initiator_id", ASCENDING), ("status", ASCENDING)])
@@ -543,6 +551,12 @@ async def update_user_stats(user_id: int, name: str, result: str,
 
     await db.users.update_one({"user_id": user_id}, ops, upsert=True)
 
+    # Daily quest win streak tracking
+    try:
+        await update_daily_win_streak(user_id, is_win=is_win)
+    except Exception as _qe:
+        logger.warning(f"Failed to update daily quest streak for {user_id}: {_qe}")
+
     # Invalidate leaderboard cache
     try:
         from handlers.standings import invalidate_lb_cache
@@ -741,6 +755,32 @@ async def get_user_cards(user_id: int, sport_filter: str = None) -> list:
         p = players_by_id.get(pid)
         if not p:
             if card.get("rarity") == "mythical" or card.get("edition_id"):
+                if fmt in ("ipl", "odi", "test"):
+                    card_sport = "cricket"
+                elif fmt == "fifa":
+                    card_sport = "football"
+                elif fmt == "pkl":
+                    card_sport = "kabaddi"
+                elif fmt == "wwe":
+                    card_sport = "wwe"
+                else:
+                    card_sport = "cricket"
+
+                if sport_filter and sport_filter != "all":
+                    sf = str(sport_filter).lower()
+                    if sf in ("cricket", "ipl", "odi", "test"):
+                        target_sport = "cricket"
+                    elif sf in ("football", "fifa"):
+                        target_sport = "football"
+                    elif sf in ("kabaddi", "pkl"):
+                        target_sport = "kabaddi"
+                    elif sf == "wwe":
+                        target_sport = "wwe"
+                    else:
+                        target_sport = sf
+                    if card_sport != target_sport:
+                        continue
+
                 result.append({
                     "user_id":   user_id,
                     "player_id": pid,
@@ -893,26 +933,26 @@ def _get_card_image_url(player_doc: dict, fmt: str) -> Optional[str]:
 async def get_user_card(user_id: int, player_id: str, fmt: str) -> Optional[dict]:
     """Get a single user card entry or None."""
     db = get_db()
-    return await db.user_cards.find_one({"user_id": user_id, "player_id": player_id, "format": fmt})
+    return await db.user_cards.find_one({"user_id": user_id, "player_id": player_id, "format": fmt, "edition_id": {"$exists": False}})
 
 async def add_card_to_user(user_id: int, player_id: str, fmt: str, quantity: int = 1) -> int:
     """Add one or more copies of a card. Returns new quantity."""
     db = get_db()
     result = await db.user_cards.find_one_and_update(
-        {"user_id": user_id, "player_id": player_id, "format": fmt},
+        {"user_id": user_id, "player_id": player_id, "format": fmt, "edition_id": {"$exists": False}},
         {"$inc": {"quantity": quantity}},
         upsert=True,
         return_document=True
     )
     return result["quantity"]
 
-async def remove_card_from_user(user_id: int, player_id: str, fmt: str) -> int:
-    """Remove one copy. Deletes doc if quantity reaches 0. Returns remaining quantity."""
+async def remove_card_from_user(user_id: int, player_id: str, fmt: str, quantity: int = 1) -> int:
+    """Remove one or more copies. Deletes doc if quantity reaches 0. Returns remaining quantity."""
     db = get_db()
-    # Decrement
+    # Decrement atomically
     result = await db.user_cards.find_one_and_update(
-        {"user_id": user_id, "player_id": player_id, "format": fmt, "quantity": {"$gt": 0}},
-        {"$inc": {"quantity": -1}},
+        {"user_id": user_id, "player_id": player_id, "format": fmt, "quantity": {"$gte": quantity}, "edition_id": {"$exists": False}},
+        {"$inc": {"quantity": -quantity}},
         return_document=True
     )
     if result is None:
@@ -920,7 +960,7 @@ async def remove_card_from_user(user_id: int, player_id: str, fmt: str) -> int:
     new_qty = result["quantity"]
 
     if new_qty <= 0:
-        await db.user_cards.delete_one({"user_id": user_id, "player_id": player_id, "format": fmt})
+        await db.user_cards.delete_one({"user_id": user_id, "player_id": player_id, "format": fmt, "edition_id": {"$exists": False}})
         return 0
     return new_qty
 
@@ -996,6 +1036,7 @@ async def get_daily_quests(user_id: int) -> dict:
         "cards_traded":     0,
         "cards_sold":       0,
         "bbet_coins_spent": 0,
+        "current_streak":   0,
         "win_streak":       0,
         "claimed":          [],
     }
@@ -1017,6 +1058,7 @@ async def get_daily_quests(user_id: int) -> dict:
             "cards_traded":     0,
             "cards_sold":       0,
             "bbet_coins_spent": 0,
+            "current_streak":   0,
             "win_streak":       0,
             "claimed":          [],
         }
@@ -1037,6 +1079,41 @@ async def increment_quest_progress(user_id: int, field: str, amount: int = 1) ->
         {"user_id": user_id},
         {"$inc": {f"daily_quests.{field}": amount}}
     )
+
+async def update_daily_win_streak(user_id: int, is_win: bool) -> None:
+    """
+    Tracks daily consecutive wins for the streak_3 quest ('Win 3 matches in a row today').
+    On Win: increments daily_quests.current_streak. If this reaches >= daily_quests.win_streak,
+            updates daily_quests.win_streak.
+    On Loss/Draw:
+            resets daily_quests.current_streak = 0.
+            If the quest was not yet completed (win_streak < 3), also resets win_streak = 0,
+            so the progress accurately reflects the active streak.
+            If the quest was already completed (win_streak >= 3), win_streak remains >= 3
+            so the player never loses their earned reward.
+    """
+    db = get_db()
+    quests = await get_daily_quests(user_id)
+    if is_win:
+        curr = quests.get("current_streak", 0) + 1
+        best = max(quests.get("win_streak", 0), curr)
+        await db.users.update_one(
+            {"user_id": user_id},
+            {
+                "$set": {
+                    "daily_quests.current_streak": curr,
+                    "daily_quests.win_streak": best,
+                }
+            }
+        )
+    else:
+        updates = {"daily_quests.current_streak": 0}
+        if quests.get("win_streak", 0) < 3:
+            updates["daily_quests.win_streak"] = 0
+        await db.users.update_one(
+            {"user_id": user_id},
+            {"$set": updates}
+        )
 
 async def claim_quest_rewards(user_id: int) -> tuple[int, list]:
     """
@@ -1095,6 +1172,7 @@ async def add_to_card_catalog(player_id: str, fmt: str, ovr: int, rarity: str) -
         {"$set": {f"cards.{fmt}": {"ovr": ovr, "rarity": rarity.lower()}}}
     )
     evict_player_cache(player_id)
+    _invalidate_card_pool_cache()
     return True
 
 async def update_card_catalog(player_id: str, fmt: str, ovr: int, rarity: str) -> bool:
@@ -1108,7 +1186,32 @@ async def update_card_catalog(player_id: str, fmt: str, ovr: int, rarity: str) -
         {"$set": {f"cards.{fmt}": {"ovr": ovr, "rarity": rarity.lower()}}}
     )
     evict_player_cache(player_id)
+    _invalidate_card_pool_cache()
     return True
+
+async def remove_from_card_catalog(player_id: str, fmt: str) -> bool:
+    """Removes a format card definition from db.players catalog."""
+    existing = await get_card_catalog_entry(player_id, fmt)
+    if not existing:
+        return False
+    db = get_db()
+    await db.players.update_one(
+        {"player_id": player_id},
+        {"$unset": {f"cards.{fmt}": ""}}
+    )
+    evict_player_cache(player_id)
+    _invalidate_card_pool_cache()
+    return True
+
+async def purge_card_from_all_users(player_id: str, fmt: str) -> int:
+    """Deletes all non-edition copies of a card format from all users' inventories."""
+    db = get_db()
+    res = await db.user_cards.delete_many({
+        "player_id": player_id,
+        "format": fmt,
+        "edition_id": {"$exists": False}
+    })
+    return res.deleted_count
 
 # ── Card Pack Drawing ─────────────────────────────────────────────────────────
 
@@ -2134,7 +2237,11 @@ async def add_edition_card_to_user(user_id: int, edition_id: str) -> tuple[bool,
     db = get_db()
     ed = await get_edition_card(edition_id)
     if not ed:
-        return False, f"Edition card '{edition_id}' does not exist."
+        offer = await get_active_offer()
+        if offer and offer.get("edition_id") == edition_id:
+            ed = offer
+        else:
+            return False, f"Edition card '{edition_id}' does not exist."
     # Check if user already owns this specific edition card
     existing = await db.user_cards.find_one({"user_id": user_id, "edition_id": edition_id})
     if existing and existing.get("quantity", 0) > 0:
