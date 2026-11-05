@@ -1716,69 +1716,6 @@ async def handle_check_callback(update: Update, context: ContextTypes.DEFAULT_TY
         logger.warning(f"check callback parse error: {e}")
 
 
-# handlers/admin.py
-from telegram import Update
-from telegram.ext import ContextTypes
-import logging
-from database import save_player, save_match
-from utils.images import download_image
-import uuid
-import os
-from utils.permissions import check_admin, check_owner, can_manage_bot
-from database import add_mod, remove_mod
-from telegram.helpers import escape_markdown
-
-def esc(t):
-    return escape_markdown(str(t), version=1)
-
-logger = logging.getLogger(__name__)
-
-
-
-async def handle_remove_ipl(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """
-    /removeipl Virat Kohli
-    Removes IPL stats/data for the specified player.
-    """
-    if not await check_admin(update): return
-    
-    name = " ".join(context.args).strip()
-    if not name:
-        await update.message.reply_text("Usage: /removeipl Player Name")
-        return
-        
-    from database import get_player_by_name, save_player
-    
-    player = await get_player_by_name(name)
-    if not player:
-        await update.message.reply_text(f"Player not found: {name}")
-        return
-        
-    # Check if they even have IPL stats
-    cleaned = False
-    
-    if 'stats' in player and 'ipl' in player['stats']:
-        del player['stats']['ipl']
-        cleaned = True
-        
-    # Remove top-level IPL fields if they exist
-    for field in ['ipl_team', 'ipl_roles', 'ipl_image_file_id']:
-        if field in player:
-            del player[field]
-            cleaned = True
-            
-    if cleaned:
-        await save_player(player)
-        await update.message.reply_text(f"✅ Removed IPL data for **{esc(player['name'])}**.", parse_mode="Markdown")
-        logger.info(f"Admin {update.effective_user.id} removed IPL data for {player['name']}")
-    else:
-        await update.message.reply_text(f"⚠️ **{esc(player['name'])}** has no IPL data to remove.", parse_mode="Markdown")
-
-
-
-
-
-
 async def add_player_wwe(update, context):
     """/add_playerwwe name=Cena image=URL power=95 speed=60 ..."""
     from telegram.ext import ContextTypes
@@ -2276,10 +2213,14 @@ async def rem_player_odi(update, context):
     if not name:
         await update.message.reply_text("Usage: /rem_playerodi Player Name")
         return
-    from database import get_player_by_name, save_player
-    p = await get_player_by_name(name)
+    from database import get_player_by_name_and_sport, get_player_by_name, save_player
+    p = await get_player_by_name_and_sport(name, "cricket")
     if not p:
-        await update.message.reply_text("Player not found.")
+        p_fallback = await get_player_by_name(name)
+        if p_fallback and p_fallback.get("sport") in ("cricket", None):
+            p = p_fallback
+    if not p:
+        await update.message.reply_text(f"Cricket player not found: {name}")
         return
     stats = p.get("stats", {})
     if "odi" not in stats:
@@ -2298,10 +2239,14 @@ async def rem_player_test(update, context):
     if not name:
         await update.message.reply_text("Usage: /rem_playertest Player Name")
         return
-    from database import get_player_by_name, save_player
-    p = await get_player_by_name(name)
+    from database import get_player_by_name_and_sport, get_player_by_name, save_player
+    p = await get_player_by_name_and_sport(name, "cricket")
     if not p:
-        await update.message.reply_text("Player not found.")
+        p_fallback = await get_player_by_name(name)
+        if p_fallback and p_fallback.get("sport") in ("cricket", None):
+            p = p_fallback
+    if not p:
+        await update.message.reply_text(f"Cricket player not found: {name}")
         return
     stats = p.get("stats", {})
     if "test" not in stats:
@@ -2406,20 +2351,19 @@ async def update_image_command(update, context):
 
     parts = text.rsplit(" ", 1)
     if len(parts) < 2:
-        await msg.reply_text("Usage: /update_image Name [format=ipl|odi|test|pkl] URL")
+        await msg.reply_text("Usage: /update_image Name [format=ipl|odi|test|fifa|wwe|pkl] URL")
         return
     rest, url = parts[0].strip(), parts[1].strip()
 
     # Match format
-    fmt_m = re.search(r"format=(ipl|odi|test|pkl|kabaddi)", rest, re.IGNORECASE)
+    fmt_m = re.search(r"format=(ipl|odi|test|fifa|wwe|pkl|kabaddi)", rest, re.IGNORECASE)
     if fmt_m:
         target_format = fmt_m.group(1).lower()
         if target_format == "kabaddi":
             target_format = "pkl"
-        name = re.sub(r"format=(ipl|odi|test|pkl|kabaddi)", "", rest, flags=re.IGNORECASE).strip()
+        name = re.sub(r"format=(ipl|odi|test|fifa|wwe|pkl|kabaddi)", "", rest, flags=re.IGNORECASE).strip()
     else:
-        # Check if rest ends with a space followed by ipl, odi, test, or pkl
-        last_word_match = re.search(r"\s+(ipl|odi|test|pkl|kabaddi)$", rest, re.IGNORECASE)
+        last_word_match = re.search(r"\s+(ipl|odi|test|fifa|wwe|pkl|kabaddi)$", rest, re.IGNORECASE)
         if last_word_match:
             target_format = last_word_match.group(1).lower()
             if target_format == "kabaddi":
@@ -2429,12 +2373,18 @@ async def update_image_command(update, context):
             target_format = "odi"
             name = rest
     from database import get_player_by_name, get_player_by_name_and_sport, save_player, clear_player_cache
-    if target_format == "pkl":
-        p = await get_player_by_name_and_sport(name, "kabaddi") or await get_player_by_name(name)
-    else:
-        p = await get_player_by_name(name)
+    sport_map = {
+        "ipl": "cricket", "odi": "cricket", "test": "cricket",
+        "fifa": "football", "wwe": "wwe", "pkl": "kabaddi"
+    }
+    target_sport = sport_map.get(target_format, "cricket")
+    p = await get_player_by_name_and_sport(name, target_sport)
     if not p:
-        await msg.reply_text(f"Player not found: {name}")
+        p_fallback = await get_player_by_name(name)
+        if p_fallback and (p_fallback.get("sport") == target_sport or (target_sport == "cricket" and p_fallback.get("sport") in ("cricket", None))):
+            p = p_fallback
+    if not p:
+        await msg.reply_text(f"Player not found in sport '{target_sport}': {name}")
         return
     try:
         sent = await context.bot.send_photo(chat_id=update.effective_chat.id, photo=url, caption=f"Updated {target_format.upper()} image for {p['name']}")
@@ -2446,6 +2396,14 @@ async def update_image_command(update, context):
         elif target_format == "test":
             p["test_image_url"] = url
             p["image_url"] = url
+        elif target_format == "fifa":
+            p["fifa_image_url"] = url
+            p["image_url"] = url
+            p["image_file_id"] = fid
+        elif target_format == "wwe":
+            p["wwe_image_url"] = url
+            p["image_url"] = url
+            p["image_file_id"] = fid
         elif target_format == "pkl":
             if "cards" not in p or not isinstance(p["cards"], dict):
                 p["cards"] = {}
@@ -2779,10 +2737,14 @@ async def update_image_fifa(update, context):
             except Exception as e:
                 await update.message.reply_text(f"❌ Failed to load image: {e}")
                 return
-    from database import get_player_by_name, save_player
-    p = await get_player_by_name(name)
+    from database import get_player_by_name, get_player_by_name_and_sport, save_player
+    p = await get_player_by_name_and_sport(name, "football")
     if not p:
-        await update.message.reply_text(f"❌ Player not found: {name}")
+        p_fallback = await get_player_by_name(name)
+        if p_fallback and p_fallback.get("sport") == "football":
+            p = p_fallback
+    if not p:
+        await update.message.reply_text(f"❌ FIFA player not found: {name}")
         return
     if photo_fid:
         p["image_file_id"] = photo_fid
@@ -2805,12 +2767,21 @@ async def remove_player_fifa(update, context):
     if not text:
         await update.message.reply_text("Usage: /removeplayerfifa Name")
         return
-    from database import delete_player
-    deleted = await delete_player(text)
-    if deleted:
-        await update.message.reply_text(f"✅ Removed '{text}'.")
-    else:
-        await update.message.reply_text(f"❌ '{text}' not found.")
+    from database import get_player, get_player_by_name_and_sport, get_db, clear_player_cache
+    p = None
+    if text.startswith("fifa_") or text.startswith("PL_"):
+        p = await get_player(text)
+    if not p:
+        p = await get_player_by_name_and_sport(text, "football")
+    if not p or p.get("sport") != "football":
+        await update.message.reply_text(f"❌ FIFA player '{text}' not found in football pool.")
+        return
+    db = get_db()
+    await db.players.delete_one({"player_id": p["player_id"]})
+    clear_player_cache()
+    from database import _invalidate_card_pool_cache
+    _invalidate_card_pool_cache()
+    await update.message.reply_text(f"✅ Removed FIFA player *{esc(p['name'])}* (`{p['player_id']}`).", parse_mode="Markdown")
 
 
 # ── /update_card ─────────────────────────────────────────────────────────────
@@ -2870,7 +2841,11 @@ async def handle_update_card(update: Update, context: ContextTypes.DEFAULT_TYPE)
             await update.effective_message.reply_text(f"❌ No player found matching '{name_query}'.")
             return
         exact = [p for p in players if p.get('name', '').strip().lower() == name_query.strip().lower()]
-        if len(exact) == 1:
+        target_candidates = exact if exact else players
+        has_card = [p for p in target_candidates if fmt in p.get('cards', {})]
+        if len(has_card) == 1:
+            player = has_card[0]
+        elif len(exact) == 1:
             player = exact[0]
         elif len(players) == 1:
             player = players[0]
@@ -2956,7 +2931,12 @@ async def handle_add_card(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.effective_message.reply_text(f"❌ No player found matching '{name_query}'.")
             return
         exact = [p for p in players if p.get('name', '').strip().lower() == name_query.strip().lower()]
-        if len(exact) == 1:
+        target_candidates = exact if exact else players
+        sport_target = "football" if fmt == "fifa" else "wwe" if fmt == "wwe" else "kabaddi" if fmt == "pkl" else "cricket"
+        sport_matched = [p for p in target_candidates if (p.get('sport') == sport_target or (sport_target == 'cricket' and p.get('sport') in (None, 'cricket')))]
+        if len(sport_matched) == 1:
+            player = sport_matched[0]
+        elif len(exact) == 1:
             player = exact[0]
         elif len(players) == 1:
             player = players[0]
@@ -2984,6 +2964,105 @@ async def handle_add_card(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.effective_message.reply_text(
         f"✅ Added to card catalog:\n*{player['name']}* ({fmt.upper()})\n"
         f"OVR: {ovr} | {RARITY_EMOJI[rarity]} {rarity.title()}",
+        parse_mode='Markdown'
+    )
+
+# ── /remove_card ──────────────────────────────────────────────────────────────
+async def handle_remove_card(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """/remove_card <name> format=<fmt> — Completely purge a card from catalog & all user inventories."""
+    user = update.effective_user
+    from database import is_admin
+    if not await is_admin(user.id):
+        return
+    args = context.args
+    if not args:
+        await update.effective_message.reply_text(
+            "Usage: /remove_card <name> format=<ipl|odi|test|wwe|fifa|pkl>\n"
+            "Example: /remove_card Tilak Varma format=odi\n"
+            "Optionally specify id=<player_id> to target exact player ID."
+        )
+        return
+    params = {}
+    name_parts = []
+    for a in args:
+        if '=' in a:
+            k, v = a.split('=', 1)
+            params[k.lower()] = v.strip()
+        else:
+            name_parts.append(a)
+    fmt = params.get('format', '').lower()
+    # Check if last word of name_parts is a format
+    if not fmt and name_parts and name_parts[-1].lower() in ('ipl', 'odi', 'test', 'wwe', 'fifa', 'pkl', 'kabaddi'):
+        fmt = name_parts.pop().lower()
+        if fmt == 'kabaddi':
+            fmt = 'pkl'
+    name_query = ' '.join(name_parts)
+    if not fmt:
+        await update.effective_message.reply_text("❌ Please specify format: format=ipl|odi|test|wwe|fifa|pkl")
+        return
+    if fmt == 'kabaddi':
+        fmt = 'pkl'
+    if fmt not in ('ipl', 'odi', 'test', 'wwe', 'fifa', 'pkl'):
+        await update.effective_message.reply_text("❌ Invalid format. Use: ipl, odi, test, wwe, fifa, pkl")
+        return
+
+    from database import get_db, remove_from_card_catalog, purge_card_from_all_users, _invalidate_card_pool_cache
+    from telegram import InlineKeyboardButton, InlineKeyboardMarkup
+    import re
+    db = get_db()
+    target_pid = params.get('id') or params.get('player_id')
+    if target_pid:
+        player = await db.players.find_one({"player_id": target_pid})
+        if not player:
+            await update.effective_message.reply_text(f"❌ Player ID `{target_pid}` not found.", parse_mode='Markdown')
+            return
+    else:
+        if not name_query:
+            await update.effective_message.reply_text("❌ Please provide a player name or player ID.")
+            return
+        pattern = re.compile(re.escape(name_query), re.IGNORECASE)
+        players = await db.players.find({"name": pattern}).to_list(10)
+        if not players:
+            await update.effective_message.reply_text(f"❌ No player found matching '{name_query}'.")
+            return
+        exact = [p for p in players if p.get('name', '').strip().lower() == name_query.strip().lower()]
+        target_candidates = exact if exact else players
+        has_card = [p for p in target_candidates if fmt in p.get('cards', {})]
+        if len(has_card) == 1:
+            player = has_card[0]
+        elif len(exact) == 1:
+            player = exact[0]
+        elif len(players) == 1:
+            player = players[0]
+        else:
+            buttons = [
+                [InlineKeyboardButton(f"• {p['name']} ({p.get('player_id', '')})", callback_data=f"adm_card|rem|{p['player_id']}|{fmt}|0|common")]
+                for p in players[:8]
+            ]
+            await update.effective_message.reply_text(
+                f"Multiple players found for *{name_query}*. Tap to remove {fmt.upper()} card:",
+                reply_markup=InlineKeyboardMarkup(buttons),
+                parse_mode='Markdown'
+            )
+            return
+
+    pid = player['player_id']
+    cat_removed = await remove_from_card_catalog(pid, fmt)
+    purged_count = await purge_card_from_all_users(pid, fmt)
+    _invalidate_card_pool_cache()
+
+    if not cat_removed and purged_count == 0:
+        await update.effective_message.reply_text(
+            f"ℹ️ *{player['name']}* did not have an {fmt.upper()} card in the catalog or in user inventories.",
+            parse_mode='Markdown'
+        )
+        return
+
+    await update.effective_message.reply_text(
+        f"🗑️ *Card Purged!*\n"
+        f"*{player['name']}* ({fmt.upper()})\n"
+        f"• Removed from Card Catalog & Packs: {'✅' if cat_removed else '⚠️ (Not in catalog)'}\n"
+        f"• Deleted from User Inventories: *{purged_count}* copies",
         parse_mode='Markdown'
     )
 
@@ -3555,6 +3634,18 @@ async def cb_admin_card(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return
         await query.edit_message_text(
             f"✅ Added to card catalog:\n*{player['name']}* ({fmt.upper()})\nOVR: {ovr} | {RARITY_EMOJI.get(rarity, '')} {rarity.title()}",
+            parse_mode='Markdown'
+        )
+    elif action == "rem":
+        from database import remove_from_card_catalog, purge_card_from_all_users
+        success = await remove_from_card_catalog(player_id, fmt)
+        purged = await purge_card_from_all_users(player_id, fmt)
+        _invalidate_card_pool_cache()
+        if not success and purged == 0:
+            await query.edit_message_text(f"ℹ️ *{player['name']}* had no {fmt.upper()} card in catalog or user inventories.", parse_mode='Markdown')
+            return
+        await query.edit_message_text(
+            f"🗑️ *Card Purged!*\n*{player['name']}* ({fmt.upper()})\n• Removed from catalog: {'✅' if success else '⚠️'}\n• Purged copies: *{purged}*",
             parse_mode='Markdown'
         )
 
