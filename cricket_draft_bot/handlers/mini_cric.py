@@ -53,6 +53,50 @@ def _get_lock(match_id: str) -> asyncio.Lock:
         _MATCH_LOCKS[match_id] = asyncio.Lock()
     return _MATCH_LOCKS[match_id]
 
+def _cancel_pending_challenge_timer(match_id: str):
+    key = f"pending_{match_id}"
+    if key in _ACTIVE_TIMERS:
+        _ACTIVE_TIMERS[key].cancel()
+        _ACTIVE_TIMERS.pop(key, None)
+
+def _schedule_pending_challenge_expiry(context: ContextTypes.DEFAULT_TYPE, match_id: str, chat_id: int, msg_id: int, c_name: str, t_name: str):
+    _cancel_pending_challenge_timer(match_id)
+
+    async def _expiry_coro():
+        try:
+            await asyncio.sleep(120)  # 2 minutes
+        except asyncio.CancelledError:
+            return
+        lock = _get_lock(match_id)
+        async with lock:
+            match = await _get_match(match_id)
+            if not match or match.get("status") != "pending":
+                return
+            match["status"] = "expired"
+            from database import get_db
+            await get_db().mini_cric_matches.delete_one({"match_id": match_id})
+            _ACTIVE_USER_MATCH.pop(match.get("challenger_id"), None)
+            _ACTIVE_USER_MATCH.pop(match.get("opponent_id"), None)
+            _MATCH_LOCKS.pop(match_id, None)
+            try:
+                await context.bot.edit_message_text(
+                    chat_id=chat_id,
+                    message_id=msg_id,
+                    text=f"⏳ <b>Mini-Cricket Challenge Expired.</b>\n<i>{esc_html(t_name)}</i> did not accept within 2 minutes.",
+                    parse_mode="HTML"
+                )
+            except Exception:
+                try:
+                    await context.bot.edit_message_text(
+                        chat_id=chat_id,
+                        message_id=msg_id,
+                        text=f"⏳ Mini-Cricket Challenge Expired.\n{t_name} did not accept within 2 minutes."
+                    )
+                except Exception:
+                    pass
+
+    _ACTIVE_TIMERS[f"pending_{match_id}"] = asyncio.create_task(_expiry_coro())
+
 async def _safe_answer_query(query, text: Optional[str] = None, show_alert: bool = False):
     """Safely answers callback query; suppresses 'Query is too old' and connection timeouts."""
     if not query:
@@ -129,6 +173,10 @@ async def handle_mini_cric(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await msg.reply_text("Please wait a moment before sending another command.")
             return
         _USER_COOLDOWNS[user.id] = now
+        if len(_USER_COOLDOWNS) > 1000:
+            cutoff = now - 60.0
+            for uid in [u for u, t in _USER_COOLDOWNS.items() if t < cutoff]:
+                _USER_COOLDOWNS.pop(uid, None)
 
         # Check if challenger already has a pending challenge
         from database import get_db
@@ -138,8 +186,13 @@ async def handle_mini_cric(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "status": "pending"
         })
         if existing_pending:
-            await msg.reply_text("You already have a pending challenge! Wait for it to be accepted/declined, or type /mini_cric cancel to abort it.")
-            return
+            if now - existing_pending.get("created_at", 0) > 120:
+                # Stale pending challenge (> 2 minutes old) — auto purge!
+                await db.mini_cric_matches.delete_one({"match_id": existing_pending["match_id"]})
+                _cancel_pending_challenge_timer(existing_pending["match_id"])
+            else:
+                await msg.reply_text("You already have an active pending challenge! Wait for a response or tap Cancel Challenge.")
+                return
 
         # Check user active mini cric
         if is_user_in_mini_cric(user.id):
@@ -241,10 +294,15 @@ async def handle_mini_cric(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         await _save_match(match_doc)
 
-        keyboard = InlineKeyboardMarkup([[
-            InlineKeyboardButton("Accept Match", callback_data=f"mc_acc|{match_id}|{target_user.id}"),
-            InlineKeyboardButton("Decline", callback_data=f"mc_dec|{match_id}|{target_user.id}")
-        ]])
+        keyboard = InlineKeyboardMarkup([
+            [
+                InlineKeyboardButton("Accept Match", callback_data=f"mc_acc|{match_id}|{target_user.id}"),
+                InlineKeyboardButton("Decline", callback_data=f"mc_dec|{match_id}|{target_user.id}")
+            ],
+            [
+                InlineKeyboardButton("❌ Cancel Challenge", callback_data=f"mc_can|{match_id}|{user.id}")
+            ]
+        ])
 
         c_name = esc_html(user.first_name)
         t_name = esc_html(target_user.first_name)
@@ -278,6 +336,9 @@ async def handle_mini_cric(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         match_doc["challenge_msg_id"] = sent_msg.message_id
         await _save_match(match_doc)
+        _schedule_pending_challenge_expiry(
+            context, match_id, chat.id, sent_msg.message_id, user.first_name, target_user.first_name
+        )
         logger.info(f"=== [MINI_CRIC] Challenge created: match_id={match_id} ===")
 
     except Exception as err:
@@ -305,9 +366,16 @@ async def handle_mini_cric_cancel(update: Update, context: ContextTypes.DEFAULT_
         await update.effective_message.reply_text("You don't have any pending Mini Cricket challenge to cancel.")
         return
 
-    match["status"] = "cancelled"
-    from database import get_db
-    await get_db().mini_cric_matches.delete_one({"match_id": match["match_id"]})
+    match_id = match["match_id"]
+    lock = _get_lock(match_id)
+    async with lock:
+        _cancel_pending_challenge_timer(match_id)
+        _ACTIVE_USER_MATCH.pop(match.get("challenger_id"), None)
+        _ACTIVE_USER_MATCH.pop(match.get("opponent_id"), None)
+        _MATCH_LOCKS.pop(match_id, None)
+
+        match["status"] = "cancelled"
+        await get_db().mini_cric_matches.delete_one({"match_id": match_id})
 
     challenge_msg_id = match.get("challenge_msg_id")
     group_chat_id = match.get("chat_id")
@@ -517,13 +585,19 @@ def _check_click_rate_limit(user_id: int) -> bool:
     if now - last < 2.0:
         return False
     _USER_CLICK_COOLDOWN[user_id] = now
+    if len(_USER_CLICK_COOLDOWN) > 1000:
+        cutoff = now - 60.0
+        for uid in [u for u, t in _USER_CLICK_COOLDOWN.items() if t < cutoff]:
+            _USER_CLICK_COOLDOWN.pop(uid, None)
     return True
 
 def _strip_html_tags(text: str) -> str:
     return re.sub(r'<[^>]+>', '', str(text or ''))
 
-async def _send_or_edit_dm(bot, user_id: int, msg_id: Optional[int], text: str, reply_markup=None, parse_mode="HTML") -> int:
-    """Edits active message in-place to prevent chat flood, falling back to sending a new message."""
+async def _send_or_edit_dm(bot, user_id: int, msg_id: Optional[int], text: str, reply_markup=None, parse_mode="HTML") -> Optional[int]:
+    """Edits active message in-place to prevent chat flood, falling back to sending a new message.
+    Safely catches Forbidden if user hasn't started DM with bot."""
+    from telegram.error import Forbidden
     if msg_id:
         try:
             await bot.edit_message_text(
@@ -535,6 +609,9 @@ async def _send_or_edit_dm(bot, user_id: int, msg_id: Optional[int], text: str, 
                 disable_web_page_preview=True
             )
             return msg_id
+        except Forbidden:
+            logger.warning(f"Mini-cric: bot cannot edit DM for user {user_id} (Forbidden).")
+            return None
         except Exception:
             try:
                 # Plain-text fallback for edit in case formatting fails
@@ -546,6 +623,9 @@ async def _send_or_edit_dm(bot, user_id: int, msg_id: Optional[int], text: str, 
                     parse_mode=None
                 )
                 return msg_id
+            except Forbidden:
+                logger.warning(f"Mini-cric: bot cannot edit DM for user {user_id} (Forbidden).")
+                return None
             except Exception:
                 pass
     try:
@@ -557,17 +637,27 @@ async def _send_or_edit_dm(bot, user_id: int, msg_id: Optional[int], text: str, 
             disable_web_page_preview=True
         )
         return sent.message_id
+    except Forbidden:
+        logger.warning(f"Mini-cric: bot cannot initiate DM with user {user_id} (Forbidden).")
+        return None
     except Exception:
-        sent = await bot.send_message(
-            chat_id=user_id,
-            text=_strip_html_tags(text),
-            reply_markup=reply_markup,
-            parse_mode=None
-        )
-        return sent.message_id
+        try:
+            sent = await bot.send_message(
+                chat_id=user_id,
+                text=_strip_html_tags(text),
+                reply_markup=reply_markup,
+                parse_mode=None
+            )
+            return sent.message_id
+        except Forbidden:
+            logger.warning(f"Mini-cric: bot cannot initiate DM with user {user_id} (Forbidden).")
+            return None
+        except Exception as e:
+            logger.warning(f"Mini-cric: failed to send DM to {user_id}: {e}")
+            return None
 
 
-# ── Challenge Accept / Decline Callbacks ───────────────────────────────────────
+# ── Challenge Accept / Decline / Cancel Callbacks ─────────────────────────────
 
 async def cb_mc_accept(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -590,9 +680,20 @@ async def cb_mc_accept(update: Update, context: ContextTypes.DEFAULT_TYPE):
     async with lock:
         await _safe_answer_query(query)
         match = await _get_match(match_id)
-        if not match or match["status"] != "pending":
+        if not match or match.get("status") != "pending":
             await query.edit_message_text("Challenge expired or already processed.")
             return
+
+        # Expire stale challenges (> 2 minutes old)
+        if time.time() - match.get("created_at", 0) > 120:
+            from database import get_db
+            await get_db().mini_cric_matches.delete_one({"match_id": match_id})
+            _MATCH_LOCKS.pop(match_id, None)
+            await query.edit_message_text("⏳ <b>Challenge has expired</b> (exceeded 2 minutes).", parse_mode="HTML")
+            return
+
+        # Cancel pending expiry timer
+        _cancel_pending_challenge_timer(match_id)
 
         # Double check active states
         from database import get_user_active_matches_info
@@ -619,7 +720,39 @@ async def cb_mc_accept(update: Update, context: ContextTypes.DEFAULT_TYPE):
         match["toss_waiting_id"] = waiting_id
         await _save_match(match)
 
+        # Send Toss UI in DMs
+        dm_ok = await _send_toss_ui(context, match)
         bot_username = context.bot.username or "Bot"
+
+        if not dm_ok:
+            # DM could not be sent to one of the users (they haven't started DM with bot)
+            _ACTIVE_USER_MATCH.pop(c_id, None)
+            _ACTIVE_USER_MATCH.pop(o_id, None)
+            _cancel_timer(match_id)
+            from database import get_db
+            await get_db().mini_cric_matches.delete_one({"match_id": match_id})
+            _MATCH_LOCKS.pop(match_id, None)
+
+            blocked_name = match.get("_blocked_dm_user_name", "One of the players")
+            start_kb = InlineKeyboardMarkup([[
+                InlineKeyboardButton("🤖 Start Bot in DM", url=f"https://t.me/{bot_username}?start=help")
+            ]])
+            try:
+                await query.edit_message_text(
+                    f"⚠️ <b>Cannot Start Match!</b>\n\n"
+                    f"<b>{esc_html(blocked_name)}</b> has not started the bot in private DM yet.\n"
+                    f"Please tap the button below to start the bot, then challenge again!",
+                    reply_markup=start_kb,
+                    parse_mode="HTML"
+                )
+            except Exception:
+                await query.edit_message_text(
+                    f"⚠️ Cannot Start Match!\n\n"
+                    f"{blocked_name} has not started the bot in private DM yet.\n"
+                    f"Please start @{bot_username} in DM, then challenge again!"
+                )
+            return
+
         # Edit group message to announce DM start and remove challenge buttons
         try:
             await query.edit_message_text(
@@ -639,9 +772,6 @@ async def cb_mc_accept(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 disable_web_page_preview=True
             )
 
-        # Send Toss UI in DMs
-        await _send_toss_ui(context, match)
-
 
 async def cb_mc_decline(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -656,21 +786,85 @@ async def cb_mc_decline(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await _safe_answer_query(query, "Please wait 2 seconds...", show_alert=True)
         return
 
-    await _safe_answer_query(query)
-    match = await _get_match(match_id)
-    if match and match["status"] == "pending":
-        match["status"] = "declined"
+    lock = _get_lock(match_id)
+    async with lock:
+        await _safe_answer_query(query)
+        match = await _get_match(match_id)
+        if not match or match.get("status") != "pending":
+            await query.edit_message_text("Challenge expired or already processed.")
+            return
+
+        # Expire stale challenges (> 2 minutes old)
+        if time.time() - match.get("created_at", 0) > 120:
+            from database import get_db
+            await get_db().mini_cric_matches.delete_one({"match_id": match_id})
+            _MATCH_LOCKS.pop(match_id, None)
+            await query.edit_message_text("⏳ <b>Challenge has expired</b> (exceeded 2 minutes).", parse_mode="HTML")
+            return
+
+        _cancel_pending_challenge_timer(match_id)
+        _ACTIVE_USER_MATCH.pop(match.get("challenger_id"), None)
+        _ACTIVE_USER_MATCH.pop(match.get("opponent_id"), None)
+        _MATCH_LOCKS.pop(match_id, None)
+
         from database import get_db
         await get_db().mini_cric_matches.delete_one({"match_id": match["match_id"]})
+
         try:
             await query.edit_message_text(f"<b>{esc_html(query.from_user.first_name)} declined the challenge.</b>", parse_mode="HTML")
         except Exception:
             await query.edit_message_text(f"{query.from_user.first_name} declined the challenge.")
 
 
+async def cb_mc_cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    parts = query.data.split("|")
+    _, match_id, challenger_str = parts
+
+    if str(query.from_user.id) != challenger_str:
+        await _safe_answer_query(query, "Only the challenger can cancel this challenge!", show_alert=True)
+        return
+
+    if not _check_click_rate_limit(query.from_user.id):
+        await _safe_answer_query(query, "Please wait 2 seconds...", show_alert=True)
+        return
+
+    lock = _get_lock(match_id)
+    async with lock:
+        await _safe_answer_query(query)
+        match = await _get_match(match_id)
+        if not match or match.get("status") != "pending":
+            await query.edit_message_text("Challenge expired or already processed.")
+            return
+
+        # Expire stale challenges (> 2 minutes old)
+        if time.time() - match.get("created_at", 0) > 120:
+            from database import get_db
+            await get_db().mini_cric_matches.delete_one({"match_id": match_id})
+            _MATCH_LOCKS.pop(match_id, None)
+            await query.edit_message_text("⏳ <b>Challenge has expired</b> (exceeded 2 minutes).", parse_mode="HTML")
+            return
+
+        _cancel_pending_challenge_timer(match_id)
+        _ACTIVE_USER_MATCH.pop(match.get("challenger_id"), None)
+        _ACTIVE_USER_MATCH.pop(match.get("opponent_id"), None)
+        _MATCH_LOCKS.pop(match_id, None)
+
+        from database import get_db
+        await get_db().mini_cric_matches.delete_one({"match_id": match_id})
+
+        try:
+            await query.edit_message_text(
+                f"❌ <b>Challenge cancelled by {esc_html(query.from_user.first_name)}.</b>",
+                parse_mode="HTML"
+            )
+        except Exception:
+            await query.edit_message_text(f"❌ Challenge cancelled by {query.from_user.first_name}.")
+
+
 # ── Toss Flow in DMs ──────────────────────────────────────────────────────────
 
-async def _send_toss_ui(context: ContextTypes.DEFAULT_TYPE, match: dict):
+async def _send_toss_ui(context: ContextTypes.DEFAULT_TYPE, match: dict) -> bool:
     caller_id = match["toss_caller_id"]
     waiting_id = match["toss_waiting_id"]
     match_id = match["match_id"]
@@ -685,21 +879,32 @@ async def _send_toss_ui(context: ContextTypes.DEFAULT_TYPE, match: dict):
         f"<b>Toss Time!</b> (Mini-Cricket <b>{ov_label}</b>)\n\n"
         f"Call the coin toss:"
     )
-    match["caller_dm_msg_id"] = await _send_or_edit_dm(
+    caller_msg_id = await _send_or_edit_dm(
         context.bot, caller_id, match.get("caller_dm_msg_id"), caller_text, reply_markup=toss_kb
     )
+    if not caller_msg_id:
+        caller_name = match["challenger_name"] if caller_id == match["challenger_id"] else match["opponent_name"]
+        match["_blocked_dm_user_name"] = caller_name
+        return False
+    match["caller_dm_msg_id"] = caller_msg_id
 
     caller_name = match["challenger_name"] if caller_id == match["challenger_id"] else match["opponent_name"]
     waiting_text = (
         f"<b>Toss Time!</b> (Mini-Cricket <b>{ov_label}</b>)\n\n"
         f"<i>Waiting for <b>{esc_html(caller_name)}</b> to call the toss...</i>"
     )
-    match["waiting_dm_msg_id"] = await _send_or_edit_dm(
+    waiting_msg_id = await _send_or_edit_dm(
         context.bot, waiting_id, match.get("waiting_dm_msg_id"), waiting_text, reply_markup=None
     )
+    if not waiting_msg_id:
+        waiting_name = match["opponent_name"] if caller_id == match["challenger_id"] else match["challenger_name"]
+        match["_blocked_dm_user_name"] = waiting_name
+        return False
+    match["waiting_dm_msg_id"] = waiting_msg_id
 
     _reset_turn_timer(context, match_id, caller_id)
     await _save_match(match)
+    return True
 
 
 async def cb_mc_toss(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -829,7 +1034,7 @@ async def cb_mc_decision(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
 
         # Edit loser message in-place
-        loser_dm_msg_id = match["waiting_dm_msg_id"] if winner_id == caller_id else match["caller_dm_msg_id"]
+        loser_dm_msg_id = match.get("waiting_dm_msg_id") if winner_id == caller_id else match.get("caller_dm_msg_id")
         await _send_or_edit_dm(
             context.bot,
             loser_id,
@@ -1269,15 +1474,15 @@ async def _end_innings_1(context: ContextTypes.DEFAULT_TYPE, match: dict):
         f"<i>Swapping roles... Innings 2 starts in 3 seconds!</i>"
     )
 
-    p1 = match["challenger_id"]
-    p2 = match["opponent_id"]
+    b_id = match["bowler_id"]
+    bt_id = match["batter_id"]
 
     # Edit both messages in-place with break screen
     match["bowler_dm_msg_id"] = await _send_or_edit_dm(
-        context.bot, p1, match.get("bowler_dm_msg_id"), break_text, reply_markup=None
+        context.bot, b_id, match.get("bowler_dm_msg_id"), break_text, reply_markup=None
     )
     match["batter_dm_msg_id"] = await _send_or_edit_dm(
-        context.bot, p2, match.get("batter_dm_msg_id"), break_text, reply_markup=None
+        context.bot, bt_id, match.get("batter_dm_msg_id"), break_text, reply_markup=None
     )
 
     await _save_match(match)
@@ -1417,6 +1622,7 @@ def _cancel_timer(match_id: str):
     if match_id in _ACTIVE_TIMERS:
         _ACTIVE_TIMERS[match_id].cancel()
         _ACTIVE_TIMERS.pop(match_id, None)
+    _cancel_pending_challenge_timer(match_id)
 
 
 def _reset_turn_timer(context: ContextTypes.DEFAULT_TYPE, match_id: str, active_user_id: int):
@@ -1491,6 +1697,7 @@ async def handle_mini_cric_end(update: Update, context: ContextTypes.DEFAULT_TYP
             _cancel_timer(match_id)
             _ACTIVE_USER_MATCH.pop(c_id, None)
             _ACTIVE_USER_MATCH.pop(o_id, None)
+            _MATCH_LOCKS.pop(match_id, None)
         
             abort_msg = "<b>Match mutually ended via /end.</b> No coins awarded to either player."
             c_mid = match.get("bowler_dm_msg_id") if c_id == match.get("bowler_id") else match.get("batter_dm_msg_id")
@@ -1534,6 +1741,12 @@ async def resume_mini_cric_matches(bot):
     db = get_db()
     now = time.time()
 
+    # Auto-purge stale pending challenges on restart (>120s old)
+    await db.mini_cric_matches.delete_many({
+        "status": "pending",
+        "created_at": {"$lt": now - 120}
+    })
+
     cursor = db.mini_cric_matches.find({"status": {"$in": ["toss", "decision", "in_progress", "innings_break"]}})
     matches = await cursor.to_list(100)
 
@@ -1543,8 +1756,7 @@ async def resume_mini_cric_matches(bot):
 
         # Expire matches older than 30 minutes
         if age > 1800:
-            m["status"] = "expired"
-            await _save_match(m)
+            await db.mini_cric_matches.delete_one({"match_id": match_id})
             continue
 
         # Re-register memory locks
