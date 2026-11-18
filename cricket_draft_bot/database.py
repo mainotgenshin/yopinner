@@ -203,7 +203,8 @@ async def get_player_by_name(name_query: str) -> Optional[Dict[str, Any]]:
         return data
     return None
 
-async def search_players_by_name(name_query: str, sport: Optional[str] = None) -> List[Dict[str, Any]]:
+async def search_players_by_name(name_query: str, sport: Optional[str] = None, sport_filter: Optional[str] = None) -> List[Dict[str, Any]]:
+    sport = sport or sport_filter
     db = get_db()
     regex = re.compile(re.escape(name_query), re.IGNORECASE)
     
