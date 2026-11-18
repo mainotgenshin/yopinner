@@ -3977,7 +3977,7 @@ async def add_role_fifa_command(update: Update, context: ContextTypes.DEFAULT_TY
         await update.message.reply_text(f"❌ Invalid FIFA position: `{pos_input}`\nValid: {', '.join(sorted(valid_positions))}", parse_mode="Markdown")
         return
     from database import search_players_by_name, save_player
-    results = await search_players_by_name(name, sport_filter="football")
+    results = await search_players_by_name(name, sport="football")
     if not results:
         results = await search_players_by_name(name)
     if not results:
@@ -4016,7 +4016,7 @@ async def rem_role_fifa_command(update: Update, context: ContextTypes.DEFAULT_TY
         await update.message.reply_text(f"❌ Invalid FIFA position: `{pos_input}`\nValid: {', '.join(sorted(valid_positions))}", parse_mode="Markdown")
         return
     from database import search_players_by_name, save_player
-    results = await search_players_by_name(name, sport_filter="football")
+    results = await search_players_by_name(name, sport="football")
     if not results:
         results = await search_players_by_name(name)
     if not results:
