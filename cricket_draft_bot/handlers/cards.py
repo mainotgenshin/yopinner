@@ -49,7 +49,8 @@ PACK_EMOJI   = {"basic": "🟦", "premium": "🟣", "elite": "🟡"}
 SPORT_EMOJI  = {"cricket": "🏏", "football": "⚽", "wwe": "🤼", "kabaddi": "🤸"}
 SPORT_LABEL  = {"cricket": "Cricket", "football": "FIFA", "wwe": "WWE Men", "kabaddi": "PKL"}
 FORMAT_LABEL = {"ipl": "IPL", "odi": "ODI", "test": "Test", "wwe": "WWE", "fifa": "FIFA", "pkl": "PKL"}
-PACK_PRICES  = {"basic": 250, "premium": 550, "elite": 1200}
+PACK_PRICES  = {"basic": 150, "premium": 400, "elite": 1000}
+SELL_VALUES  = {"common": 50, "rare": 85, "epic": 230, "legend": 500}
 PACK_ODDS_TEXT = {
     "basic":   "60% Common | 35% Rare | 5% Epic | 0% Legend",
     "premium": "15% Common | 45% Rare | 35% Epic | 5% Legend",
@@ -267,36 +268,16 @@ async def cb_pack_back(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # ─────────────────────────────────────────────────────────────────────────────
 # /inventory
 # ─────────────────────────────────────────────────────────────────────────────
-async def handle_inventory(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user = update.effective_user
-    if update.effective_chat and update.effective_chat.type != "private":
-        return
-    from database import get_card_coins
-    balance = await get_card_coins(user.id)
-    raw_inv = await _get_raw_inv(user.id)
-    # Count packs per sport+tier
+def _format_inventory_view(balance: int, raw_inv: dict, owner_id: int):
     total_packs = sum(v for v in raw_inv.values() if isinstance(v, int) and v > 0)
-    text = (
-        f"💼 *Your Inventory*\n"
-        f"━━━━━━━━━━━━━━━━━━\n"
-        f"💰 Card Coins: *{balance}🪙*\n"
-        f"━━━━━━━━━━━━━━━━━━\n"
-        f"📦 Total Packs: *{total_packs}*\n"
-        f"━━━━━━━━━━━━━━━━━━"
-    )
-    kb_rows = [[InlineKeyboardButton("📦 Your Packs", callback_data=f"inv_packs|{user.id}")]]
-    await update.effective_message.reply_text(text, reply_markup=InlineKeyboardMarkup(kb_rows), parse_mode="Markdown")
-
-async def cb_inv_packs(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Show list of packs user owns with Open buttons."""
-    query = update.callback_query
-    _, owner_id = query.data.split("|")
-    if str(query.from_user.id) != owner_id:
-        await query.answer("⛔ Not your menu.", show_alert=True); return
-    await query.answer()
-    raw_inv = await _get_raw_inv(int(owner_id))
-    # Build pack list
-    lines = ["📦 *Your Packs*\n━━━━━━━━━━━━━━━━━━"]
+    lines = [
+        "◈ <b>PLAYER INVENTORY</b> ◈",
+        "────────────────────────────",
+        f"› <b>ᴄᴏɪɴꜱ</b>   : <b>{balance:,}</b> 🪙",
+        f"› <b>ᴠᴀᴜʟᴛ</b>   : <b>{total_packs:02d}</b> Total Packs",
+        "────────────────────────────",
+        "▸ <b>ᴘᴀᴄᴋ ʙʀᴇᴀᴋᴅᴏᴡɴ</b>",
+    ]
     buttons = []
     has_any = False
     for tier in ["basic", "premium", "elite"]:
@@ -305,16 +286,43 @@ async def cb_inv_packs(update: Update, context: ContextTypes.DEFAULT_TYPE):
             qty = raw_inv.get(key, 0)
             if qty > 0:
                 has_any = True
-                label = f"{PACK_EMOJI[tier]} {tier.title()} {SPORT_LABEL[sport]} ×{qty}"
-                lines.append(label)
+                p_label = f"{tier.title()} {SPORT_LABEL[sport]}"
+                lines.append(f"• {PACK_EMOJI[tier]} {p_label} : <b>{qty:02d}</b> Available")
                 buttons.append([InlineKeyboardButton(
-                    f"Open {PACK_EMOJI[tier]} {tier.title()} {SPORT_LABEL[sport]}",
+                    f"🔓 Open {tier.title()} {SPORT_LABEL[sport]}",
                     callback_data=f"inv_open|{owner_id}|{tier}|{sport}"
                 )])
+
     if not has_any:
-        lines.append("You have no packs. Use /pack to buy some!")
-    text = "\n".join(lines)
-    await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(buttons) if buttons else None, parse_mode="Markdown")
+        lines.append("• <i>No packs in vault. Use /pack to buy!</i>")
+
+    lines.append("────────────────────────────")
+    return "\n".join(lines), buttons
+
+async def handle_inventory(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user = update.effective_user
+    if update.effective_chat and update.effective_chat.type != "private":
+        return
+    from database import get_card_coins
+    balance = await get_card_coins(user.id)
+    raw_inv = await _get_raw_inv(user.id)
+    text, buttons = _format_inventory_view(balance, raw_inv, user.id)
+    kb = InlineKeyboardMarkup(buttons) if buttons else None
+    await update.effective_message.reply_text(text, reply_markup=kb, parse_mode="HTML")
+
+async def cb_inv_packs(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Show list of packs user owns with Open buttons."""
+    query = update.callback_query
+    _, owner_id = query.data.split("|")
+    if str(query.from_user.id) != owner_id:
+        await query.answer("⛔ Not your menu.", show_alert=True); return
+    await query.answer()
+    from database import get_card_coins
+    balance = await get_card_coins(int(owner_id))
+    raw_inv = await _get_raw_inv(int(owner_id))
+    text, buttons = _format_inventory_view(balance, raw_inv, int(owner_id))
+    kb = InlineKeyboardMarkup(buttons) if buttons else None
+    await query.edit_message_text(text, reply_markup=kb, parse_mode="HTML")
 
 async def cb_inv_open(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Open a pack — draw 3 cards. Anti-spam locked."""
@@ -355,11 +363,12 @@ async def cb_inv_open(update: Update, context: ContextTypes.DEFAULT_TYPE):
             new_qty = await add_card_to_user(user_id, card["player_id"], card["format"])
             r_emoji = RARITY_EMOJI.get(card["rarity"], "⚪")
             f_label = FORMAT_LABEL.get(card["format"], card["format"].upper())
-            line = f"{r_emoji} *{esc(card['name'])}* ({f_label}) — OVR: {card['ovr']}"
+            name_safe = html.escape(str(card.get('name', 'Unknown')))
+            line = f"• {r_emoji} <b>{name_safe}</b> ({f_label}) — <b>OVR {card['ovr']}</b>"
             if existing is None:
-                line += "  ✨ NEW!"
+                line += "  <i>[ NEW! ]</i>"
             elif new_qty > 1:
-                line += f"  +1 duplicate"
+                line += "  <i>[ +1 DUP ]</i>"
             card_lines.append(line)
             cards_obtained += 1
         # Quest progress
@@ -367,13 +376,19 @@ async def cb_inv_open(update: Update, context: ContextTypes.DEFAULT_TYPE):
         total = await count_user_cards(user_id)
         sport_name = SPORT_LABEL[sport]
         text = (
-            f"🎊 *{PACK_EMOJI[tier]} {tier.title()} {sport_name} Pack Opened!*\n"
-            f"━━━━━━━━━━━━━━━━━━\n" +
+            f"◈ <b>{tier.title()} {sport_name} Pack Opened!</b> ◈\n"
+            "────────────────────────────\n" +
             "\n".join(card_lines) +
-            f"\n━━━━━━━━━━━━━━━━━━\n"
-            f"Collection: *{total} cards*"
+            "\n────────────────────────────\n"
+            f"› <b>ᴠᴀᴜʟᴛ</b> : <b>{total}</b> Total Cards in Binder"
         )
-        await query.edit_message_text(text, parse_mode="Markdown")
+        raw_inv_now = await _get_raw_inv(user_id)
+        rem_of_this = raw_inv_now.get(pack_key, 0)
+        nav_buttons = []
+        if rem_of_this > 0:
+            nav_buttons.append([InlineKeyboardButton(f"🔓 Open Another ({tier.title()} ×{rem_of_this})", callback_data=f"inv_open|{user_id}|{tier}|{sport}")])
+        nav_buttons.append([InlineKeyboardButton("📦 Back to Inventory", callback_data=f"inv_packs|{user_id}")])
+        await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(nav_buttons), parse_mode="HTML")
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -420,27 +435,36 @@ async def _show_mycards(message_or_query, owner_id: int, viewer_id: int,
     sport_name = SPORT_LABEL.get(sf, sf.title()) if sf != "all" else ""
 
     if not cards:
-        if sf != "all":
-            text = (
-                f"🃏 <b>Your Collection ({html.escape(sport_name)})</b>\n"
-                f"━━━━━━━━━━━━━━━━━━\n"
-                f"No {html.escape(sport_name)} cards yet!\n"
-                f"Use /pack to buy {html.escape(sport_name)} packs."
-            )
-        else:
-            text = "🃏 <b>Your Collection</b>\n━━━━━━━━━━━━━━━━━━\nNo cards yet! Use /pack to buy packs."
+        sport_desc = html.escape(sport_name) if sport_name else "All Sports"
+        text = (
+            "◈ <b>CARD BINDER</b> ◈\n"
+            "────────────────────────────\n"
+            f"› <b>ꜱᴘᴏʀᴛ</b>   : {sport_desc}\n"
+            "› <b>ᴄᴏᴜɴᴛ</b>   : <b>00</b> Cards\n"
+            "────────────────────────────\n"
+            "No cards in this category yet!\n"
+            "Use /pack to buy packs and unlock players."
+        )
     else:
-        filter_tag = f" ({html.escape(sport_name)})" if sport_name else ""
+        sport_desc = html.escape(sport_name) if sport_name else "All Sports"
         sort_label = html.escape(get_sort_label(crit, order))
-        lines = [f"🃏 <b>Your Collection</b>{filter_tag}  <i>{sort_label}</i>\n━━━━━━━━━━━━━━━━━━"]
+        lines = [
+            "◈ <b>CARD BINDER</b> ◈",
+            "────────────────────────────",
+            f"› <b>ꜱᴘᴏʀᴛ</b>   : {sport_desc}",
+            f"› <b>ꜱᴏʀᴛ</b>    : {sort_label}",
+            f"› <b>ᴄᴏᴜɴᴛ</b>   : <b>{total_unique}</b> Cards (Page {page+1}/{total_pages})",
+            "────────────────────────────",
+            "▸ <b>ᴘʟᴀʏᴇʀ ʀᴏꜱᴛᴇʀ</b>",
+        ]
         for idx, c in enumerate(page_cards, start=start + 1):
             r_emoji = RARITY_EMOJI.get(c.get("rarity"), "⚪")
             f_label = FORMAT_LABEL.get(c.get("format"), str(c.get("format", "")).upper())
             qty_str = f" ×{c['quantity']}" if c.get("quantity", 1) > 1 else ""
-            ovr_str = f" OVR {c['ovr']}" if crit == "ovr" and c.get("ovr") else ""
+            ovr_str = f"  <b>OVR {c['ovr']}</b>" if c.get("ovr") else ""
             c_name = html.escape(str(c.get('name', 'Unknown')))
-            lines.append(f"<code>{idx}.</code> {r_emoji} {c_name} ({f_label}){qty_str}{ovr_str}")
-        lines.append(f"━━━━━━━━━━━━━━━━━━\nPage {page+1}/{total_pages}")
+            lines.append(f"• <b>{idx:02d}.</b> {r_emoji} {c_name} ({f_label}){qty_str}{ovr_str}")
+        lines.append("────────────────────────────")
         text = "\n".join(lines)
 
     # Navigation buttons
@@ -1020,8 +1044,7 @@ async def _show_card_detail(msg_or_query, owner_id: int, card: dict, edit: bool,
     is_mythical = (card.get("rarity") == "mythical" or bool(card_ed_id))
     r_emoji = "✨" if is_mythical else RARITY_EMOJI.get(card["rarity"], "⚪")
     f_label = FORMAT_LABEL.get(card["format"], card["format"].upper())
-    SELL_VALUES = {"common": 25, "rare": 75, "epic": 200, "legend": 600}
-    sell_val = SELL_VALUES.get(card["rarity"], 25)
+    sell_val = SELL_VALUES.get(card["rarity"], 50)
     is_last_copy = card["quantity"] <= 1
     fav_label = "💔 Remove Fav" if is_fav else "❤️ Set as Fav"
 
@@ -1846,8 +1869,20 @@ async def handle_quest(update: Update, context: ContextTypes.DEFAULT_TYPE):
     hours = secs_left // 3600
     mins  = (secs_left % 3600) // 60
     claimed = quests.get("claimed", [])
-    lines = [f"📋 *Daily Quests*", f"Resets in: *{hours}h {mins}m*", "━━━━━━━━━━━━━━━━━━"]
+
+    total_quests = len(QUEST_DEFINITIONS)
+    completed_count = sum(1 for k, d in QUEST_DEFINITIONS.items() if quests.get(d["field"], 0) >= d["target"])
+
+    lines = [
+        "◈ <b>DAILY PROTOCOLS</b> ◈",
+        "────────────────────────────",
+        f"› <b>ʀᴇꜱᴇᴛ</b>   : in <b>{hours:02d}h {mins:02d}m</b>",
+        f"› <b>ꜱᴛᴀᴛᴜꜱ</b>  : <b>{completed_count:02d} / {total_quests:02d}</b> Completed",
+        "────────────────────────────",
+        "▸ <b>ᴍɪꜱꜱɪᴏɴ ᴏʙᴊᴇᴄᴛɪᴠᴇꜱ</b>",
+    ]
     has_claimable = False
+    claimable_coins = 0
     for key, defn in QUEST_DEFINITIONS.items():
         progress = quests.get(defn["field"], 0)
         target   = defn["target"]
@@ -1855,21 +1890,26 @@ async def handle_quest(update: Update, context: ContextTypes.DEFAULT_TYPE):
         already  = key in claimed
         if done and not already:
             has_claimable = True
-            status = "✅ COMPLETED"
+            claimable_coins += defn["reward"]
+            status_tag = "<i>[ DONE ]</i>"
         elif already:
-            status = "🏆 Claimed"
+            status_tag = "<i>[ CLAIMED ]</i>"
         else:
-            status = f"({min(progress, target)}/{target})"
-        lines.append(f"{status} {defn['label']} → *+{defn['reward']}🪙*")
-    lines.append("━━━━━━━━━━━━━━━━━━")
+            pct = int((min(progress, target) / max(1, target)) * 100)
+            status_tag = f"<i>[ {pct:02d}% ]</i>"
+
+        prog_str = f"[ {min(progress, target)} / {target} ]"
+        lines.append(f"• {prog_str} {defn['label']}   <b>+{defn['reward']}</b> 🪙  {status_tag}")
+
+    lines.append("────────────────────────────")
     text = "\n".join(lines)
     kb = None
     if has_claimable:
         kb = InlineKeyboardMarkup([[InlineKeyboardButton(
-            "🎁 Claim Rewards", callback_data=f"quest_claim|{user.id}"
+            f"🎁 Claim Rewards (+{claimable_coins}🪙)", callback_data=f"quest_claim|{user.id}"
         )]])
     try:
-        await update.effective_message.reply_text(text, reply_markup=kb, parse_mode="Markdown")
+        await update.effective_message.reply_text(text, reply_markup=kb, parse_mode="HTML")
     except Exception:
         await update.effective_message.reply_text(text, reply_markup=kb)
 
@@ -1889,13 +1929,15 @@ async def cb_quest_claim(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if not claimed_keys:
             await query.answer("No rewards to claim right now.", show_alert=True); return
         new_bal = await get_card_coins(user_id)
-        await query.edit_message_text(
-            f"🎁 *Rewards Claimed!*\n"
-            f"Earned: *+{coins_earned}🪙*\n"
-            f"New balance: *{new_bal}🪙*\n\n"
-            f"Come back tomorrow for new quests!",
-            parse_mode="Markdown"
+        claim_text = (
+            "◈ <b>REWARDS CLAIMED</b> ◈\n"
+            "────────────────────────────\n"
+            f"› <b>ᴇᴀʀɴᴇᴅ</b>   : <b>+{coins_earned:,}</b> 🪙\n"
+            f"› <b>ʙᴀʟᴀɴᴄᴇ</b>  : <b>{new_bal:,}</b> 🪙\n"
+            "────────────────────────────\n"
+            "Come back tomorrow for new quests!"
         )
+        await query.edit_message_text(claim_text, parse_mode="HTML")
 
 # ─────────────────────────────────────────────────────────────────────────────
 # /ggive — Gift coins to another user
@@ -2022,8 +2064,6 @@ async def handle_multi_sell(update: Update, context: ContextTypes.DEFAULT_TYPE):
     crit, order = await get_user_sort(user.id)
     all_cards = await get_user_cards(user.id, sport_filter=None)
     all_cards = _sort_cards(all_cards, crit, order)
-
-    SELL_VALUES = {"common": 25, "rare": 75, "epic": 200, "legend": 600}
 
     fav = await get_fav_card(user.id)
     fav_key = (fav.get("player_id"), fav.get("format")) if fav else (None, None)
@@ -2157,7 +2197,6 @@ async def cb_msell_ok(update: Update, context: ContextTypes.DEFAULT_TYPE):
     from database import get_user_cards, get_fav_card, remove_card_from_user, add_card_coins, increment_quest_progress
     indices = session.get("indices", [])
     rarity_order = {"legend": 0, "epic": 1, "rare": 2, "common": 3}
-    SELL_VALUES = {"common": 25, "rare": 75, "epic": 200, "legend": 600}
 
     lock = _get_lock(user_id)
     async with lock:
