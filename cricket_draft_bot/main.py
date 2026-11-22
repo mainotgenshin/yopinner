@@ -987,7 +987,7 @@ async def _refresh_draft_ui(bot, match_id: str, delay: float = 0.0):
 
 if __name__ == '__main__':
     # Build application
-    application = (
+    _builder = (
         ApplicationBuilder()
         .token(BOT_TOKEN)
         .rate_limiter(AIORateLimiter(
@@ -1004,8 +1004,13 @@ if __name__ == '__main__':
         .write_timeout(20)
         .connection_pool_size(16)    # 16 active connections prevents stale idle sockets
         .post_init(post_init)
-        .build()
     )
+    if hasattr(_builder, "concurrent_updates"):
+        try:
+            _builder = _builder.concurrent_updates(True)
+        except Exception:
+            pass
+    application = _builder.build()
 
     # Handlers
     application.add_handler(TypeHandler(Update, global_anti_stale_filter), group=-3)
@@ -1385,4 +1390,4 @@ if __name__ == '__main__':
     #   2. Rate limit bursts (processing 30+ stale commands at startup)
     #   3. Stale button callbacks causing match state corruption
     # Active match data in MongoDB is safe — _startup_recovery restores the UI.
-    application.run_polling(drop_pending_updates=True, allowed_updates=Update.ALL_TYPES, concurrent_updates=True)
+    application.run_polling(drop_pending_updates=True, allowed_updates=Update.ALL_TYPES)
