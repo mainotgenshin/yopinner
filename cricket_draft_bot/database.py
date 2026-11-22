@@ -101,6 +101,7 @@ async def init_db():
             name="user_id_1_player_id_1_format_1_edition_id_1"
         )
         await db.user_cards.create_index([("user_id", ASCENDING)])
+        await db.user_cards.create_index([("user_id", ASCENDING), ("format", ASCENDING)])
         await db.active_trades.create_index([("initiator_id", ASCENDING), ("status", ASCENDING)])
         await db.active_trades.create_index([("target_id", ASCENDING), ("status", ASCENDING)])
         await db.active_trades.create_index([("expires_at", ASCENDING)])
@@ -740,7 +741,19 @@ async def get_user_cards(user_id: int, sport_filter: str = None) -> list:
     get_player() calls — dramatically reduces DB round-trips for large collections.
     """
     db = get_db()
-    cards = await db.user_cards.find({"user_id": user_id}).to_list(None)
+    query: dict = {"user_id": user_id}
+    if sport_filter and str(sport_filter).lower() != "all":
+        sf = str(sport_filter).lower()
+        if sf in ("cricket", "ipl", "odi", "test"):
+            query["format"] = {"$in": ["ipl", "odi", "test"]}
+        elif sf in ("football", "fifa"):
+            query["format"] = "fifa"
+        elif sf in ("kabaddi", "pkl"):
+            query["format"] = "pkl"
+        elif sf == "wwe":
+            query["format"] = "wwe"
+
+    cards = await db.user_cards.find(query).to_list(None)
     if not cards:
         return []
 
