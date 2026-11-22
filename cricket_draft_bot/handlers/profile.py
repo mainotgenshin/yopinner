@@ -53,8 +53,11 @@ async def _build_profile_data(user_id: int, name: str) -> dict:
     recent.reverse()
     last_5 = recent[:5]
 
-    score_icons = {"W": "🟢", "L": "🔴", "D": "⚪"}
-    recent_str = " | ".join([score_icons[r] for r in last_5]) if last_5 else "No matches yet"
+    # Format recent form
+    if last_5:
+        form_str = " ".join([f"[ {r} ]" for r in last_5])
+    else:
+        form_str = "[ — ]"
 
     win_rate = 0.0
     if total_matches > 0:
@@ -74,9 +77,6 @@ async def _build_profile_data(user_id: int, name: str) -> dict:
     else:
         joined_str = "—"
 
-    # Streak emoji
-    streak_emoji = "🔥" if current_streak >= 3 else "⚡" if current_streak >= 1 else "💤"
-
     # Get global rank
     rank = None
     try:
@@ -86,7 +86,7 @@ async def _build_profile_data(user_id: int, name: str) -> dict:
         pass
 
     name_html = html.escape(name or "Player")
-    rank_line_html = f"🏆 Global Rank: <b>#{rank}</b>\n" if rank else ""
+    rank_str = f"<b>#{rank} Global</b>" if rank else "<b>Unranked</b>"
 
     # Ranked & EXP Progression
     ranked_rp = stats.get("ranked_rp", 0)
@@ -100,41 +100,39 @@ async def _build_profile_data(user_id: int, name: str) -> dict:
     next_info = get_next_rank_tier(ranked_rp)
     exp_req = exp_required_for_next_level(level)
 
+    # EXP progress bar (7 segments)
+    bar_len = 7
+    if exp_req > 0:
+        filled_blocks = min(bar_len, max(0, int((current_exp / exp_req) * bar_len)))
+    else:
+        filled_blocks = bar_len
+    exp_bar = "▰" * filled_blocks + "▱" * (bar_len - filled_blocks)
+
     if next_info:
         next_name = next_info[0]
-        next_emoji = next_info[1]
         rp_needed = max(0, next_info[2] - ranked_rp)
-        next_line = f"🎯 Next: <code>{rp_needed:,} RP</code> needed for {next_emoji} {next_name}\n"
+        next_str = f"<code>{rp_needed:,} RP</code> needed for <b>{next_name}</b>"
     else:
-        next_line = "🎯 Next: 👑 <b>Max Rank Reached!</b>\n"
+        next_str = "<b>Max Rank Reached!</b>"
 
-    ranked_section = (
-        "━━━━━━━━━━━━━━━━━━\n"
-        f"⭐ Level: <code>{level}</code> ({current_exp:,} / {exp_req:,} EXP)\n"
-        f"🎖️ Rank: {tier_emoji} <b>{tier_name}</b> (<code>{ranked_rp:,} RP</code>)\n"
-        f"{next_line}"
-        f"⭐ Peak: {peak_tier_emoji} <b>{peak_tier_name}</b>\n"
-    )
-
-    # Clean HTML version
     body_html = (
-        "━━━━━━━━━━━━━━━━━━\n"
-        f"    👤 <b>{name_html}</b>\n"
-        "━━━━━━━━━━━━━━━━━━\n"
-        f"{rank_line_html}"
-        f"📅 Joined: <code>{joined_str}</code>\n"
-        f"{ranked_section}"
-        "━━━━━━━━━━━━━━━━━━\n"
-        f"🔘 matches : <code>{total_matches}</code>\n"
-        f"🟢 wins    : <code>{wins}</code>\n"
-        f"🔴 losses  : <code>{losses}</code>\n"
-        f"⚪ draws   : <code>{draws}</code>\n"
-        f"📊 win %   : <code>{win_rate:.1f}%</code>\n\n"
-        f"{streak_emoji} <b>Win Streak</b>\n"
-        f"Current: <code>{current_streak}</code> | Best: <code>{best_streak}</code>\n\n"
-        "📈 <b>Recent Matches</b>\n"
-        f"{recent_str}\n"
-        "━━━━━━━━━━━━━━━━━━"
+        f"◈ <b>{name_html}</b> ◈\n"
+        "────────────────────────────\n"
+        f"› <b>ʀᴀɴᴋ</b>   : {rank_str}\n"
+        f"› <b>ᴊᴏɪɴ</b>   : {joined_str}\n"
+        "────────────────────────────\n"
+        "▸ <b>ʀᴀɴᴋᴇᴅ ᴘʀᴏɢʀᴇꜱꜱɪᴏɴ</b>\n"
+        f"• Level    : <b>{level:02d}</b>  [{exp_bar}] {current_exp:,}/{exp_req:,} EXP\n"
+        f"• Tier     : <b>{tier_name}</b> (<code>{ranked_rp:,} RP</code>)\n"
+        f"• Next     : {next_str}\n"
+        f"• Peak     : <b>{peak_tier_name}</b>\n"
+        "────────────────────────────\n"
+        "▸ <b>ᴍᴀᴛᴄʜ ꜱᴛᴀᴛɪꜱᴛɪᴄꜱ</b>\n"
+        f"• Total    : <b>{total_matches}</b> Matches (<b>{win_rate:.1f}%</b> Win Rate)\n"
+        f"• Record   : <b>{wins:02d}</b>W │ <b>{losses:02d}</b>L │ <b>{draws:02d}</b>D\n"
+        f"• Streak   : <b>{current_streak:02d}</b> Current │ <b>{best_streak:02d}</b> Best\n"
+        f"• Form     : {form_str}\n"
+        "────────────────────────────"
     )
 
     image_url = None
