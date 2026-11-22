@@ -2513,11 +2513,15 @@ async def handle_broadcast(update, context):
     """/broadcast message — shows preview and requires confirmation. Supports optional image URL banner via href."""
     if not await check_admin(update): return
     global _BROADCAST_ACTIVE
-    if _BROADCAST_ACTIVE:
-        await update.message.reply_text("⚠️ A broadcast is currently in progress. Please wait for it to finish.")
+    msg_obj = update.effective_message
+    if not msg_obj:
         return
 
-    raw_input = (update.message.text or update.message.caption or "").strip()
+    if _BROADCAST_ACTIVE:
+        await msg_obj.reply_text("⚠️ A broadcast is currently in progress. Please wait for it to finish.")
+        return
+
+    raw_input = (msg_obj.text or msg_obj.caption or "").strip()
     msg = ""
     for prefix in ("/broadcast", "/bc"):
         if raw_input.startswith(prefix):
@@ -2536,13 +2540,13 @@ async def handle_broadcast(update, context):
         raw_text = msg[len(first_token):].strip()
 
     # Also check if replying to a message with a URL
-    if not image_url and update.message.reply_to_message and update.message.reply_to_message.text:
-        reply_txt = update.message.reply_to_message.text.strip()
+    if not image_url and msg_obj.reply_to_message:
+        reply_txt = (msg_obj.reply_to_message.text or msg_obj.reply_to_message.caption or "").strip()
         if reply_txt.startswith("http://") or reply_txt.startswith("https://"):
             image_url = reply_txt.split()[0]
 
     if not raw_text and not image_url:
-        await update.message.reply_text(
+        await msg_obj.reply_text(
             "📢 <b>Broadcast Usage:</b>\n\n"
             "• Text only:\n<code>/broadcast Your message here</code>\n\n"
             "• With image banner (href preview):\n<code>/broadcast https://example.com/banner.jpg Your message here</code>\n"
@@ -2554,7 +2558,7 @@ async def handle_broadcast(update, context):
     from database import get_all_chats
     chats = await get_all_chats()
     if not chats:
-        await update.message.reply_text("❌ No active chats found.")
+        await msg_obj.reply_text("❌ No active chats found.")
         return
 
     import uuid, re
@@ -2593,7 +2597,7 @@ async def handle_broadcast(update, context):
         InlineKeyboardButton("❌ Cancel",       callback_data=f"bc_no|{bc_id}")
     ]])
 
-    await update.message.reply_text(preview_box, reply_markup=kb, parse_mode="HTML", disable_web_page_preview=False)
+    await msg_obj.reply_text(preview_box, reply_markup=kb, parse_mode="HTML", disable_web_page_preview=False)
 
 
 async def handle_broadcast_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -2695,7 +2699,17 @@ async def handle_broadcast_callback(update: Update, context: ContextTypes.DEFAUL
                             if m:
                                 try:
                                     new_id = int(m.group(0))
-                                    await get_db().chats.update_one({"chat_id": chat_id}, {"$set": {"chat_id": new_id}}, upsert=True)
+                                    await get_db().chats.delete_one({"chat_id": chat_id})
+                                    await get_db().chats.update_one({"chat_id": new_id}, {"$set": {"chat_id": new_id}}, upsert=True)
+                                    await context.bot.send_message(
+                                        chat_id=new_id,
+                                        text=text_out,
+                                        parse_mode="HTML",
+                                        disable_web_page_preview=False
+                                    )
+                                    success += 1
+                                    await asyncio.sleep(0.5)
+                                    continue
                                 except Exception:
                                     pass
                         logger.warning(f"Broadcast fail {chat_id}: {e}")
