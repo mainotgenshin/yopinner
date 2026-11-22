@@ -70,6 +70,7 @@ _RECOGNIZED_COMMANDS = {
     "mini_cric", "minicric", "mini_cric_cancel", "minicric_cancel", "end", "refresh", "mc_refresh", "mini_cric_refresh", "minicric_refresh", "enable", "disable", "offer", "share", "referrals", "create", "drop", "editionlist", "addplayercard", "takeplayercard", "add_offer", "remove_offer", "add_rolefifa",
     "challengeintl", "removeplayer"
 }
+_UNRECOGNIZED_COMMANDS: set = set()
 
 
 # ── Draft-Only Mode & Moderator Controls ─────────────────────────────────────
@@ -200,6 +201,8 @@ async def global_anti_stale_filter(update: Update, context: ContextTypes.DEFAULT
 
         # 2. Silently ignore foreign bot commands (e.g. /claim, /extend, /qrand) without log spam
         if cmd_name not in _RECOGNIZED_COMMANDS:
+            if cmd_name in _UNRECOGNIZED_COMMANDS:
+                raise ApplicationHandlerStop
             is_registered = False
             try:
                 for handlers_list in context.application.handlers.values():
@@ -214,6 +217,7 @@ async def global_anti_stale_filter(update: Update, context: ContextTypes.DEFAULT
                 pass
 
             if not is_registered:
+                _UNRECOGNIZED_COMMANDS.add(cmd_name)
                 raise ApplicationHandlerStop
 
         # 3. Drop stale commands replayed upon bot restart (> 30s old)
@@ -988,9 +992,9 @@ if __name__ == '__main__':
         .token(BOT_TOKEN)
         .rate_limiter(AIORateLimiter(
             max_retries=3,
-            overall_max_rate=25,     # Global: 25/sec safely under Telegram's 30/sec hard limit
+            overall_max_rate=30,     # Global: 30/sec Telegram limit
             overall_time_period=1,
-            group_max_rate=20,       # Per-chat: 20/min matches debouncer limit with 0 collision
+            group_max_rate=45,       # Per-chat: 45/min allows edits+answers without false stalls (debouncer handles pacing)
             group_time_period=60,
         ))
 
@@ -1347,9 +1351,12 @@ if __name__ == '__main__':
             "ConnectTimeout",
             "TimedOut",
             "ReadTimeout",
+            "Bad Gateway",
+            "502 Bad Gateway",
         )
-        if any(e.lower() in err_str.lower() for e in _IGNORE_ERRORS):
-            logging.getLogger(__name__).warning(f"Transient network/update noise suppressed: {err}")
+        err_type = type(err).__name__
+        if any(e.lower() in err_str.lower() for e in _IGNORE_ERRORS) or err_type in _IGNORE_ERRORS:
+            logging.getLogger(__name__).warning(f"Transient network/update noise suppressed: {err_type}: {err}")
             return  # Drop cleanly — not a real bug
         logging.getLogger(__name__).error(msg="Exception while handling an update:", exc_info=err)
 
@@ -1378,4 +1385,4 @@ if __name__ == '__main__':
     #   2. Rate limit bursts (processing 30+ stale commands at startup)
     #   3. Stale button callbacks causing match state corruption
     # Active match data in MongoDB is safe — _startup_recovery restores the UI.
-    application.run_polling(drop_pending_updates=True, allowed_updates=Update.ALL_TYPES)
+    application.run_polling(drop_pending_updates=True, allowed_updates=Update.ALL_TYPES, concurrent_updates=True)
