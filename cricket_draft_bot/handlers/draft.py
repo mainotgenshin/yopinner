@@ -423,8 +423,19 @@ async def update_draft_message(update: Update, context: ContextTypes.DEFAULT_TYP
     # 2. Synchronous Edit
     if synchronous:
         media_is_url = bool(media and str(media).startswith("http"))
+        from utils.rate_limit import _CHAT_MSG_IS_PHOTO
+        msg_key = (match.chat_id, match.draft_message_id)
+        known_photo = _CHAT_MSG_IS_PHOTO.get(msg_key)
         try:
-            if media_is_url:
+            if known_photo is True:
+                await context.bot.edit_message_caption(
+                    chat_id=match.chat_id,
+                    message_id=match.draft_message_id,
+                    caption=caption,
+                    reply_markup=reply_markup,
+                    parse_mode="HTML"
+                )
+            elif media_is_url:
                 href_text = f'<a href="{media}">&#8205;</a>' + caption
                 try:
                     await context.bot.edit_message_text(
@@ -435,9 +446,11 @@ async def update_draft_message(update: Update, context: ContextTypes.DEFAULT_TYP
                         parse_mode="HTML",
                         disable_web_page_preview=False
                     )
+                    _CHAT_MSG_IS_PHOTO[msg_key] = False
                 except Exception as e:
                     err = str(e).lower()
                     if "there is no text" in err or "only edit the caption" in err:
+                        _CHAT_MSG_IS_PHOTO[msg_key] = True
                         # It's a photo message — fall back to edit_message_caption
                         await context.bot.edit_message_caption(
                             chat_id=match.chat_id,
