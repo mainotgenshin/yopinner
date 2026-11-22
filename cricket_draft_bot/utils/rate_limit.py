@@ -19,6 +19,7 @@ _MIN_CHAT_INTERVAL = 2.85   # minimum seconds between edits in the same chat
 _chat_call_times: dict = {}   # chat_id_str -> [float timestamps]
 _chat_locks:      dict = {}   # chat_id_str -> asyncio.Lock
 _last_chat_call:  dict = {}   # chat_id_str -> float timestamp of last API call
+_CHAT_MSG_IS_PHOTO: dict = {} # (chat_id, message_id) -> bool: caches if message is photo to avoid 400 edit fallbacks
 
 
 async def _acquire_chat_slot(chat_id: int) -> None:
@@ -84,6 +85,8 @@ async def cleanup_chat_rate_state() -> None:
             _chat_call_times.pop(k, None)
             _chat_locks.pop(k, None)
             _last_chat_call.pop(k, None)
+        if len(_CHAT_MSG_IS_PHOTO) > 500:
+            _CHAT_MSG_IS_PHOTO.clear()
         if stale:
             logger.debug(f"Rate-gate cleanup: removed {len(stale)} inactive chat entries")
 
@@ -228,14 +231,25 @@ class MessageDebouncer:
             media_is_url = bool(effective_media and str(effective_media).startswith("http"))
             href_text = f'<a href="{effective_media}">&#8205;</a>' + text if media_is_url else text
 
+            msg_key = (chat_id, message_id)
+            known_photo = _CHAT_MSG_IS_PHOTO.get(msg_key)
+
             for attempt in range(3):
                 try:
-                    if media_is_url:
+                    if known_photo is True:
+                        # Known photo message: edit caption directly with 0 failed text attempts
+                        await bot.edit_message_caption(
+                            chat_id=chat_id, message_id=message_id,
+                            caption=text, reply_markup=reply_markup, parse_mode=parse_mode,
+                        )
+                        return True
+                    elif media_is_url:
                         await bot.edit_message_text(
                             chat_id=chat_id, message_id=message_id,
                             text=href_text, reply_markup=reply_markup,
                             parse_mode="HTML", disable_web_page_preview=False
                         )
+                        _CHAT_MSG_IS_PHOTO[msg_key] = False
                         return True
                     elif media:
                         await bot.edit_message_media(
@@ -243,18 +257,21 @@ class MessageDebouncer:
                             media=InputMediaPhoto(media=media, caption=text, parse_mode=parse_mode),
                             reply_markup=reply_markup,
                         )
+                        _CHAT_MSG_IS_PHOTO[msg_key] = True
                         return True
                     elif effective_media:
                         await bot.edit_message_caption(
                             chat_id=chat_id, message_id=message_id,
                             caption=text, reply_markup=reply_markup, parse_mode=parse_mode,
                         )
+                        _CHAT_MSG_IS_PHOTO[msg_key] = True
                         return True
                     else:
                         await bot.edit_message_text(
                             chat_id=chat_id, message_id=message_id,
                             text=text, reply_markup=reply_markup, parse_mode=parse_mode,
                         )
+                        _CHAT_MSG_IS_PHOTO[msg_key] = False
                         return True
                 except RetryAfter as e:
                     wait_time = e.retry_after + 1
@@ -265,7 +282,8 @@ class MessageDebouncer:
                     if "message is not modified" in err:
                         return True
                     if "there is no text" in err or "only edit the caption" in err:
-                        # Message is a photo message in Telegram — edit its media/caption
+                        # Message is a photo message in Telegram — record it and edit caption
+                        _CHAT_MSG_IS_PHOTO[msg_key] = True
                         try:
                             if media and not str(media).startswith("http"):
                                 await bot.edit_message_media(
@@ -282,6 +300,7 @@ class MessageDebouncer:
                         except Exception:
                             return False
                     if "there is no caption" in err or "not a media message" in err or "there is no media" in err:
+                        _CHAT_MSG_IS_PHOTO[msg_key] = False
                         try:
                             await bot.edit_message_text(
                                 chat_id=chat_id, message_id=message_id,
