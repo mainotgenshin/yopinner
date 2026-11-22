@@ -298,71 +298,78 @@ def _build_text(
         secs_left = season_info.get("time_remaining", 0) if season_info else 0
         days = int(secs_left // 86400)
         hours = int((secs_left % 86400) // 3600)
-        mins = int((secs_left % 3600) // 60)
 
-        title = f"⏸️ *RANKED OFF-SEASON STANDINGS*" if is_off else f"🎖️ *RANKED SEASON {s_num} STANDINGS*"
-        lines = [f"{title}\n"]
+        title = f"◈ *RANKED OFF-SEASON STANDINGS* ◈" if is_off else f"◈ *RANKED SEASON {s_num} STANDINGS* ◈"
+        u_tier_name, _, _, _, _ = get_rank_tier(user_metric)
+        u_rank_str = f"#{user_rank}" if user_rank else "Unranked"
+        gap_str = f"{gap_info:,} RP to #{user_rank - 1}" if (gap_info is not None and user_rank and user_rank > 1) else ("Top Rank" if user_rank == 1 else "—")
+        timer_str = f"{days}d {hours}h"
+
+        lines = [
+            title,
+            "────────────────────────────",
+            f"› *ꜱᴇᴀꜱᴏɴ*  : Season {s_num:02d} (Ends in *{timer_str}*)",
+            f"› *ʏᴏᴜʀꜱ*   : *{u_rank_str}* │ *{user_metric:,} RP* ({u_tier_name})",
+            f"› *ɢᴀᴘ*     : *{gap_str}*",
+            "────────────────────────────",
+            "▸ *ᴛᴏᴘ ʀᴀɴᴋᴇᴅ ᴘʟᴀʏᴇʀꜱ*",
+        ]
 
         if not rows:
-            lines.append("No ranked players yet 👀\nPlay matches to earn RP and climb tiers!")
+            lines.append("• _No ranked players yet. Play matches to climb tiers!_")
         else:
             for i, doc in enumerate(rows, 1):
                 rp = doc.get("ranked_rp", 0)
-                tier_name, tier_emoji, _, _, _ = get_rank_tier(rp)
+                tier_name, _, _, _, _ = get_rank_tier(rp)
                 raw_name = str(doc.get("name", "Player")).replace("[", "(").replace("]", ")")
                 name = esc(raw_name)
                 uid = doc.get("user_id")
                 is_you = uid == user_id
                 name_link = f"[{name}](tg://user?id={uid})" if uid else name
-                rank_sym = _rank_emoji(i)
                 crown = " 👑" if i == 1 else ""
-                you = " 👈 *YOU*" if is_you else ""
+                you = " _(YOU)_" if is_you else ""
 
                 change = doc.get("_rank_change", 0)
                 if change > 0:
-                    change_str = f" ⬆️ +{change}"
+                    change_str = f" ⬆️+{change}"
                 elif change < 0:
-                    change_str = f" ⬇️ {change}"
+                    change_str = f" ⬇️{change}"
                 else:
                     change_str = ""
 
-                lines.append(f"{rank_sym} {name_link} — *{rp:,} RP* ({tier_emoji} {tier_name}){crown}{change_str}{you}")
+                lines.append(f"#{i:02d} │ *{rp:,} RP* │ {name_link} _({tier_name})_{crown}{change_str}{you}")
 
-        lines.append(f"\n━━━━━━━━━━━━━━━")
-        u_tier_name, u_tier_emoji, _, _, _ = get_rank_tier(user_metric)
-        if user_rank:
-            lines.append(f"📍 Your Rank: *#{user_rank}* ({user_metric:,} RP — {u_tier_emoji} {u_tier_name})")
-            if user_rank == 1:
-                lines.append("👑 You are #1!")
-            elif gap_info is not None:
-                lines.append(f"⬆️ *{gap_info:,} RP* to reach *#{user_rank - 1}*")
-        else:
-            lines.append(f"📍 Your Rank: *Unranked* ({user_metric:,} RP — {u_tier_emoji} {u_tier_name})")
-
-        if is_off:
-            lines.append(f"\n⏸️ *Off-Season*: Season {s_num + 1} Starts In: *{days}d {hours}h {mins}m*")
-        else:
-            lines.append(f"\n⏳ Season {s_num} Ends In: *{days}d {hours}h {mins}m*")
-
+        lines.append("────────────────────────────")
         lines.append(f"🕒 Updated: {_time_ago(last_updated_ts)}")
         return "\n".join(lines)
 
     labels = {
-        "overall": "🏆 GLOBAL STANDINGS",
-        "daily":   "📅 DAILY STANDINGS",
-        "weekly":  "📆 WEEKLY STANDINGS",
-        "cricket": "🏏 CRICKET STANDINGS",
-        "fifa":    "⚽ FIFA STANDINGS",
-        "wwe":     "🤼 WWE STANDINGS",
-        "pkl":     "🤸 PKL STANDINGS",
-        "chat":    "🏠 THIS CHAT STANDINGS",
+        "overall": "GLOBAL STANDINGS",
+        "daily":   "DAILY STANDINGS",
+        "weekly":  "WEEKLY STANDINGS",
+        "cricket": "CRICKET STANDINGS",
+        "fifa":    "FIFA STANDINGS",
+        "wwe":     "WWE STANDINGS",
+        "pkl":     "PKL STANDINGS",
+        "chat":    "THIS CHAT STANDINGS",
     }
-    separator = "━━━━━━━━━━━━━━━"
+    lbl = labels.get(view, 'STANDINGS')
+    u_rank_str = f"#{user_rank}" if user_rank else "Unranked"
 
-    lines = [f"*{labels.get(view, 'STANDINGS')}*\n"]
+    lines = [
+        f"◈ *{lbl}* ◈",
+        "────────────────────────────",
+        f"› *ʏᴏᴜʀꜱ*   : *{u_rank_str}* │ *{user_metric}* Wins",
+    ]
+    if view == "daily":
+        lines.append(f"› *ʀᴇꜱᴇᴛ*   : in *{_reset_timer(_next_midnight_utc())}*")
+    elif view == "weekly":
+        lines.append(f"› *ʀᴇꜱᴇᴛ*   : in *{_reset_timer(_next_monday_utc())}*")
+    lines.append("────────────────────────────")
+    lines.append("▸ *ᴛᴏᴘ ᴘʟᴀʏᴇʀꜱ*")
 
     if not rows:
-        lines.append("No standings yet 👀\nStart playing to claim the top spot!")
+        lines.append("• _No standings recorded yet._")
     else:
         for i, doc in enumerate(rows, 1):
             wins = _wins_for_view(doc, view, chat_id)
@@ -370,54 +377,21 @@ def _build_text(
             name = esc(raw_name)
             uid  = doc.get("user_id")
             is_you = uid == user_id
-
-            # Clickable profile link — works even without @username
-            if uid:
-                name_link = f"[{name}](tg://user?id={uid})"
-            else:
-                name_link = name
-
-            rank_sym = _rank_emoji(i)
+            name_link = f"[{name}](tg://user?id={uid})" if uid else name
             crown = " 👑" if i == 1 else ""
-            you = " 👈 *YOU*" if is_you else ""
+            you = " _(YOU)_" if is_you else ""
 
-            # Rank change
             change = doc.get(f"_rank_change", 0)
             if change > 0:
-                change_str = f" ⬆️ +{change}"
+                change_str = f" ⬆️+{change}"
             elif change < 0:
-                change_str = f" ⬇️ {change}"
+                change_str = f" ⬇️{change}"
             else:
                 change_str = ""
 
-            lines.append(f"{rank_sym} {name_link} — *{wins}* Wins{crown}{change_str}{you}")
+            lines.append(f"#{i:02d} │ *{wins:02d}* W │ {name_link}{crown}{change_str}{you}")
 
-    lines.append(f"\n{separator}")
-
-    # User's own stats
-    if user_rank:
-        lines.append(f"📍 Your Rank: *#{user_rank}* — {user_metric} Wins")
-        if user_rank == 1:
-            lines.append("👑 You are #1!")
-        else:
-            # Gap to next rank: find wins of rank above
-            above_wins = None
-            for doc in rows:
-                dw = _wins_for_view(doc, view, chat_id)
-                if dw > user_metric:
-                    above_wins = dw
-            if above_wins is not None:
-                gap = above_wins - user_metric
-                lines.append(f"⬆️ *{gap}* wins to reach *#{user_rank - 1}*")
-    else:
-        lines.append("📍 Your Rank: *Unranked*")
-
-    # Reset timer (daily/weekly only)
-    if view == "daily":
-        lines.append(f"⏳ Resets In: *{_reset_timer(_next_midnight_utc())}*")
-    elif view == "weekly":
-        lines.append(f"⏳ Resets In: *{_reset_timer(_next_monday_utc())}*")
-
+    lines.append("────────────────────────────")
     lines.append(f"🕒 Updated: {_time_ago(last_updated_ts)}")
 
     return "\n".join(lines)
