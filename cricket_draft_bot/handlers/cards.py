@@ -1176,8 +1176,8 @@ async def handle_viewcard_deeplink(update: Update, context: ContextTypes.DEFAULT
     if not user or not payload:
         return
     from database import get_user_cards, get_player
-    cards = await get_user_cards(user.id)
     if payload.startswith("ed_"):
+        cards = await get_user_cards(user.id)
         edition_id = payload[3:]
         card = next((c for c in cards if c.get("edition_id") == edition_id), None)
         if not card or card.get("quantity", 0) < 1:
@@ -1189,6 +1189,7 @@ async def handle_viewcard_deeplink(update: Update, context: ContextTypes.DEFAULT
             await update.effective_message.reply_text("❌ Invalid card link.")
             return
         player_id, fmt = parts[0], parts[1].lower()
+        cards = await get_user_cards(user.id, sport_filter=fmt)
         card = next((c for c in cards if c["player_id"] == player_id and c["format"] == fmt and not c.get("edition_id")), None)
         if not card:
             card = next((c for c in cards if c["player_id"] == player_id and c["format"] == fmt), None)
