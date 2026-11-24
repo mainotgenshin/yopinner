@@ -53,11 +53,12 @@ async def _build_profile_data(user_id: int, name: str) -> dict:
     recent.reverse()
     last_5 = recent[:5]
 
-    # Format recent form
+    # Format recent form (🟢 win, 🔴 loss, ⚪ draw)
+    FORM_EMOJI = {"W": "🟢", "L": "🔴", "D": "⚪️"}
     if last_5:
-        form_str = " ".join([f"[ {r} ]" for r in last_5])
+        form_str = " ".join([FORM_EMOJI.get(str(r).upper(), "⚪️") for r in last_5])
     else:
-        form_str = "[ — ]"
+        form_str = "—"
 
     win_rate = 0.0
     if total_matches > 0:
@@ -86,7 +87,11 @@ async def _build_profile_data(user_id: int, name: str) -> dict:
         pass
 
     name_html = html.escape(name or "Player")
-    rank_str = f"<b>#{rank} Global</b>" if rank else "<b>Unranked</b>"
+    if rank:
+        rank_icon = "🏆" if rank <= 3 else "🎖"
+        rank_str = f"{rank_icon} <b>#{rank} Global</b>"
+    else:
+        rank_str = "<b>Unranked</b>"
 
     # Ranked & EXP Progression
     ranked_rp = stats.get("ranked_rp", 0)
@@ -123,14 +128,14 @@ async def _build_profile_data(user_id: int, name: str) -> dict:
         "────────────────────────────\n"
         "▸ <b>ʀᴀɴᴋᴇᴅ ᴘʀᴏɢʀᴇꜱꜱɪᴏɴ</b>\n"
         f"• Level    : <b>{level:02d}</b>  [{exp_bar}] {current_exp:,}/{exp_req:,} EXP\n"
-        f"• Tier     : <b>{tier_name}</b> (<code>{ranked_rp:,} RP</code>)\n"
+        f"• Tier     : {tier_emoji} <b>{tier_name}</b> (<code>{ranked_rp:,} RP</code>)\n"
         f"• Next     : {next_str}\n"
-        f"• Peak     : <b>{peak_tier_name}</b>\n"
+        f"• Peak     : {peak_tier_emoji} <b>{peak_tier_name}</b>\n"
         "────────────────────────────\n"
         "▸ <b>ᴍᴀᴛᴄʜ ꜱᴛᴀᴛɪꜱᴛɪᴄꜱ</b>\n"
         f"• Total    : <b>{total_matches}</b> Matches (<b>{win_rate:.1f}%</b> Win Rate)\n"
         f"• Record   : <b>{wins:02d}</b>W │ <b>{losses:02d}</b>L │ <b>{draws:02d}</b>D\n"
-        f"• Streak   : <b>{current_streak:02d}</b> Current │ <b>{best_streak:02d}</b> Best\n"
+        f"• Streak   : 🔥 <b>{current_streak:02d}</b> Current │ <b>{best_streak:02d}</b> Best\n"
         f"• Form     : {form_str}\n"
         "────────────────────────────"
     )
