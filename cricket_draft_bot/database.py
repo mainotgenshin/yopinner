@@ -1181,9 +1181,13 @@ async def add_to_card_catalog(player_id: str, fmt: str, ovr: int, rarity: str) -
     if existing:
         return False
     db = get_db()
+    set_fields = {
+        f"cards.{fmt}.ovr": ovr,
+        f"cards.{fmt}.rarity": rarity.lower()
+    }
     await db.players.update_one(
         {"player_id": player_id},
-        {"$set": {f"cards.{fmt}": {"ovr": ovr, "rarity": rarity.lower()}}}
+        {"$set": set_fields}
     )
     evict_player_cache(player_id)
     _invalidate_card_pool_cache()
@@ -1195,9 +1199,18 @@ async def update_card_catalog(player_id: str, fmt: str, ovr: int, rarity: str) -
     if not existing:
         return False
     db = get_db()
+    set_fields = {
+        f"cards.{fmt}.ovr": ovr,
+        f"cards.{fmt}.rarity": rarity.lower()
+    }
+    # Preserve existing card image (crucial for PKL & image-bearing card dicts)
+    if isinstance(existing, dict) and existing.get("image"):
+        set_fields[f"cards.{fmt}.image"] = existing["image"]
+        if fmt == "pkl":
+            set_fields["pkl_image_url"] = existing["image"]
     await db.players.update_one(
         {"player_id": player_id},
-        {"$set": {f"cards.{fmt}": {"ovr": ovr, "rarity": rarity.lower()}}}
+        {"$set": set_fields}
     )
     evict_player_cache(player_id)
     _invalidate_card_pool_cache()
