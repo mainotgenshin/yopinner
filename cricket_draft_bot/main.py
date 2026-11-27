@@ -424,10 +424,8 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user:
         from database import is_user_banned
         if await is_user_banned(update.effective_user.id):
-            try:
-                await query.answer("⛔ You are banned from using this bot.", show_alert=True)
-            except Exception:
-                pass
+            from utils.rate_limit import safe_answer_unauthorized
+            await safe_answer_unauthorized(query, "⛔ You are banned from using this bot.", cooldown=4.0)
             return
     data = query.data or ""
 
