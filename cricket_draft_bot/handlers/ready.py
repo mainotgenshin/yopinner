@@ -8,6 +8,7 @@ from telegram.error import BadRequest, RetryAfter
 from telegram.helpers import escape_markdown
 from game.state import load_match_state, save_match_state
 from game.simulation import run_simulation
+from utils.rate_limit import safe_answer_unauthorized
 
 def esc(t):
     return escape_markdown(str(t), version=1)
@@ -55,15 +56,17 @@ async def handle_ready(update: Update, context: ContextTypes.DEFAULT_TYPE, match
 
         # Mark user as ready
         if user_id:
-            if user_id == match.team_a.owner_id:
+            p_a = int(getattr(match.team_a, 'owner_id', 0) or 0) if getattr(match, 'team_a', None) else 0
+            p_b = int(getattr(match.team_b, 'owner_id', 0) or 0) if getattr(match, 'team_b', None) else 0
+            if user_id not in (p_a, p_b):
+                await safe_answer_unauthorized(query, "⛔ You are not part of this match.")
+                return
+            if user_id == p_a:
                 match.team_a.is_ready = True
                 await safe_answer("You are ready!", alert=False)
-            elif user_id == match.team_b.owner_id:
+            elif user_id == p_b:
                 match.team_b.is_ready = True
                 await safe_answer("You are ready!", alert=False)
-            else:
-                await safe_answer("You are not part of this match.", alert=True)
-                return
 
         await save_match_state(match)
 
