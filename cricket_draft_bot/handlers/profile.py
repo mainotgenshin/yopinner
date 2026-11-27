@@ -4,6 +4,7 @@ from telegram.ext import ContextTypes
 from database import get_db
 from telegram.helpers import escape_markdown
 import html
+from utils.rate_limit import safe_answer_unauthorized
 
 _PROFILE_CLICK_TIMES: dict = {}
 
@@ -282,7 +283,7 @@ async def cb_profile_back(update, context):
         owner_id = viewer_id
 
     if viewer_id != owner_id:
-        await query.answer("⛔ Not your profile.", show_alert=True)
+        await safe_answer_unauthorized(query, "⛔ Not your profile.")
         return
 
     if not _check_profile_click(viewer_id, 1.0):
