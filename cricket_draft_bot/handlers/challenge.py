@@ -1144,7 +1144,7 @@ async def handle_join(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         # Check Self-Join FIRST — before touching the timer
         if joiner_id == owner_id:
-            await query.answer("⛔ You cannot play against yourself!", show_alert=True)
+            await safe_answer_unauthorized(query, "⛔ You cannot play against yourself!", cooldown=2.0)
             return
 
         from database import is_user_banned
@@ -1165,15 +1165,15 @@ async def handle_join(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await _check_match_limit(joiner_id, query)
             return
         if len(owner_matches) >= 1:
-            await query.answer("⛔ The challenger already has an active match.", show_alert=True)
+            await safe_answer_unauthorized(query, "⛔ The challenger already has an active match.", cooldown=2.0)
             return
 
         from handlers.mini_cric import is_user_in_mini_cric
         if is_user_in_mini_cric(joiner_id):
-            await query.answer("⛔ You are currently playing a Mini Cricket match!", show_alert=True)
+            await safe_answer_unauthorized(query, "⛔ You are currently playing a Mini Cricket match!", cooldown=2.0)
             return
         if is_user_in_mini_cric(owner_id):
-            await query.answer("⛔ The challenger is currently playing a Mini Cricket match!", show_alert=True)
+            await safe_answer_unauthorized(query, "⛔ The challenger is currently playing a Mini Cricket match!", cooldown=2.0)
             return
 
 
@@ -1183,7 +1183,7 @@ async def handle_join(update: Update, context: ContextTypes.DEFAULT_TYPE):
         claimed = await find_and_delete_pending_challenge(owner_id, mode, _joined_msg_id)
         if not claimed:
             # Challenge is already accepted or expired.
-            await query.answer("⚠️ Challenge has already been accepted or expired!", show_alert=True)
+            await safe_answer_unauthorized(query, "⚠️ Challenge has already been accepted or expired!", cooldown=2.0)
             try:
                 # CRITICAL: Only strip the button if this message is NOT a live draft board.
                 from database import get_db as _gdb
