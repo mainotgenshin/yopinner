@@ -15,6 +15,7 @@ from config import (
     DRAFT_BANNER_TEST, DRAFT_BANNER_FIFA, DRAFT_BANNER_WWE, DRAFT_BANNER_PKL
 )
 from utils.banners import get_banner_for_match, get_banner_for_mode
+from utils.rate_limit import safe_answer_unauthorized
 from telegram.helpers import escape_markdown
 
 def esc(t):
@@ -145,11 +146,15 @@ async def _afk_forfeit(match_id: str, expected_turn: int, bot, chat_id: int):
         AFK_TASKS.pop(match_id, None)
         _TERMINATE_LOCKS.pop(match_id, None)
 
+def cancel_afk_timer(match_id: str):
+    """Explicitly cancels and pops any active AFK timer task for this match."""
+    task = AFK_TASKS.pop(match_id, None)
+    if task and not task.done():
+        task.cancel()
+
 def _reset_afk_timer(match: Match, bot, chat_id: int):
     """Cancel any existing AFK task and start a fresh 10-min timer for current turn."""
-    old = AFK_TASKS.pop(match.match_id, None)
-    if old and not old.done():
-        old.cancel()
+    cancel_afk_timer(match.match_id)
     match.turn_deadline = time.time() + AFK_TIMEOUT
     asyncio.create_task(save_match_state(match))
     task = asyncio.create_task(
@@ -274,8 +279,20 @@ async def handle_draft_callback(update: Update, context: ContextTypes.DEFAULT_TY
             return
             
         # Check turn — cast both to int to guard against str/int type mismatch from MongoDB
-        if int(query.from_user.id) != int(match.current_turn):
-            await safe_answer("Turn passed! Board updating...", alert=True)
+        user_id = int(query.from_user.id) if query and getattr(query, 'from_user', None) else 0
+        if not user_id:
+            return
+        p_a = int(getattr(match.team_a, 'owner_id', 0) or 0) if getattr(match, 'team_a', None) else 0
+        p_b = int(getattr(match.team_b, 'owner_id', 0) or 0) if getattr(match, 'team_b', None) else 0
+
+        # 1. Random spectator check: silently drop repeat taps from non-participants (0 API calls, 0 DB queries)
+        if user_id not in (p_a, p_b):
+            await safe_answer_unauthorized(query, "⛔ You are not a player in this match!")
+            return
+
+        # 2. Opponent check: waiting for opponent's turn
+        if user_id != int(match.current_turn):
+            await safe_answer_unauthorized(query, "⏳ Opponent's turn! Please wait for their pick.", cooldown=2.5)
             return
 
 
@@ -796,9 +813,7 @@ async def handle_assign(update: Update, context: ContextTypes.DEFAULT_TYPE, matc
         asyncio.create_task(_auto_ready_live(context.bot, match.match_id, match.chat_id))
 
         # Draft done — cancel AFK timer (no more turns) and clean terminate lock
-        old_afk = AFK_TASKS.pop(match.match_id, None)
-        if old_afk and not old_afk.done():
-            old_afk.cancel()
+        cancel_afk_timer(match.match_id)
         _TERMINATE_LOCKS.pop(match.match_id, None)
 
         board_text = format_draft_board(match)
@@ -1083,11 +1098,10 @@ async def handle_terminate(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 pass
             return
 
-        if user_id not in (int(match.team_a.owner_id), int(match.team_b.owner_id)):
-            try:
-                await query.answer("⛔ Only match participants can vote to terminate!", show_alert=True)
-            except Exception:
-                pass
+        p_a = int(getattr(match.team_a, 'owner_id', 0) or 0) if getattr(match, 'team_a', None) else 0
+        p_b = int(getattr(match.team_b, 'owner_id', 0) or 0) if getattr(match, 'team_b', None) else 0
+        if user_id not in (p_a, p_b):
+            await safe_answer_unauthorized(query, "⛔ Only match participants can vote to terminate!")
             return
 
         if not hasattr(match, 'terminate_votes') or match.terminate_votes is None:
@@ -1131,9 +1145,7 @@ async def handle_terminate(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 pass
         else:
             # Both players voted (2/2) -> Terminate match with mutual agreement
-            old_afk = AFK_TASKS.pop(match.match_id, None)
-            if old_afk and not old_afk.done():
-                old_afk.cancel()
+            cancel_afk_timer(match.match_id)
 
             match.state = "FINISHED"
             match.finished_at = time.time()
