@@ -9,6 +9,7 @@ from telegram.error import ChatMigrated
 from game.state import create_match_state
 from telegram.helpers import escape_markdown
 from database import save_pending_challenge, delete_pending_challenge
+from utils.rate_limit import safe_answer_unauthorized
 
 def esc(t):
     return escape_markdown(str(t), version=1)
@@ -21,6 +22,9 @@ _pending_challenges: dict = {}
 
 # Locks to prevent double-clicks/spam on the mode picker buttons
 MODE_PICK_LOCKS = set()
+
+# Concurrency mutex to prevent duplicate matches starting simultaneously
+JOIN_LOCKS: set = set()
 
 # Per-user cooldown to prevent challenge command spam
 _CHALLENGE_COOLDOWNS: dict = {}
@@ -211,6 +215,42 @@ async def _replace_old_challenge(ch_key: str, bot):
             )
         except Exception:
             pass
+
+async def _disarm_leftover_challenges(user_a: int, user_b: int, bot, keep_msg_id: int = None):
+    """Silently disarms and cleans up any remaining open challenge cards for both players."""
+    try:
+        from database import disarm_all_pending_challenges
+        disarmed_docs = await disarm_all_pending_challenges([user_a, user_b])
+        # Also clean in-memory tracking
+        for ch_key, info in list(_pending_challenges.items()):
+            parts = ch_key.split('_')
+            ch_owner = int(parts[0]) if parts and parts[0].isdigit() else 0
+            if ch_owner in (user_a, user_b):
+                p = _pending_challenges.pop(ch_key, None)
+                if p:
+                    task = p.get('task')
+                    if task and not task.done():
+                        task.cancel()
+                    disarmed_docs.append({
+                        'chat_id': p.get('chat_id'),
+                        'message_id': p.get('message_id')
+                    })
+        # Disarm Telegram messages (remove inline buttons)
+        seen = set()
+        for d in disarmed_docs:
+            c_id = d.get('chat_id')
+            m_id = d.get('message_id')
+            if not c_id or not m_id or m_id == keep_msg_id:
+                continue
+            if (c_id, m_id) in seen:
+                continue
+            seen.add((c_id, m_id))
+            try:
+                await bot.edit_message_reply_markup(chat_id=c_id, message_id=m_id, reply_markup=None)
+            except Exception:
+                pass
+    except Exception as e:
+        logger.debug(f"_disarm_leftover_challenges error: {e}")
 
 
 async def _check_match_limit(user_id: int, mode_of_reply) -> bool:
@@ -609,7 +649,7 @@ async def handle_wwe_pick_callback(update: Update, context: ContextTypes.DEFAULT
 
     # Owner check
     if query.from_user.id != owner_id:
-        await query.answer("⛔ Not for you! Only the person who sent the challenge can select the mode.", show_alert=True)
+        await safe_answer_unauthorized(query, "⛔ Not for you! Only the person who sent the challenge can select the mode.")
         return
 
     # Anti-spam lock
@@ -1038,7 +1078,7 @@ async def handle_mode_pick_callback(update: Update, context: ContextTypes.DEFAUL
 
     # Owner check — only the challenger can pick a mode
     if owner_id and query.from_user.id != owner_id:
-        await query.answer("\u274c Not for you! Only the person who sent /challenge can pick a mode.", show_alert=True)
+        await safe_answer_unauthorized(query, "❌ Not for you! Only the person who sent /challenge can pick a mode.")
         return
 
     # Check lock to prevent rapid double-clicks (spam)
@@ -1079,174 +1119,190 @@ async def handle_join(update: Update, context: ContextTypes.DEFAULT_TYPE):
     parts = query.data.split('_') # join, MODE, OWNER_ID, [TARGET_ID]
     mode = parts[1]
     real_mode = "WWE Women" if mode == "WWEWomen" else mode
-    owner_id = int(parts[2])
+    try:
+        owner_id = int(parts[2])
+    except (ValueError, IndexError):
+        return
+    joiner_id = query.from_user.id if query and getattr(query, 'from_user', None) else 0
+    if not joiner_id:
+        return
     
-    # Check for Targeted Challenge
-    if len(parts) > 3:
-        target_id = int(parts[3])
-        if query.from_user.id != target_id:
-            await query.answer("⛔ This challenge is not for you!", show_alert=True)
+    # Concurrency mutex check: prevent 2 players from simultaneously starting duplicate matches
+    if joiner_id in JOIN_LOCKS or owner_id in JOIN_LOCKS:
+        await safe_answer_unauthorized(query, "⏳ Match is starting, please wait...", cooldown=2.0)
+        return
+
+    JOIN_LOCKS.add(joiner_id)
+    JOIN_LOCKS.add(owner_id)
+    try:
+        # Check for Targeted Challenge
+        if len(parts) > 3:
+            target_id = int(parts[3])
+            if joiner_id != target_id:
+                await safe_answer_unauthorized(query, "⛔ This challenge is not for you!")
+                return
+
+        # Check Self-Join FIRST — before touching the timer
+        if joiner_id == owner_id:
+            await query.answer("⛔ You cannot play against yourself!", show_alert=True)
             return
 
-    # Check Self-Join FIRST — before touching the timer
-    if query.from_user.id == owner_id:
-        await query.answer("⛔ You cannot play against yourself!", show_alert=True)
-        return
+        from database import is_user_banned
+        if await is_user_banned(joiner_id):
+            await safe_answer_unauthorized(query, "⛔ You are banned from using this bot.")
+            return
 
-    from database import is_user_banned
-    if await is_user_banned(query.from_user.id):
-        await query.answer("⛔ You are banned from using this bot.", show_alert=True)
-        return
+        # ─ Match limit checks — run both concurrently to save ~20ms serial latency ─
 
-    # ─ Match limit checks — run both concurrently to save ~20ms serial latency ─
+        from database import get_user_active_matches_info
+        joiner_matches, owner_matches = await asyncio.gather(
+            get_user_active_matches_info(joiner_id),
+            get_user_active_matches_info(owner_id),
+        )
 
-    from database import get_user_active_matches_info
-    joiner_matches, owner_matches = await asyncio.gather(
-        get_user_active_matches_info(query.from_user.id),
-        get_user_active_matches_info(owner_id),
-    )
+        if len(joiner_matches) >= 1:
+            # Re-use _check_match_limit just for the reply formatting
+            await _check_match_limit(joiner_id, query)
+            return
+        if len(owner_matches) >= 1:
+            await query.answer("⛔ The challenger already has an active match.", show_alert=True)
+            return
 
-    if len(joiner_matches) >= 1:
-        # Re-use _check_match_limit just for the reply formatting
-        await _check_match_limit(query.from_user.id, query)
-        return
-    if len(owner_matches) >= 1:
-        await query.answer("⛔ The challenger already has an active match.", show_alert=True)
-        return
-
-    from handlers.mini_cric import is_user_in_mini_cric
-    if is_user_in_mini_cric(query.from_user.id):
-        await query.answer("⛔ You are currently playing a Mini Cricket match!", show_alert=True)
-        return
-    if is_user_in_mini_cric(owner_id):
-        await query.answer("⛔ The challenger is currently playing a Mini Cricket match!", show_alert=True)
-        return
+        from handlers.mini_cric import is_user_in_mini_cric
+        if is_user_in_mini_cric(joiner_id):
+            await query.answer("⛔ You are currently playing a Mini Cricket match!", show_alert=True)
+            return
+        if is_user_in_mini_cric(owner_id):
+            await query.answer("⛔ The challenger is currently playing a Mini Cricket match!", show_alert=True)
+            return
 
 
-    # ─ Atomic check and claim of the challenge ──────────────────
-    from database import find_and_delete_pending_challenge
-    claimed = await find_and_delete_pending_challenge(owner_id, mode)
-    if not claimed:
-        # Challenge is already accepted or expired.
-        await query.answer("⚠️ Challenge has already been accepted or expired!", show_alert=True)
+        # ─ Atomic check and claim of the challenge ──────────────────
+        _joined_msg_id = query.message.message_id if query.message else None
+        from database import find_and_delete_pending_challenge
+        claimed = await find_and_delete_pending_challenge(owner_id, mode, _joined_msg_id)
+        if not claimed:
+            # Challenge is already accepted or expired.
+            await query.answer("⚠️ Challenge has already been accepted or expired!", show_alert=True)
+            try:
+                # CRITICAL: Only strip the button if this message is NOT a live draft board.
+                from database import get_db as _gdb
+                _db = _gdb()
+                _msg_id = query.message.message_id if query.message else None
+                _is_live_draft = False
+                if _msg_id:
+                    _live = await _db.matches.find_one({
+                        "chat_id": query.message.chat.id if query.message else None,
+                        "state_data.state": {"$in": ["DRAFTING", "READY_CHECK"]},
+                        "$or": [
+                            {"state_data.draft_message_id": _msg_id},
+                            {"state_data.team_a.owner_id": owner_id},
+                            {"state_data.team_b.owner_id": owner_id},
+                            {"state_data.team_a.owner_id": joiner_id},
+                            {"state_data.team_b.owner_id": joiner_id}
+                        ]
+                    })
+                    _is_live_draft = bool(_live)
+                if not _is_live_draft:
+                    # Safe to remove button — this is a genuinely expired/stale challenge
+                    await query.message.edit_reply_markup(reply_markup=None)
+            except Exception:
+                pass
+            return
+
+        # All checks passed — answer callback query to stop loading spinner
+        await query.answer()
+
+        # Cancel expiry task for THIS specific message — only reached if a different user is joining
+        _ch_key = f"{owner_id}_{mode}_{_joined_msg_id}"
+        pending = _pending_challenges.pop(_ch_key, None)
+        if pending:
+            task = pending.get('task')
+            if task and not task.done():
+                task.cancel()
+
+
+        # Start Match
         try:
-            # CRITICAL: Only strip the button if this message is NOT a live draft board.
-            # If the challenge was already accepted, the same message_id is now the
-            # draft board with "Draw Player" button. Calling edit_reply_markup(None)
-            # here would silently wipe the Draw button from the active match.
-            # We check: is there a live DRAFTING match that owns this message_id,
-            # or does either player in this chat currently have an active match?
-            from database import get_db as _gdb
-            _db = _gdb()
-            _msg_id = query.message.message_id if query.message else None
-            _is_live_draft = False
-            if _msg_id:
-                _live = await _db.matches.find_one({
-                    "chat_id": query.message.chat.id if query.message else None,
-                    "state_data.state": {"$in": ["DRAFTING", "READY_CHECK"]},
-                    "$or": [
-                        {"state_data.draft_message_id": _msg_id},
-                        {"state_data.team_a.owner_id": owner_id},
-                        {"state_data.team_b.owner_id": owner_id},
-                        {"state_data.team_a.owner_id": query.from_user.id},
-                        {"state_data.team_b.owner_id": query.from_user.id}
-                    ]
-                })
-                _is_live_draft = bool(_live)
-            if not _is_live_draft:
-                # Safe to remove button — this is a genuinely expired/stale challenge
-                await query.message.edit_reply_markup(reply_markup=None)
-            # If _is_live_draft is True: leave the message alone — it's the draft board
+            # Extract challenger name from message caption — no extra API call needed
+            text = query.message.caption or query.message.text or ""
+            challenger_name = "Player 1"
+            for line in text.split('\n'):
+                line_clean = line.strip().strip('*')
+                if line_clean.startswith('User: ') or line_clean.startswith('From: '):
+                    challenger_name = line_clean.split(': ', 1)[1].strip()
+                    break
         except Exception:
-            pass
-        return
+            challenger_name = "Player 1"
 
-    # All checks passed — answer callback query to stop loading spinner
-    await query.answer()
+        joiner_name = query.from_user.first_name
 
-    # Cancel expiry task for THIS specific message — only reached if a different user is joining
-    _joined_msg_id = query.message.message_id if query.message else None
-    _ch_key = f"{owner_id}_{mode}_{_joined_msg_id}"
-    pending = _pending_challenges.pop(_ch_key, None)
-    if pending:
-        task = pending.get('task')
-        if task and not task.done():
-            task.cancel()
+        # Disarm other open challenge cards for both players in background
+        _k_msg = getattr(query.message, 'message_id', None) if query else None
 
+        # Initialize Match
+        match = await create_match_state(
+            chat_id=update.effective_chat.id,
+            mode=real_mode, 
+            owner_id=owner_id, 
+            challenger_id=joiner_id,
+            owner_name=challenger_name,
+            challenger_name=joiner_name,
+            draft_message_id=_k_msg
+        )
 
-    # Start Match
-    try:
-        # Extract challenger name from message caption — no extra API call needed
-        text = query.message.caption or query.message.text or ""
-        challenger_name = "Player 1"
-        for line in text.split('\n'):
-            line_clean = line.strip().strip('*')
-            if line_clean.startswith('User: ') or line_clean.startswith('From: '):
-                challenger_name = line_clean.split(': ', 1)[1].strip()
-                break
-    except Exception:
-        challenger_name = "Player 1"
+        asyncio.create_task(_disarm_leftover_challenges(owner_id, joiner_id, context.bot, keep_msg_id=_k_msg))
 
-    joiner_name = query.from_user.first_name
+        # Start Draft (Update the message)
+        from handlers.draft import format_draft_board, update_draft_message
+        from utils.banners import get_banner_for_mode
 
-    # Initialize Match
-    match = await create_match_state(
-        chat_id=update.effective_chat.id,
-        mode=real_mode, 
-        owner_id=owner_id, 
-        challenger_id=query.from_user.id,
-        owner_name=challenger_name,
-        challenger_name=joiner_name,
-        draft_message_id=query.message.message_id
-    )
+        board_text = format_draft_board(match)
+        keyboard = [
+            [InlineKeyboardButton("🎲 Draw Player", callback_data=f"draw_{match.match_id}")],
+            [InlineKeyboardButton("🏳️ Terminate 0/2", callback_data=f"terminate|{match.match_id}")]
+        ]
 
-    # Start Draft (Update the message)
-    from handlers.draft import format_draft_board, update_draft_message
-    from utils.banners import get_banner_for_mode
+        if "IPL" in mode:
+            banner = await get_banner_for_mode("ipl")
+        elif mode == "FIFA":
+            banner = await get_banner_for_mode("fifa")
+        elif mode in ("WWE", "WWEWomen"):
+            banner = await get_banner_for_mode("wwe" if mode == "WWE" else "wwe_women")
+        elif mode == "Test":
+            banner = await get_banner_for_mode("test")
+        elif mode in ("PKL", "Kabaddi"):
+            banner = await get_banner_for_mode("pkl")
+        else:  # ODI (and legacy International)
+            banner = await get_banner_for_mode("odi")
 
-    board_text = format_draft_board(match)
-    keyboard = [
-        [InlineKeyboardButton("🎲 Draw Player", callback_data=f"draw_{match.match_id}")],
-        [InlineKeyboardButton("🏳️ Terminate 0/2", callback_data=f"terminate|{match.match_id}")]
-    ]
+        # Edit the existing message into the draft board synchronously to bypass debouncer delay
+        await update_draft_message(update, context, match, board_text, keyboard, media=banner, synchronous=True)
 
-    if "IPL" in mode:
-        banner = await get_banner_for_mode("ipl")
-    elif mode == "FIFA":
-        banner = await get_banner_for_mode("fifa")
-    elif mode in ("WWE", "WWEWomen"):
-        banner = await get_banner_for_mode("wwe" if mode == "WWE" else "wwe_women")
-    elif mode == "Test":
-        banner = await get_banner_for_mode("test")
-    elif mode in ("PKL", "Kabaddi"):
-        banner = await get_banner_for_mode("pkl")
-    else:  # ODI (and legacy International)
-        banner = await get_banner_for_mode("odi")
+        # Start the 10-minute AFK forfeit timer for the first player's turn!
+        from handlers.draft import _reset_afk_timer
+        _reset_afk_timer(match, context.bot, update.effective_chat.id)
 
-    # Edit the existing message into the draft board synchronously to bypass debouncer delay
-    await update_draft_message(update, context, match, board_text, keyboard, media=banner, synchronous=True)
-
-    # Start the 10-minute AFK forfeit timer for the first player's turn!
-    from handlers.draft import _reset_afk_timer
-    _reset_afk_timer(match, context.bot, update.effective_chat.id)
-
-    # Pin the draft board — run in background task to avoid blocking the user
-    pinned_msg_id = query.message.message_id
-    async def _bg_pin():
-        try:
-            await context.bot.pin_chat_message(
-                chat_id=update.effective_chat.id,
-                message_id=pinned_msg_id,
-                disable_notification=True
-            )
-            from game.state import load_match_state as _bg_load, save_match_state as _bg_save
-            m = await _bg_load(match.match_id)
-            if m:
-                m.pinned_message_id = pinned_msg_id
-                await _bg_save(m)
-        except Exception:
-            pass
-    asyncio.create_task(_bg_pin())
+        # Pin the draft board — run in background task to avoid blocking the user
+        pinned_msg_id = query.message.message_id
+        async def _bg_pin():
+            try:
+                await context.bot.pin_chat_message(
+                    chat_id=update.effective_chat.id,
+                    message_id=pinned_msg_id,
+                    disable_notification=True
+                )
+                from game.state import load_match_state as _bg_load, save_match_state as _bg_save
+                m = await _bg_load(match.match_id)
+                if m:
+                    m.pinned_message_id = pinned_msg_id
+                    await _bg_save(m)
+            except Exception:
+                pass
+        asyncio.create_task(_bg_pin())
+    finally:
+        JOIN_LOCKS.discard(joiner_id)
+        JOIN_LOCKS.discard(owner_id)
 
 
 # ── PKL Challenge ─────────────────────────────────────────────────────────────
