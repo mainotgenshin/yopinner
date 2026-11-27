@@ -235,7 +235,7 @@ async def cb_profile_achievements(update, context):
         owner_id = viewer_id
 
     if viewer_id != owner_id:
-        await query.answer("⛔ You can only view your own achievements.", show_alert=True)
+        await safe_answer_unauthorized(query, "⛔ You can only view your own achievements.")
         return
 
     if not _check_profile_click(viewer_id, 1.0):
