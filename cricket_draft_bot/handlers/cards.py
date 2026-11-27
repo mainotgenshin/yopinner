@@ -931,10 +931,10 @@ async def handle_viewcard(update: Update, context: ContextTypes.DEFAULT_TYPE):
             ed_id = c.get("edition_id")
             if ed_id:
                 lbl = f"✨ {c.get('edition', 'Special Edition').title()} — OVR {c.get('ovr', 90)}"
-                cb_data = f"vc_fmt|ed|{ed_id}"
+                cb_data = f"vc_fmt|{user.id}|ed|{ed_id}"
             else:
                 lbl = f"{FORMAT_LABEL.get(c['format'], c['format'].upper())} — {RARITY_EMOJI.get(c['rarity'], '⚪')} OVR {c['ovr']}"
-                cb_data = f"vc_fmt|{c['player_id']}|{c['format']}"
+                cb_data = f"vc_fmt|{user.id}|{c['player_id']}|{c['format']}"
             buttons.append([InlineKeyboardButton(lbl, callback_data=cb_data)])
         try:
             await update.effective_message.reply_text(
@@ -973,10 +973,10 @@ async def cb_vc_name(update: Update, context: ContextTypes.DEFAULT_TYPE):
             ed_id = c.get("edition_id")
             if ed_id:
                 lbl = f"✨ {c.get('edition', 'Special Edition').title()} — OVR {c.get('ovr', 90)}"
-                cb_data = f"vc_fmt|ed|{ed_id}"
+                cb_data = f"vc_fmt|{owner_id}|ed|{ed_id}"
             else:
                 lbl = f"{FORMAT_LABEL.get(c['format'], c['format'].upper())} — {RARITY_EMOJI.get(c['rarity'], '⚪')} OVR {c['ovr']}"
-                cb_data = f"vc_fmt|{c['player_id']}|{c['format']}"
+                cb_data = f"vc_fmt|{owner_id}|{c['player_id']}|{c['format']}"
             buttons.append([InlineKeyboardButton(lbl, callback_data=cb_data)])
         player_name = player_cards[0]["name"]
         await query.edit_message_text(
@@ -1008,11 +1008,16 @@ async def cb_vc_fmt(update: Update, context: ContextTypes.DEFAULT_TYPE):
         fmt = parts[2]
     else:
         owner_id = parts[1]
-        if str(user_id) != owner_id:
+        if str(user_id) != str(owner_id):
             await safe_answer_unauthorized(query, "⛔ Not your menu."); return
-        player_id = parts[2]
-        fmt = parts[3]
-        ed_id = parts[4] if len(parts) >= 5 else "base"
+        if parts[2] == "ed":
+            ed_id = parts[3]
+            player_id = None
+            fmt = None
+        else:
+            player_id = parts[2]
+            fmt = parts[3]
+            ed_id = parts[4] if len(parts) >= 5 else "base"
 
     from database import get_user_cards
     cards = await get_user_cards(user_id)
@@ -1209,7 +1214,7 @@ async def handle_viewcard_deeplink(update: Update, context: ContextTypes.DEFAULT
 async def cb_vc_fav(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     if update.effective_chat and update.effective_chat.type != "private":
-        await query.answer("📬 Please manage cards in DM!", show_alert=True)
+        await safe_answer_unauthorized(query, "📬 Please manage cards in DM!", cooldown=2.0)
         return
     parts = query.data.split("|")
     user_id = query.from_user.id
@@ -1224,11 +1229,16 @@ async def cb_vc_fav(update: Update, context: ContextTypes.DEFAULT_TYPE):
         fmt = parts[2]
     else:
         owner_id = parts[1]
-        if str(user_id) != owner_id:
+        if str(user_id) != str(owner_id):
             await safe_answer_unauthorized(query, "⛔ Not your menu."); return
-        player_id = parts[2]
-        fmt = parts[3]
-        ed_id = parts[4] if len(parts) >= 5 else "base"
+        if parts[2] == "ed":
+            ed_id = parts[3]
+            player_id = None
+            fmt = None
+        else:
+            player_id = parts[2]
+            fmt = parts[3]
+            ed_id = parts[4] if len(parts) >= 5 else "base"
 
     lock = _get_lock(user_id)
     if lock.locked():
@@ -1253,7 +1263,7 @@ async def cb_vc_fav(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def cb_vc_unfav(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     if update.effective_chat and update.effective_chat.type != "private":
-        await query.answer("📬 Please manage cards in DM!", show_alert=True)
+        await safe_answer_unauthorized(query, "📬 Please manage cards in DM!", cooldown=2.0)
         return
     parts = query.data.split("|")
     user_id = query.from_user.id
@@ -1268,11 +1278,16 @@ async def cb_vc_unfav(update: Update, context: ContextTypes.DEFAULT_TYPE):
         fmt = parts[2]
     else:
         owner_id = parts[1]
-        if str(user_id) != owner_id:
+        if str(user_id) != str(owner_id):
             await safe_answer_unauthorized(query, "⛔ Not your menu."); return
-        player_id = parts[2]
-        fmt = parts[3]
-        ed_id = parts[4] if len(parts) >= 5 else "base"
+        if parts[2] == "ed":
+            ed_id = parts[3]
+            player_id = None
+            fmt = None
+        else:
+            player_id = parts[2]
+            fmt = parts[3]
+            ed_id = parts[4] if len(parts) >= 5 else "base"
 
     lock = _get_lock(user_id)
     if lock.locked():
@@ -1296,7 +1311,7 @@ async def cb_vc_sell(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Show sell confirmation."""
     query = update.callback_query
     if update.effective_chat and update.effective_chat.type != "private":
-        await query.answer("📬 Please manage and sell cards in DM!", show_alert=True)
+        await safe_answer_unauthorized(query, "📬 Please manage and sell cards in DM!", cooldown=2.0)
         return
     parts = query.data.split("|")
     user_id = query.from_user.id
@@ -1355,7 +1370,7 @@ async def cb_vc_sell_ok(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Execute sell with anti-spam lock and per-message duplicate suppression."""
     query = update.callback_query
     if update.effective_chat and update.effective_chat.type != "private":
-        await query.answer("📬 Please manage and sell cards in DM!", show_alert=True)
+        await safe_answer_unauthorized(query, "📬 Please manage and sell cards in DM!", cooldown=2.0)
         return
     parts = query.data.split("|")
     user_id = query.from_user.id
@@ -2165,7 +2180,7 @@ async def cb_msell_ok(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Callback when user clicks Confirm Sell."""
     query = update.callback_query
     if update.effective_chat and update.effective_chat.type != "private":
-        await query.answer("📬 Please manage and sell cards in DM!", show_alert=True)
+        await safe_answer_unauthorized(query, "📬 Please manage and sell cards in DM!", cooldown=2.0)
         return
     parts = query.data.split("|")
     if len(parts) != 3:
@@ -2266,7 +2281,7 @@ async def cb_msell_cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Callback when user clicks Cancel."""
     query = update.callback_query
     if update.effective_chat and update.effective_chat.type != "private":
-        await query.answer("📬 Please manage cards in DM!", show_alert=True)
+        await safe_answer_unauthorized(query, "📬 Please manage cards in DM!", cooldown=2.0)
         return
     parts = query.data.split("|")
     if len(parts) != 3:
@@ -2698,7 +2713,7 @@ async def handle_share(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def cb_ref_refresh(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     if update.effective_chat and update.effective_chat.type != "private":
-        await query.answer("📬 Please check referrals in DM!", show_alert=True)
+        await safe_answer_unauthorized(query, "📬 Please check referrals in DM!", cooldown=2.0)
         return
     parts = query.data.split("|")
     owner_id = parts[1]
