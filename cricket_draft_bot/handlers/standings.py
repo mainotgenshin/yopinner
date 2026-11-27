@@ -15,6 +15,7 @@ from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ContextTypes
 from telegram.error import BadRequest
 from telegram.helpers import escape_markdown
+from utils.rate_limit import safe_answer_unauthorized
 
 def esc(t): return escape_markdown(str(t), version=1)
 
@@ -511,10 +512,7 @@ async def handle_standings_callback(update: Update, context: ContextTypes.DEFAUL
 
     # Check button ownership: only the user who typed /standings can interact
     if owner_id and user_id != owner_id:
-        try:
-            await query.answer("⛔ Only the player who opened /standings can use these buttons.", show_alert=True)
-        except Exception:
-            pass
+        await safe_answer_unauthorized(query, "⛔ Only the player who opened /standings can use these buttons.")
         return
 
     now = time.time()
