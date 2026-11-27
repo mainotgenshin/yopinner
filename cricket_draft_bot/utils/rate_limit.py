@@ -1,10 +1,67 @@
 import asyncio
 import logging
+import time as _shield_time
 from telegram import InputMediaPhoto
 from telegram.error import RetryAfter
 from game.state import save_match_state
 
 logger = logging.getLogger(__name__)
+
+# ── Universal Tap-Spam & Spectator Shield ──────────────────────────────────
+_UNAUTHORIZED_TAP_TIMESTAMPS: dict = {}  # user_id -> float timestamp of last answered popup
+
+def is_spam_click(user_id: int, cooldown: float = 4.0) -> bool:
+    """
+    Returns True if the user tapped a button within the last `cooldown` seconds.
+    Used to silently drop repeat taps from spectators / unauthorized users without burning API calls.
+    """
+    now = _shield_time.time()
+    last = _UNAUTHORIZED_TAP_TIMESTAMPS.get(user_id, 0.0)
+    if now - last < cooldown:
+        return True
+    _UNAUTHORIZED_TAP_TIMESTAMPS[user_id] = now
+    if len(_UNAUTHORIZED_TAP_TIMESTAMPS) > 2000:
+        cutoff = now - 60.0
+        stale = [uid for uid, ts in _UNAUTHORIZED_TAP_TIMESTAMPS.items() if ts < cutoff]
+        for uid in stale:
+            _UNAUTHORIZED_TAP_TIMESTAMPS.pop(uid, None)
+    return False
+
+async def safe_answer_unauthorized(
+    query, 
+    alert_text: str = "⛔ Not your action.", 
+    cooldown: float = 4.0
+) -> None:
+    """
+    Politely notifies an unauthorized user/spectator once, but silently drops
+    rapid repeat taps within `cooldown` seconds to consume ZERO API calls.
+    """
+    user_id = query.from_user.id if query and getattr(query, 'from_user', None) else None
+    if not user_id:
+        return
+    if is_spam_click(user_id, cooldown=cooldown):
+        # Repeat tap: Drop silently in RAM. 0 DB calls, 0 Telegram API calls.
+        return
+    try:
+        await query.answer(alert_text, show_alert=True)
+    except Exception:
+        pass
+
+async def _abort_kicked_match(match) -> None:
+    """Terminates match and cancels timers when bot was kicked from group chat."""
+    try:
+        from game.state import load_match_state
+        from handlers.draft import cancel_afk_timer
+        cancel_afk_timer(match.match_id)
+        if 'debouncer' in globals():
+            debouncer.cancel_updates(match.chat_id, match.draft_message_id)
+        m = await load_match_state(match.match_id)
+        if m and m.state in ("DRAFTING", "READY_CHECK"):
+            m.state = "TERMINATED"
+            await save_match_state(m)
+            logger.info(f"Match {match.match_id} marked TERMINATED after bot was kicked from chat {match.chat_id}")
+    except Exception as e:
+        logger.error(f"Error aborting kicked match {match.match_id}: {e}")
 
 # ── Per-chat sliding-window rate gate & smooth pacer ───────────────────────
 # Telegram limit: ~20 edits per chat per minute.
@@ -112,6 +169,7 @@ class MessageDebouncer:
         self.tasks:      dict = {}
         self.last_state: dict = {}
         self._pending:   dict = {}
+        self._chat_kicked: dict = {}
 
     def record_state(
         self, chat_id: int, message_id: int, caption: str, reply_markup, media=None
@@ -193,6 +251,10 @@ class MessageDebouncer:
                 if success:
                     self.last_state[key] = target_state
                 else:
+                    if self._chat_kicked.get(match.chat_id):
+                        logger.warning(f"Debouncer: chat {match.chat_id} is inaccessible — auto-terminating match {match.match_id}")
+                        await _abort_kicked_match(match)
+                        return
                     logger.info(f"Debouncer: all retries failed — recreating message for {match.match_id}")
                     await self._recreate_message(
                         match, bot, caption, reply_markup,
@@ -279,6 +341,10 @@ class MessageDebouncer:
                     await asyncio.sleep(wait_time)
                 except Exception as e:
                     err = str(e).lower()
+                    if "bot was kicked" in err or "not a member" in err or "chat not found" in err:
+                        logger.warning(f"Bot kicked/missing from chat {chat_id}: stopping retries.")
+                        self._chat_kicked[chat_id] = True
+                        return False
                     if "message is not modified" in err:
                         return True
                     if "there is no text" in err or "only edit the caption" in err:
