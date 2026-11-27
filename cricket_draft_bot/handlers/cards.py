@@ -11,6 +11,7 @@ import uuid
 from telegram import Update, InlineKeyboardMarkup, InlineKeyboardButton
 from telegram.ext import ContextTypes
 from telegram.helpers import escape_markdown
+from utils.rate_limit import safe_answer_unauthorized
 
 logger = logging.getLogger(__name__)
 
@@ -173,7 +174,7 @@ async def cb_pack_sport(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     _, owner_id, sport = query.data.split("|")
     if str(query.from_user.id) != owner_id:
-        await query.answer("⛔ Not your menu.", show_alert=True); return
+        await safe_answer_unauthorized(query, "⛔ Not your menu."); return
     await query.answer()
     sport_label = SPORT_LABEL.get(sport, sport.title())
     sport_emoji = SPORT_EMOJI.get(sport, "🃏")
@@ -194,7 +195,7 @@ async def cb_pack_tier(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     _, owner_id, sport, tier = query.data.split("|")
     if str(query.from_user.id) != owner_id:
-        await query.answer("⛔ Not your menu.", show_alert=True); return
+        await safe_answer_unauthorized(query, "⛔ Not your menu."); return
     await query.answer()
     from database import get_card_coins
     balance = await get_card_coins(int(owner_id))
@@ -220,7 +221,7 @@ async def cb_pack_confirm(update: Update, context: ContextTypes.DEFAULT_TYPE):
     _, owner_id, sport, tier = query.data.split("|")
     user_id = query.from_user.id
     if str(user_id) != owner_id:
-        await query.answer("⛔ Not your menu.", show_alert=True); return
+        await safe_answer_unauthorized(query, "⛔ Not your menu."); return
 
     # ── DB-level atomic cooldown (primary spam-click guard) ──────────────────
     # asyncio.Lock only protects concurrent requests; DB cooldown protects
@@ -255,7 +256,7 @@ async def cb_pack_back(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     _, owner_id = query.data.split("|")
     if str(query.from_user.id) != owner_id:
-        await query.answer("⛔ Not your menu.", show_alert=True); return
+        await safe_answer_unauthorized(query, "⛔ Not your menu."); return
     await query.answer()
     keyboard = InlineKeyboardMarkup([[
         InlineKeyboardButton("🏏 Cricket", callback_data=f"pack_sport|{owner_id}|cricket"),
@@ -315,7 +316,7 @@ async def cb_inv_packs(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     _, owner_id = query.data.split("|")
     if str(query.from_user.id) != owner_id:
-        await query.answer("⛔ Not your menu.", show_alert=True); return
+        await safe_answer_unauthorized(query, "⛔ Not your menu."); return
     await query.answer()
     from database import get_card_coins
     balance = await get_card_coins(int(owner_id))
@@ -330,7 +331,7 @@ async def cb_inv_open(update: Update, context: ContextTypes.DEFAULT_TYPE):
     _, owner_id, tier, sport = query.data.split("|")
     user_id = query.from_user.id
     if str(user_id) != owner_id:
-        await query.answer("⛔ Not your menu.", show_alert=True); return
+        await safe_answer_unauthorized(query, "⛔ Not your menu."); return
 
     # ── DB-level atomic cooldown (primary spam-click guard) ──────────────────
     from database import try_acquire_action_cooldown
@@ -549,7 +550,7 @@ async def cb_mc_page(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     if str(owner_id) not in ("1087968824", "777000") and str(query.from_user.id) != str(owner_id):
-        await query.answer("⛔ Not your menu.", show_alert=True)
+        await safe_answer_unauthorized(query, "⛔ Not your menu.")
         return
 
     await query.answer()
@@ -585,7 +586,7 @@ async def cb_mc_sort(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     if str(owner_id) not in ("1087968824", "777000") and str(query.from_user.id) != str(owner_id):
-        await query.answer("⛔ Not your menu.", show_alert=True)
+        await safe_answer_unauthorized(query, "⛔ Not your menu.")
         return
 
     try:
@@ -793,7 +794,7 @@ async def cb_mc_collections(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     if str(owner_id) not in ("1087968824", "777000") and str(query.from_user.id) != str(owner_id):
-        await query.answer("⛔ Not your menu.", show_alert=True)
+        await safe_answer_unauthorized(query, "⛔ Not your menu.")
         return
 
     await query.answer()
@@ -949,7 +950,7 @@ async def cb_vc_name(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     _, owner_id, player_id = query.data.split("|")
     if str(query.from_user.id) != owner_id:
-        await query.answer("⛔ Not your menu.", show_alert=True); return
+        await safe_answer_unauthorized(query, "⛔ Not your menu."); return
     chat = update.effective_chat
     is_dm = (chat.type == "private") if chat else False
     cd = 0.3 if is_dm else 1.2
@@ -1008,7 +1009,7 @@ async def cb_vc_fmt(update: Update, context: ContextTypes.DEFAULT_TYPE):
     else:
         owner_id = parts[1]
         if str(user_id) != owner_id:
-            await query.answer("⛔ Not your menu.", show_alert=True); return
+            await safe_answer_unauthorized(query, "⛔ Not your menu."); return
         player_id = parts[2]
         fmt = parts[3]
         ed_id = parts[4] if len(parts) >= 5 else "base"
@@ -1224,7 +1225,7 @@ async def cb_vc_fav(update: Update, context: ContextTypes.DEFAULT_TYPE):
     else:
         owner_id = parts[1]
         if str(user_id) != owner_id:
-            await query.answer("⛔ Not your menu.", show_alert=True); return
+            await safe_answer_unauthorized(query, "⛔ Not your menu."); return
         player_id = parts[2]
         fmt = parts[3]
         ed_id = parts[4] if len(parts) >= 5 else "base"
@@ -1268,7 +1269,7 @@ async def cb_vc_unfav(update: Update, context: ContextTypes.DEFAULT_TYPE):
     else:
         owner_id = parts[1]
         if str(user_id) != owner_id:
-            await query.answer("⛔ Not your menu.", show_alert=True); return
+            await safe_answer_unauthorized(query, "⛔ Not your menu."); return
         player_id = parts[2]
         fmt = parts[3]
         ed_id = parts[4] if len(parts) >= 5 else "base"
@@ -1304,7 +1305,7 @@ async def cb_vc_sell(update: Update, context: ContextTypes.DEFAULT_TYPE):
     else:
         _, owner_id, player_id, fmt, sell_val_str = parts
         if str(user_id) != owner_id:
-            await query.answer("⛔ Not your menu.", show_alert=True); return
+            await safe_answer_unauthorized(query, "⛔ Not your menu."); return
 
     from database import get_user_cards, get_fav_card
     cards = await get_user_cards(user_id)
@@ -1363,7 +1364,7 @@ async def cb_vc_sell_ok(update: Update, context: ContextTypes.DEFAULT_TYPE):
     else:
         _, owner_id, player_id, fmt, sell_val_str = parts
         if str(user_id) != owner_id:
-            await query.answer("⛔ Not your menu.", show_alert=True); return
+            await safe_answer_unauthorized(query, "⛔ Not your menu."); return
 
     msg_id = query.message.message_id if query.message else None
     sell_key = f"{user_id}_{msg_id}"
@@ -1519,7 +1520,7 @@ async def cb_tr_page(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     _, initiator_id, target_id, page_str = query.data.split("|")
     if str(query.from_user.id) != initiator_id:
-        await query.answer("⛔ Not your trade.", show_alert=True); return
+        await safe_answer_unauthorized(query, "⛔ Not your trade."); return
     chat = update.effective_chat
     is_dm = (chat.type == "private") if chat else False
     page_cd = 0.3 if is_dm else 1.2
@@ -1541,7 +1542,7 @@ async def cb_tr_offer(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     _, initiator_id, target_id, player_id, fmt = query.data.split("|")
     if str(query.from_user.id) != initiator_id:
-        await query.answer("⛔ Not your trade.", show_alert=True); return
+        await safe_answer_unauthorized(query, "⛔ Not your trade."); return
     # DB-level cooldown
     from database import try_acquire_action_cooldown
     if not await try_acquire_action_cooldown(int(initiator_id), "trade_offer", cooldown_seconds=3):
@@ -1652,7 +1653,7 @@ async def cb_tr_tpage(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     _, target_id, trade_id, page_str = query.data.split("|")
     if str(query.from_user.id) != target_id:
-        await query.answer("⛔ Not your trade.", show_alert=True); return
+        await safe_answer_unauthorized(query, "⛔ Not your trade."); return
     chat = update.effective_chat
     is_dm = (chat.type == "private") if chat else False
     page_cd = 0.3 if is_dm else 1.2
@@ -1688,7 +1689,7 @@ async def cb_tr_pick(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     _, target_id, trade_id, player_id, fmt = query.data.split("|")
     if str(query.from_user.id) != target_id:
-        await query.answer("⛔ Not your trade.", show_alert=True); return
+        await safe_answer_unauthorized(query, "⛔ Not your trade."); return
     # DB-level cooldown
     from database import try_acquire_action_cooldown
     if not await try_acquire_action_cooldown(int(target_id), "trade_pick", cooldown_seconds=3):
@@ -1756,7 +1757,7 @@ async def cb_tr_confirm(update: Update, context: ContextTypes.DEFAULT_TYPE):
     _, initiator_id, trade_id = query.data.split("|")
     user_id = query.from_user.id
     if str(user_id) != initiator_id:
-        await query.answer("⛔ Not your trade.", show_alert=True); return
+        await safe_answer_unauthorized(query, "⛔ Not your trade."); return
     # DB-level cooldown — prevents spam confirm clicks showing repeated error messages
     from database import try_acquire_action_cooldown
     if not await try_acquire_action_cooldown(user_id, "trade_confirm", cooldown_seconds=5):
@@ -1828,7 +1829,7 @@ async def cb_tr_decline(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     _, user_id_str, trade_id = query.data.split("|")
     if str(query.from_user.id) != user_id_str:
-        await query.answer("⛔ Not your trade.", show_alert=True); return
+        await safe_answer_unauthorized(query, "⛔ Not your trade."); return
     # DB-level cooldown
     from database import try_acquire_action_cooldown
     if not await try_acquire_action_cooldown(int(user_id_str), "trade_decline", cooldown_seconds=5):
@@ -1847,7 +1848,7 @@ async def cb_tr_cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     _, initiator_id = query.data.split("|")
     if str(query.from_user.id) != initiator_id:
-        await query.answer("⛔ Not your menu.", show_alert=True); return
+        await safe_answer_unauthorized(query, "⛔ Not your menu."); return
     await query.answer()
     from database import get_user_active_trade, cancel_trade
     trade = await get_user_active_trade(int(initiator_id))
@@ -1919,7 +1920,7 @@ async def cb_quest_claim(update: Update, context: ContextTypes.DEFAULT_TYPE):
     _, owner_id = query.data.split("|")
     user_id = query.from_user.id
     if str(user_id) != owner_id:
-        await query.answer("⛔ Not your quests.", show_alert=True); return
+        await safe_answer_unauthorized(query, "⛔ Not your quests."); return
     lock = _get_lock(user_id)
     if lock.locked():
         await query.answer("⏳ Please wait a moment...", show_alert=False); return
@@ -2173,7 +2174,7 @@ async def cb_msell_ok(update: Update, context: ContextTypes.DEFAULT_TYPE):
     _, owner_id, sell_id = parts
     user_id = query.from_user.id
     if str(user_id) != owner_id:
-        await query.answer("⛔ Not your menu.", show_alert=True)
+        await safe_answer_unauthorized(query, "⛔ Not your menu.")
         return
 
     if sell_id in _COMPLETED_MULTI_SELLS:
@@ -2273,7 +2274,7 @@ async def cb_msell_cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
     _, owner_id, sell_id = parts
     if str(query.from_user.id) != owner_id:
-        await query.answer("⛔ Not your menu.", show_alert=True)
+        await safe_answer_unauthorized(query, "⛔ Not your menu.")
         return
 
     _PENDING_MULTI_SELLS.pop(sell_id, None)
@@ -2429,7 +2430,7 @@ async def cb_offer_claim(update: Update, context: ContextTypes.DEFAULT_TYPE):
     owner_id = parts[1]
     user_id = query.from_user.id
     if str(user_id) != owner_id:
-        await query.answer("⛔ Not your menu.", show_alert=True)
+        await safe_answer_unauthorized(query, "⛔ Not your menu.")
         return
 
     from database import get_active_offer
@@ -2470,7 +2471,7 @@ async def cb_offer_cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     parts = query.data.split("|")
     owner_id = parts[1]
     if str(query.from_user.id) != owner_id:
-        await query.answer("⛔ Not your menu.", show_alert=True)
+        await safe_answer_unauthorized(query, "⛔ Not your menu.")
         return
     await query.answer("Exchange cancelled.")
     if query.message and query.message.photo:
@@ -2486,7 +2487,7 @@ async def cb_offer_confirm(update: Update, context: ContextTypes.DEFAULT_TYPE):
     owner_id = parts[1]
     user_id = query.from_user.id
     if str(user_id) != owner_id:
-        await query.answer("⛔ Not your menu.", show_alert=True)
+        await safe_answer_unauthorized(query, "⛔ Not your menu.")
         return
 
     # Anti-spam cooldown check
@@ -2702,7 +2703,7 @@ async def cb_ref_refresh(update: Update, context: ContextTypes.DEFAULT_TYPE):
     parts = query.data.split("|")
     owner_id = parts[1]
     if str(query.from_user.id) != owner_id:
-        await query.answer("⛔ Not your menu.", show_alert=True)
+        await safe_answer_unauthorized(query, "⛔ Not your menu.")
         return
     await query.answer("Stats updated!")
     bot_username = getattr(context.bot, "username", "") or ""
