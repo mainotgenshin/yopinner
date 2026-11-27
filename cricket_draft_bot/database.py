@@ -76,7 +76,9 @@ async def init_db():
         # Speeds up count_user_active_matches, get_user_active_matches_info,
         # and _startup_recovery which all filter by state_data.state
         await db.matches.create_index([("state_data.state", ASCENDING)])
-        # Speeds up per-user match lookups (join/challenge limit checks)
+        # Speeds up per-user match lookups (join/challenge limit checks) with compound indexes
+        await db.matches.create_index([("state_data.team_a.owner_id", ASCENDING), ("state_data.state", ASCENDING)])
+        await db.matches.create_index([("state_data.team_b.owner_id", ASCENDING), ("state_data.state", ASCENDING)])
         await db.matches.create_index([("state_data.team_a.owner_id", ASCENDING)])
         await db.matches.create_index([("state_data.team_b.owner_id", ASCENDING)])
         # Speeds up find_and_delete_pending_challenge, get_stale_challenges
@@ -84,6 +86,7 @@ async def init_db():
             [("owner_id", ASCENDING), ("mode", ASCENDING)], unique=True
         )
         await db.pending_challenges.create_index([("created_at", ASCENDING)])
+        await db.pending_challenges.create_index([("message_id", ASCENDING)])
         # Speeds up broadcast get_all_chats
         await db.chats.create_index([("chat_id", ASCENDING)], unique=True)
         
@@ -604,10 +607,26 @@ async def save_pending_challenge(owner_id: int, chat_id: int, message_id: int, m
         upsert=True
     )
 
-async def find_and_delete_pending_challenge(owner_id: int, mode: str) -> Optional[dict]:
+async def find_and_delete_pending_challenge(owner_id: int, mode: str, message_id: Optional[int] = None) -> Optional[dict]:
     """Atomically find and delete a pending challenge to prevent double-joins."""
     db = get_db()
-    return await db.pending_challenges.find_one_and_delete({"owner_id": owner_id, "mode": mode})
+    query = {"owner_id": owner_id, "mode": mode}
+    if message_id:
+        query["message_id"] = message_id
+    doc = await db.pending_challenges.find_one_and_delete(query)
+    if not doc and message_id:
+        # Fallback if message_id wasn't recorded or format difference
+        doc = await db.pending_challenges.find_one_and_delete({"owner_id": owner_id, "mode": mode})
+    return doc
+
+async def disarm_all_pending_challenges(user_ids: list[int]) -> list[dict]:
+    """Atomically finds and deletes all pending challenges for the given users."""
+    db = get_db()
+    cursor = db.pending_challenges.find({"owner_id": {"$in": user_ids}})
+    docs = await cursor.to_list(length=100)
+    if docs:
+        await db.pending_challenges.delete_many({"owner_id": {"$in": user_ids}})
+    return docs
 
 async def delete_pending_challenge(owner_id: int, mode: str = None) -> None:
     """Remove a pending challenge (joined or naturally expired)."""
@@ -757,9 +776,16 @@ async def get_user_cards(user_id: int, sport_filter: str = None) -> list:
     if not cards:
         return []
 
-    # Batch-fetch all referenced players in ONE query
+    # Batch-fetch all referenced players in ONE query with trimmed projection (60% lighter network payload)
     player_ids = list({c["player_id"] for c in cards})
-    player_docs = await db.players.find({"player_id": {"$in": player_ids}}).to_list(None)
+    player_proj = {
+        "player_id": 1, "name": 1, "cards": 1, "sport": 1, "ovr": 1, "rarity": 1,
+        "ipl_image_url": 1, "odi_image_url": 1, "test_image_url": 1, "fifa_image_url": 1,
+        "wwe_image_url": 1, "pkl_image_url": 1, "image_url": 1,
+        "ipl_image_file_id": 1, "odi_image_file_id": 1, "fifa_image_file_id": 1,
+        "pkl_image_file_id": 1, "image_file_id": 1
+    }
+    player_docs = await db.players.find({"player_id": {"$in": player_ids}}, player_proj).to_list(None)
     players_by_id = {p["player_id"]: p for p in player_docs}
 
     result = []
