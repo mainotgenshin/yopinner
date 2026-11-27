@@ -18,6 +18,7 @@ import time
 import html
 import re
 import uuid
+from utils.rate_limit import is_spam_click
 from typing import Dict, Optional, Tuple
 
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
@@ -98,9 +99,12 @@ def _schedule_pending_challenge_expiry(context: ContextTypes.DEFAULT_TYPE, match
     _ACTIVE_TIMERS[f"pending_{match_id}"] = asyncio.create_task(_expiry_coro())
 
 async def _safe_answer_query(query, text: Optional[str] = None, show_alert: bool = False):
-    """Safely answers callback query; suppresses 'Query is too old' and connection timeouts."""
+    """Safely answers callback query; throttles repeat spectator alerts and suppresses errors."""
     if not query:
         return
+    if show_alert and query.from_user:
+        if is_spam_click(query.from_user.id):
+            return  # Drop spam spectator taps silently in RAM (0 API calls)
     try:
         if text:
             await query.answer(text, show_alert=show_alert)
