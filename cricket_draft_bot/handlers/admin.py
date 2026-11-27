@@ -745,7 +745,8 @@ async def handle_view_player_stats_callback(update: Update, context: ContextType
         return
     from utils.permissions import can_manage_bot
     if not await can_manage_bot(update.effective_user.id):
-        await query.answer("⛔ This action is restricted to Bot Admins.", show_alert=True)
+        from utils.rate_limit import safe_answer_unauthorized
+        await safe_answer_unauthorized(query, "⛔ This action is restricted to Bot Admins.")
         return
 
     data = query.data or ""
@@ -2620,10 +2621,8 @@ async def handle_broadcast_callback(update: Update, context: ContextTypes.DEFAUL
         return
 
     if query.from_user.id != bc_data["admin_id"]:
-        try:
-            await query.answer("⛔ Only the admin who initiated this broadcast can confirm it.", show_alert=True)
-        except Exception:
-            pass
+        from utils.rate_limit import safe_answer_unauthorized
+        await safe_answer_unauthorized(query, "⛔ Only the admin who initiated this broadcast can confirm it.")
         return
 
     if action == "bc_no":
